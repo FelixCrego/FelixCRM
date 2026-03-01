@@ -1,4 +1,5 @@
 export type ToneOfVoice = "PROFESSIONAL" | "AGGRESSIVE" | "CONSULTATIVE" | "FRIENDLY";
+export type UserRole = "REP" | "MANAGER" | "TEAM_LEAD" | "SUPER_ADMIN";
 
 export type Lead = {
   id: string;

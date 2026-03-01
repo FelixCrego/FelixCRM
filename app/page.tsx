@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Lead, Script, ToneOfVoice } from "@/lib/types";
+import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import {
   ArrowRight,
   Bot,
@@ -25,7 +25,7 @@ import {
   Zap,
 } from "lucide-react";
 
-type Profile = { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean };
+type Profile = { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole };
 type PlaybookTab = "SCRIPTS" | "OBJECTIONS" | "TIPS";
 
 const TOUR_STEPS = [
@@ -33,6 +33,14 @@ const TOUR_STEPS = [
   "Ship a live preview site before the first pitch.",
   "Use the AI playbook to close objections with confidence.",
 ];
+
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  REP: "Rep",
+  TEAM_LEAD: "Team Lead",
+  MANAGER: "Manager",
+  SUPER_ADMIN: "Super Admin",
+};
 
 const STATUS_LABELS: Record<Lead["status"], string> = {
   NEW: "New",
@@ -64,7 +72,7 @@ export default function HomePage() {
   const [magic, setMagic] = useState("");
   const [playbookTab, setPlaybookTab] = useState<PlaybookTab>("SCRIPTS");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [profile, setProfile] = useState<Profile>({ niche: "", toneOfVoice: "CONSULTATIVE", calendarLink: "", onboardingCompleted: false });
+  const [profile, setProfile] = useState<Profile>({ niche: "", toneOfVoice: "CONSULTATIVE", calendarLink: "", onboardingCompleted: false, role: "REP" });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -161,6 +169,9 @@ export default function HomePage() {
   }
 
   const showOnboarding = !profile.onboardingCompleted;
+  const canManageLeads = profile.role === "TEAM_LEAD" || profile.role === "MANAGER" || profile.role === "SUPER_ADMIN";
+  const canAccessOps = profile.role === "MANAGER" || profile.role === "SUPER_ADMIN";
+  const canAccessAdmin = profile.role === "SUPER_ADMIN";
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:p-6">
@@ -190,6 +201,20 @@ export default function HomePage() {
                 </li>
               ))}
             </ol>
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              Select role
+              <select
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                value={profile.role}
+                onChange={(e) => setProfile((prev) => ({ ...prev, role: e.target.value as UserRole }))}
+              >
+                {(["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"] as UserRole[]).map((role) => (
+                  <option key={role} value={role}>
+                    {ROLE_LABELS[role]}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button className="mt-5 inline-flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500" onClick={submitProfile}>
               Enter dashboard <ChevronRight className="h-4 w-4" />
             </button>
@@ -204,6 +229,7 @@ export default function HomePage() {
               <LayoutDashboard className="h-5 w-5 text-blue-500" /> Felix Revenue Command Center
             </h1>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A high-conviction workspace for reps who ship value before they pitch.</p>
+            <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Role: {ROLE_LABELS[profile.role]}</span>
           </div>
           <div className="flex flex-1 flex-col gap-2 md:flex-row md:items-center md:justify-end">
             <label className="group flex w-full max-w-xl items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
@@ -245,6 +271,7 @@ export default function HomePage() {
         </article>
       </section>
 
+      {canManageLeads && (
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
           <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -260,6 +287,7 @@ export default function HomePage() {
           </button>
         </div>
       </section>
+      )}
 
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-3 flex items-center justify-between">
@@ -309,12 +337,14 @@ export default function HomePage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
+                    {canManageLeads && (
                     <button className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-60" onClick={() => deploy(lead.id)} disabled={deploying === lead.id}>
                       {deploying === lead.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
                       {deploying === lead.id ? "Deploying" : "Create Site"}
                     </button>
-                    <button className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs dark:border-slate-700" onClick={() => generateScript(lead.id, "EMAIL")}>Draft Email</button>
-                    <button className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs dark:border-slate-700" onClick={() => generateScript(lead.id, "SMS")}>Draft SMS</button>
+                    )}
+                    {canManageLeads && <button className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs dark:border-slate-700" onClick={() => generateScript(lead.id, "EMAIL")}>Draft Email</button>}
+                    {canManageLeads && <button className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs dark:border-slate-700" onClick={() => generateScript(lead.id, "SMS")}>Draft SMS</button>}
                     {lead.deployedUrl && (
                       <a href={lead.deployedUrl} target="_blank" className="inline-flex items-center gap-1 rounded-md border border-green-500 px-2.5 py-1.5 text-xs text-green-700 dark:text-green-300" rel="noreferrer">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Visit Site
@@ -408,6 +438,21 @@ export default function HomePage() {
               Stay relentless. Stack proof. Close faster. <ArrowRight className="h-3.5 w-3.5" />
             </p>
           </div>
+
+          {canAccessOps && (
+            <div className="rounded-2xl border border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-900 shadow-sm dark:border-purple-900/60 dark:bg-purple-950/30 dark:text-purple-200">
+              <h3 className="text-sm font-semibold uppercase tracking-wide">Operations view</h3>
+              <p className="mt-2">Managers can monitor funnel velocity and rep output trends here. Use this area for QA and forecasting workflows.</p>
+            </div>
+          )}
+
+          {canAccessAdmin && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4 text-xs text-rose-900 shadow-sm dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">
+              <h3 className="text-sm font-semibold uppercase tracking-wide">Admin controls</h3>
+              <p className="mt-2">Super admins can configure role permissions, integrations, and account governance from this dedicated view.</p>
+            </div>
+          )}
+
         </aside>
       </section>
     </main>

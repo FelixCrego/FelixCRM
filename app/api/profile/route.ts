@@ -1,3 +1,4 @@
+import type { UserRole } from "@/lib/types";
 import { NextResponse } from "next/server";
 import { getProfile, saveProfile } from "@/lib/store";
 
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
     toneOfVoice: body.toneOfVoice ?? "CONSULTATIVE",
     calendarLink: body.calendarLink ?? "",
     onboardingCompleted: Boolean(body.onboardingCompleted),
+    role: (body.role ?? "REP") as UserRole,
   });
   return NextResponse.json({ ok: true });
 }

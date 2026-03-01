@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { dedupeKey, fakeUserId } from "@/lib/utils";
-import type { Lead, Script, ToneOfVoice } from "@/lib/types";
+import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 
 if (!process.env.DATABASE_URL && process.env.POSTGRES_PRISMA_URL) {
   process.env.DATABASE_URL = process.env.POSTGRES_PRISMA_URL;
@@ -11,7 +11,7 @@ const prisma = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 let memory = {
-  profile: { niche: "Local Services", toneOfVoice: "CONSULTATIVE" as ToneOfVoice, calendarLink: "", onboardingCompleted: false },
+  profile: { niche: "Local Services", toneOfVoice: "CONSULTATIVE" as ToneOfVoice, calendarLink: "", onboardingCompleted: false, role: "REP" as UserRole },
   leads: [] as Lead[],
   scripts: [] as Script[],
 };
@@ -49,10 +49,11 @@ export async function getProfile() {
     toneOfVoice: (user.toneOfVoice ?? "CONSULTATIVE") as ToneOfVoice,
     calendarLink: user.calendarLink ?? "",
     onboardingCompleted: user.onboardingCompleted,
+    role: (user.role ?? "REP") as UserRole,
   };
 }
 
-export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean }) {
+export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole }) {
   if (!hasDb) {
     memory.profile = profile;
     return;
