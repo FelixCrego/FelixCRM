@@ -3,12 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import {
-  ArrowRight,
-  Briefcase,
   Bot,
+  Briefcase,
   Building2,
-  CalendarCheck2,
-  CalendarClock,
   CheckCircle2,
   ChevronRight,
   Command,
@@ -16,14 +13,13 @@ import {
   Globe,
   LayoutDashboard,
   Loader2,
-  Mail,
+  Moon,
   Phone,
   Search,
   ShieldCheck,
   Sparkles,
-  Target,
+  Sun,
   ThumbsUp,
-  Trophy,
   Users,
   Zap,
 } from "lucide-react";
@@ -37,7 +33,6 @@ const TOUR_STEPS = [
   "Ship a live preview site before the first pitch.",
   "Use the AI playbook to close objections with confidence.",
 ];
-
 
 const ROLE_LABELS: Record<UserRole, string> = {
   REP: "Rep",
@@ -81,13 +76,6 @@ const ROLE_EXPERIENCE: Record<UserRole, { headline: string; subtitle: string; ac
   },
 };
 
-const ROLE_PANEL_COPY: Record<UserRole, string[]> = {
-  REP: ["Top 3 leads ranked by conversion probability.", "1-click script generation for each account.", "Daily CTA checklist tied to your calendar link."],
-  TEAM_LEAD: ["Rep-by-rep pipeline heat map.", "Coaching priorities from stalled opportunities.", "Ownership controls for lead balancing."],
-  MANAGER: ["Weekly velocity targets by stage.", "Forecast confidence based on live pipeline quality.", "Ops blockers to unblock reps quickly."],
-  SUPER_ADMIN: ["Role policy matrix and overrides.", "Integration status for data + deployment providers.", "Audit-ready governance and access events."],
-};
-
 function cn(...classes: Array<string | boolean | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -100,8 +88,20 @@ function getPriorityScore(lead: Lead) {
   return siteScore + contactScore + freshnessScore + statusScore;
 }
 
+function timeLeftInPool(updatedAt: string) {
+  const dueAt = new Date(updatedAt).getTime() + 1000 * 60 * 60 * 48;
+  const diff = dueAt - Date.now();
+  if (diff <= 0) return "Expired";
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+  }
+  return `${hours}h`;
+}
+
 export default function HomePage() {
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(true);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
   const [loading, setLoading] = useState(false);
@@ -110,6 +110,7 @@ export default function HomePage() {
   const [magic, setMagic] = useState("");
   const [playbookTab, setPlaybookTab] = useState<PlaybookTab>("SCRIPTS");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [profile, setProfile] = useState<Profile>({ niche: "", toneOfVoice: "CONSULTATIVE", calendarLink: "", onboardingCompleted: false, role: "REP" });
   const [loggedIn, setLoggedIn] = useState(false);
   const [loginForm, setLoginForm] = useState<LoginForm>({ name: "", email: "", role: "REP" });
@@ -141,8 +142,6 @@ export default function HomePage() {
     return [...filteredLeads].sort((a, b) => getPriorityScore(b) - getPriorityScore(a));
   }, [filteredLeads]);
 
-  const topFocusLeads = useMemo(() => sortedLeads.slice(0, 3), [sortedLeads]);
-
   const metrics = useMemo(() => {
     const liveSites = filteredLeads.filter((lead) => lead.siteStatus === "LIVE").length;
     const contacted = filteredLeads.filter((lead) => lead.status === "CONTACTED" || lead.status === "IN_PROGRESS" || lead.status === "CLOSED").length;
@@ -155,15 +154,6 @@ export default function HomePage() {
       wins,
       winRate: filteredLeads.length ? Math.round((wins / filteredLeads.length) * 100) : 0,
       hotLeads,
-    };
-  }, [filteredLeads]);
-
-  const pipeline = useMemo(() => {
-    return {
-      NEW: filteredLeads.filter((lead) => lead.status === "NEW"),
-      CONTACTED: filteredLeads.filter((lead) => lead.status === "CONTACTED"),
-      IN_PROGRESS: filteredLeads.filter((lead) => lead.status === "IN_PROGRESS"),
-      CLOSED: filteredLeads.filter((lead) => lead.status === "CLOSED"),
     };
   }, [filteredLeads]);
 
@@ -221,8 +211,6 @@ export default function HomePage() {
 
   const showOnboarding = !profile.onboardingCompleted;
   const canManageLeads = profile.role === "TEAM_LEAD" || profile.role === "MANAGER" || profile.role === "SUPER_ADMIN";
-  const canAccessOps = profile.role === "MANAGER" || profile.role === "SUPER_ADMIN";
-  const canAccessAdmin = profile.role === "SUPER_ADMIN";
   const roleExperience = ROLE_EXPERIENCE[profile.role];
   const RoleIcon = roleExperience.icon;
 
@@ -277,7 +265,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:p-6">
+    <main className="min-h-screen bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       {showOnboarding && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
           <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
@@ -325,254 +313,215 @@ export default function HomePage() {
         </div>
       )}
 
-      <header className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight md:text-2xl">
-              <LayoutDashboard className="h-5 w-5 text-blue-500" /> Felix Revenue Command Center
-            </h1>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A high-conviction workspace for reps who ship value before they pitch.</p>
-            <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Role: {ROLE_LABELS[profile.role]}</span>
-            <p className={cn("mt-2 inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide", roleExperience.accent)}>
-              <RoleIcon className="h-3.5 w-3.5" /> {roleExperience.headline}
-            </p>
-          </div>
-          <div className="flex flex-1 flex-col gap-2 md:flex-row md:items-center md:justify-end">
-            <label className="group flex w-full max-w-xl items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
-              <Command className="h-4 w-4 text-slate-500" />
-              <input value={magic} onChange={(e) => setMagic(e.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="Magic Bar: prioritize plumbers in Austin with no live site" />
-            </label>
-            <button className="rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700" onClick={() => setDark((d) => !d)}>
-              {dark ? "Light" : "Dark"}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm dark:border-blue-900/60 dark:from-blue-950/50 dark:to-slate-900">
-          <p className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">Pipeline coverage</p>
-          <p className="mt-2 text-2xl font-bold">{metrics.total}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">qualified accounts in active queue</p>
-        </article>
-        <article className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm dark:border-emerald-900/60 dark:from-emerald-950/50 dark:to-slate-900">
-          <p className="text-xs font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Proof assets shipped</p>
-          <p className="mt-2 text-2xl font-bold">{metrics.liveSites}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">live preview sites sent to prospects</p>
-        </article>
-        <article className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4 shadow-sm dark:border-violet-900/60 dark:from-violet-950/50 dark:to-slate-900">
-          <p className="text-xs font-medium uppercase tracking-wide text-violet-700 dark:text-violet-300">Outreach momentum</p>
-          <p className="mt-2 text-2xl font-bold">{metrics.contacted}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">accounts actively in conversation</p>
-        </article>
-        <article className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-4 shadow-sm dark:border-amber-900/60 dark:from-amber-950/50 dark:to-slate-900">
-          <p className="text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">Hot opportunities</p>
-          <p className="mt-2 text-2xl font-bold">{metrics.hotLeads}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">priority score 70+ leads</p>
-        </article>
-        <article className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-4 shadow-sm dark:border-rose-900/60 dark:from-rose-950/50 dark:to-slate-900">
-          <p className="text-xs font-medium uppercase tracking-wide text-rose-700 dark:text-rose-300">Close rate</p>
-          <p className="mt-2 text-2xl font-bold">{metrics.winRate}%</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">wins from visible pipeline</p>
-        </article>
-      </section>
-
-      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{ROLE_LABELS[profile.role]} workspace modules</h2>
-        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{roleExperience.subtitle}</p>
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
-          {ROLE_PANEL_COPY[profile.role].map((item) => (
-            <article key={item} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-950/40">
-              <p className="font-medium">{item}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {canManageLeads && (
-      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-          <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            City
-            <input className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" value={query.city} onChange={(e) => setQuery((q) => ({ ...q, city: e.target.value }))} />
-          </label>
-          <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Business type
-            <input className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" value={query.businessType} onChange={(e) => setQuery((q) => ({ ...q, businessType: e.target.value }))} />
-          </label>
-          <button className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50" onClick={scrape} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {loading ? "Finding leads..." : "Find High-Fit Leads"}
-          </button>
-        </div>
-      </section>
-      )}
-
-      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Pipeline by stage</h2>
-          <Target className="h-4 w-4 text-blue-500" />
-        </div>
-        <div className="grid gap-2 md:grid-cols-4">
-          {(["NEW", "CONTACTED", "IN_PROGRESS", "CLOSED"] as const).map((stage) => (
-            <article key={stage} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950/40">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{STATUS_LABELS[stage]}</p>
-              <p className="mt-1 text-xl font-bold">{pipeline[stage].length}</p>
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{pipeline[stage].slice(0, 2).map((lead) => lead.businessName).join(" • ") || "No accounts yet"}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Lead queue</h2>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs dark:bg-slate-800">{sortedLeads.length} leads</span>
+      <div className="flex min-h-screen">
+        <aside className="fixed inset-y-0 left-0 z-40 w-72 border-r border-zinc-800 bg-zinc-950 px-5 py-6 text-zinc-100">
+          <div className="flex h-full flex-col">
+            <div>
+              <p className="text-xs uppercase tracking-[0.28em] text-zinc-500">Felix CRM</p>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight">Revenue OS</h1>
+              <span className="mt-4 inline-flex rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                {ROLE_LABELS[profile.role]}
+              </span>
+              <p className="mt-4 text-xs text-zinc-400">{roleExperience.headline}</p>
             </div>
-            <div className="grid gap-2">
-              {sortedLeads.map((lead) => (
-                <article
-                  key={lead.id}
-                  className={cn(
-                    "rounded-xl border p-3 transition",
-                    "border-slate-200 bg-white hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950/40",
-                    selectedLead?.id === lead.id && "border-blue-400 ring-1 ring-blue-400/40",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <button className="text-left" onClick={() => setSelectedLeadId(lead.id)}>
-                      <p className="font-semibold leading-tight">{lead.businessName}</p>
-                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{lead.city} · {lead.businessType}</p>
-                    </button>
-                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">Score {getPriorityScore(lead)}</span>
-                  </div>
 
-                  <div className="mt-3 grid gap-1 text-xs text-slate-600 dark:text-slate-300">
-                    <p className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" /> {lead.status in STATUS_LABELS ? STATUS_LABELS[lead.status] : lead.status}</p>
-                    <p className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {lead.phone || "No phone"}</p>
-                    <p className="inline-flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5" /> Last touch: {new Date(lead.updatedAt).toLocaleDateString()}</p>
-                  </div>
+            <nav className="mt-8 space-y-1">
+              {[
+                { label: "Dashboard", icon: LayoutDashboard },
+                { label: "Scrape Leads", icon: Search },
+                { label: "Pipeline", icon: Flame },
+              ].map((item, index) => {
+                const Icon = item.icon;
+                return (
+                  <button key={item.label} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm", index === 0 ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")}>
+                    <Icon className="h-4 w-4" /> {item.label}
+                  </button>
+                );
+              })}
+            </nav>
 
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {canManageLeads && (
-                    <button className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-60" onClick={() => deploy(lead.id)} disabled={deploying === lead.id}>
-                      {deploying === lead.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
-                      {deploying === lead.id ? "Deploying" : "Create Site"}
-                    </button>
-                    )}
-                    {canManageLeads && <button className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs dark:border-slate-700" onClick={() => generateScript(lead.id, "EMAIL")}>Draft Email</button>}
-                    {canManageLeads && <button className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs dark:border-slate-700" onClick={() => generateScript(lead.id, "SMS")}>Draft SMS</button>}
-                    {lead.deployedUrl && (
-                      <a href={lead.deployedUrl} target="_blank" className="inline-flex items-center gap-1 rounded-md border border-green-500 px-2.5 py-1.5 text-xs text-green-700 dark:text-green-300" rel="noreferrer">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Visit Site
-                      </a>
-                    )}
-                  </div>
+            <div className="mt-auto rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Workspace</p>
+              <p className="mt-1 text-sm text-zinc-300">{roleExperience.subtitle}</p>
+            </div>
+          </div>
+        </aside>
+
+        <section className="flex-1 pl-72">
+          <div className="mx-auto max-w-[1600px] space-y-6 p-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="group flex min-w-[320px] flex-1 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <Command className="h-4 w-4 text-zinc-400" />
+                <input value={magic} onChange={(e) => setMagic(e.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="Search by business, city, or niche" />
+              </label>
+              <button className="inline-flex items-center gap-1 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900" onClick={() => setDark((d) => !d)}>
+                {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />} {dark ? "Light" : "Dark"}
+              </button>
+              <button className="inline-flex items-center gap-1 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900" onClick={() => setDrawerOpen((v) => !v)}>
+                <Bot className="h-4 w-4" /> AI Playbook
+              </button>
+            </div>
+
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              {[
+                { label: "Pipeline coverage", value: metrics.total, delta: "+12%" },
+                { label: "Proof assets shipped", value: metrics.liveSites, delta: "+8%" },
+                { label: "Outreach momentum", value: metrics.contacted, delta: "+5%" },
+                { label: "Hot opportunities", value: metrics.hotLeads, delta: "+18%" },
+                { label: "Close rate", value: `${metrics.winRate}%`, delta: "+3%" },
+              ].map((metric) => (
+                <article key={metric.label} className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{metric.label}</p>
+                  <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">{metric.value}</p>
+                  <span className="mt-3 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">{metric.delta}</span>
                 </article>
               ))}
-              {!sortedLeads.length && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700">No leads yet. Run Find High-Fit Leads to populate the queue.</p>}
-            </div>
+            </section>
+
+            {canManageLeads && (
+              <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    City
+                    <input className="mt-1 block w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950" placeholder="Austin" value={query.city} onChange={(e) => setQuery((prev) => ({ ...prev, city: e.target.value }))} />
+                  </label>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Business type
+                    <input className="mt-1 block w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950" placeholder="Roofing" value={query.businessType} onChange={(e) => setQuery((prev) => ({ ...prev, businessType: e.target.value }))} />
+                  </label>
+                  <button className="inline-flex h-11 items-center justify-center gap-1 rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300" onClick={scrape} disabled={loading}>
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Find High-Fit Leads
+                  </button>
+                </div>
+              </section>
+            )}
+
+            <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+                  <thead className="bg-zinc-50 dark:bg-zinc-950/70">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Lead</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Contact Info</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Time Left in Pool</th>
+                      <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Status</th>
+                      <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {sortedLeads.map((lead) => (
+                      <tr
+                        key={lead.id}
+                        className={cn("cursor-pointer transition hover:bg-zinc-50 dark:hover:bg-zinc-800/40", selectedLead?.id === lead.id && "bg-zinc-100 dark:bg-zinc-800/60")}
+                        onClick={() => {
+                          setSelectedLeadId(lead.id);
+                          setDrawerOpen(true);
+                        }}
+                      >
+                        <td className="px-4 py-3">
+                          <p className="font-semibold">{lead.businessName}</p>
+                          <p className="text-xs text-zinc-500">{lead.businessType} · {lead.city}</p>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-300">
+                          <p className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {lead.phone || "No phone"}</p>
+                          <p className="mt-1">{lead.email || "No email"}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">{timeLeftInPool(lead.updatedAt)}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{STATUS_LABELS[lead.status] || lead.status}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            className="inline-flex items-center gap-1 rounded-lg bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:opacity-90"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deploy(lead.id);
+                            }}
+                            disabled={deploying === lead.id}
+                          >
+                            {deploying === lead.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
+                            {deploying === lead.id ? "Deploying..." : "Create Instant Site"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!sortedLeads.length && <p className="p-6 text-center text-sm text-zinc-500">No leads yet. Run Find High-Fit Leads to populate the queue.</p>}
+            </section>
+          </div>
+        </section>
+
+        <div className={cn("fixed inset-y-0 right-0 z-40 w-full max-w-md border-l border-zinc-200 bg-white p-5 shadow-2xl transition-transform duration-300 dark:border-zinc-800 dark:bg-zinc-900", drawerOpen ? "translate-x-0" : "translate-x-full")}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">AI playbook</h2>
+            <button className="rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700" onClick={() => setDrawerOpen(false)}>Close</button>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Focus list</h2>
-              <Flame className="h-4 w-4 text-amber-500" />
+          {selectedLead && (
+            <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950">
+              <p className="text-xs text-zinc-500">Selected lead</p>
+              <p className="text-sm font-semibold">{selectedLead.businessName}</p>
+              <p className="text-xs text-zinc-500">{selectedLead.businessType} · {selectedLead.city}</p>
             </div>
-            <div className="space-y-2">
-              {topFocusLeads.map((lead, idx) => (
-                <article key={lead.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">#{idx + 1} next best account</p>
-                  <p className="mt-1 font-semibold">{lead.businessName}</p>
-                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Deploy proof site, then send {profile.toneOfVoice.toLowerCase()} outreach with one-click CTA to your calendar.</p>
-                </article>
-              ))}
-              {!topFocusLeads.length && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-xs text-slate-500 dark:border-slate-700">Add leads to generate your daily focus queue.</p>}
-            </div>
+          )}
+
+          <div className="mt-4 grid grid-cols-3 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+            {(["SCRIPTS", "OBJECTIONS", "TIPS"] as PlaybookTab[]).map((tab) => (
+              <button key={tab} className={cn("rounded-md px-2 py-1 text-xs font-medium", playbookTab === tab ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-300")} onClick={() => setPlaybookTab(tab)}>
+                {tab}
+              </button>
+            ))}
           </div>
-        </div>
 
-        <aside className="space-y-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">AI playbook</h2>
-              <Bot className="h-4 w-4 text-blue-500" />
-            </div>
-            <div className="mb-3 grid grid-cols-3 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-              {(["SCRIPTS", "OBJECTIONS", "TIPS"] as PlaybookTab[]).map((tab) => (
-                <button key={tab} className={cn("rounded-md px-2 py-1 text-xs font-medium", playbookTab === tab ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-600 dark:text-slate-300")} onClick={() => setPlaybookTab(tab)}>
-                  {tab}
-                </button>
-              ))}
-            </div>
-
+          <div className="mt-4 max-h-[calc(100vh-13rem)] space-y-3 overflow-y-auto pr-1">
             {playbookTab === "SCRIPTS" && (
-              <div className="space-y-2">
+              <>
                 {scripts.map((script) => (
-                  <article key={script.id} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm dark:border-slate-700 dark:bg-slate-800/50">
-                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{script.type}</p>
-                    <p className="whitespace-pre-wrap text-xs leading-relaxed">{script.content}</p>
-                    <button className="mt-2 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] dark:border-slate-700" onClick={() => upvote(script.id)}>
-                      <ThumbsUp className="h-3 w-3" /> {script.upvoteCount}
-                    </button>
+                  <article key={script.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{script.type}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{script.content}</p>
+                    <div className="mt-2 flex gap-2">
+                      <button className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-[11px] dark:border-zinc-700" onClick={() => upvote(script.id)}>
+                        <ThumbsUp className="h-3 w-3" /> {script.upvoteCount}
+                      </button>
+                      {selectedLead && <button className="rounded-md border border-zinc-200 px-2 py-1 text-[11px] dark:border-zinc-700" onClick={() => generateScript(selectedLead.id, "EMAIL")}>Regenerate</button>}
+                    </div>
                   </article>
                 ))}
-                {!scripts.length && <p className="rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-500 dark:border-slate-700">Generate a draft from any lead card to populate scripts.</p>}
-              </div>
+                {!scripts.length && <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-xs text-zinc-500 dark:border-zinc-700">Select a lead row and generate a script from the drawer.</p>}
+              </>
             )}
 
             {playbookTab === "OBJECTIONS" && (
-              <div className="space-y-2 text-xs">
+              <>
                 {["I already have a website.", "I don't have budget right now.", "Send me an email and I'll think about it."].map((item) => (
-                  <div key={item} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800/50">
+                  <div key={item} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-700 dark:bg-zinc-800/50">
                     <p className="font-medium">{item}</p>
-                    <p className="mt-1 text-slate-500 dark:text-slate-300">Counter: frame the live preview as proof of ROI, then ask for a 10-minute walkthrough.</p>
+                    <p className="mt-1 text-zinc-500 dark:text-zinc-300">Counter with ROI proof from the instant demo and offer a 10-minute walkthrough.</p>
                   </div>
                 ))}
-              </div>
+              </>
             )}
 
             {playbookTab === "TIPS" && (
-              <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
-                <li className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800/50">Lead with outcomes: calls booked, trust signals, and faster load times.</li>
-                <li className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800/50">Use social proof from similar businesses in {profile.niche || "your target market"}.</li>
-                <li className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800/50">Always close with one CTA: book a time on your calendar.</li>
+              <ul className="space-y-2 text-xs text-zinc-600 dark:text-zinc-300">
+                <li className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">Open with business outcomes: booked calls, trust signals, faster response.</li>
+                <li className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">Mention proof from a similar business in {profile.niche || "their vertical"}.</li>
+                <li className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">Use one CTA only: book time at {profile.calendarLink || "your link"}.</li>
               </ul>
             )}
-          </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 to-slate-800 p-4 text-slate-100 shadow-sm dark:border-slate-700">
-            <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-200">
-              <Trophy className="h-3.5 w-3.5 text-amber-300" /> Rep momentum
-            </p>
-            <h3 className="mt-3 text-lg font-semibold">Today&apos;s win plan</h3>
-            <ul className="mt-3 space-y-2 text-xs text-slate-200">
-              <li className="flex items-start gap-2"><Zap className="mt-0.5 h-3.5 w-3.5 text-emerald-300" /> Launch 3 preview sites before noon.</li>
-              <li className="flex items-start gap-2"><Mail className="mt-0.5 h-3.5 w-3.5 text-blue-300" /> Send personalized follow-up to each newly deployed account.</li>
-              <li className="flex items-start gap-2"><CalendarCheck2 className="mt-0.5 h-3.5 w-3.5 text-violet-300" /> End every message with {profile.calendarLink || "your booking link"}.</li>
-            </ul>
-            <p className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-emerald-300">
-              Stay relentless. Stack proof. Close faster. <ArrowRight className="h-3.5 w-3.5" />
-            </p>
-          </div>
-
-          {canAccessOps && (
-            <div className="rounded-2xl border border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-900 shadow-sm dark:border-purple-900/60 dark:bg-purple-950/30 dark:text-purple-200">
-              <h3 className="text-sm font-semibold uppercase tracking-wide">Operations view</h3>
-              <p className="mt-2">Managers can monitor funnel velocity and rep output trends here. Use this area for QA and forecasting workflows.</p>
+            <div className="rounded-xl border border-zinc-200 bg-zinc-100 p-3 text-xs dark:border-zinc-700 dark:bg-zinc-800/70">
+              <p className="inline-flex items-center gap-1 font-semibold"><Zap className="h-3.5 w-3.5 text-emerald-500" /> Momentum cue</p>
+              <p className="mt-1 text-zinc-600 dark:text-zinc-300">Build proof, personalize copy, and close with calendar-first CTA.</p>
             </div>
-          )}
-
-          {canAccessAdmin && (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4 text-xs text-rose-900 shadow-sm dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">
-              <h3 className="text-sm font-semibold uppercase tracking-wide">Admin controls</h3>
-              <p className="mt-2">Super admins can configure role permissions, integrations, and account governance from this dedicated view.</p>
-            </div>
-          )}
-
-        </aside>
-      </section>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
