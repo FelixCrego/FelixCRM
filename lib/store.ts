@@ -138,7 +138,7 @@ export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
     data: {
       content: script.content,
       type: script.type,
-      leadId: script.leadId,
+      ...(script.leadId ? { lead: { connect: { id: script.leadId } } } : {}),
       author: { connectOrCreate: { where: { email: "demo@felixcrm.ai" }, create: { email: "demo@felixcrm.ai" } } },
       toneUsed: (await getProfile()).toneOfVoice,
       modelName: process.env.OPENAI_MODEL ?? "gpt-4o-mini",

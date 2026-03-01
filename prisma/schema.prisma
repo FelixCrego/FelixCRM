@@ -45,6 +45,7 @@ model User {
   leadsOwned  Lead[]       @relation("LeadOwner")
   scripts     Script[]
   scriptVotes ScriptVote[]
+  successfulScriptsMarked SuccessfulScript[]
 
   @@index([onboardingCompleted])
 }
@@ -75,6 +76,7 @@ model Lead {
 
   owner   User?    @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   scripts Script[]
+  successfulScripts SuccessfulScript[]
 
   @@index([city, businessType])
   @@index([ownerId, status])
