@@ -1,83 +1,303 @@
 "use client";
 
+import { Mail, Phone, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 type Stage = "New" | "Contacted" | "Vercel Deployed" | "Demo Booked" | "Closed Won";
 type VercelStatus = "Live" | "Deploying" | "Unbuilt";
+type PlaybookTab = "Scripts" | "Objections" | "Tips";
 
 type Deal = {
   id: string;
-  name: string;
+  businessName: string;
+  contactName: string;
   rep: string;
-  value: string;
+  value: number;
   stage: Stage;
   vercelStatus: VercelStatus;
+  phone: string;
+  email: string;
+  lastAction: string;
+  leadSource: string;
+  websiteGoal: string;
+  history: string[];
 };
-
-const deals: Deal[] = [
-  { id: "d1", name: "Aurora Dental", rep: "AM", value: "$4,500", stage: "New", vercelStatus: "Unbuilt" },
-  { id: "d2", name: "Pulse Fitness", rep: "JS", value: "$7,800", stage: "Contacted", vercelStatus: "Deploying" },
-  { id: "d3", name: "Northline Roofing", rep: "TR", value: "$9,200", stage: "Vercel Deployed", vercelStatus: "Live" },
-  { id: "d4", name: "Maverick Legal", rep: "AM", value: "$6,900", stage: "Demo Booked", vercelStatus: "Live" },
-  { id: "d5", name: "Bloom Pediatrics", rep: "KL", value: "$5,400", stage: "Closed Won", vercelStatus: "Live" },
-];
 
 const stages: Stage[] = ["New", "Contacted", "Vercel Deployed", "Demo Booked", "Closed Won"];
 
+const deals: Deal[] = [
+  {
+    id: "d1",
+    businessName: "Aurora Dental",
+    contactName: "Dr. Barnes",
+    rep: "AM",
+    value: 4500,
+    stage: "New",
+    vercelStatus: "Unbuilt",
+    phone: "+1-415-555-0108",
+    email: "hello@auroradental.com",
+    lastAction: "Added 2 hrs ago",
+    leadSource: "Referral",
+    websiteGoal: "Launch modern patient booking funnel",
+    history: ["Lead imported • 8:10 AM", "Initial note added • 8:14 AM"],
+  },
+  {
+    id: "d2",
+    businessName: "Pulse Fitness",
+    contactName: "Jordan Snow",
+    rep: "JS",
+    value: 7800,
+    stage: "Contacted",
+    vercelStatus: "Deploying",
+    phone: "+1-628-555-0172",
+    email: "owner@pulsefitness.co",
+    lastAction: "Emailed yesterday",
+    leadSource: "Outbound SDR",
+    websiteGoal: "Promote 12-week challenge landing page",
+    history: ["Intro email sent • Yesterday", "Phone call connected • 4:38 PM", "Proposal viewed • 6:21 PM"],
+  },
+  {
+    id: "d3",
+    businessName: "Northline Roofing",
+    contactName: "Tyler Reed",
+    rep: "TR",
+    value: 9200,
+    stage: "Vercel Deployed",
+    vercelStatus: "Live",
+    phone: "+1-510-555-0150",
+    email: "ops@northlineroof.com",
+    lastAction: "Site preview shared 4 hrs ago",
+    leadSource: "Website form",
+    websiteGoal: "Generate storm season estimate requests",
+    history: ["Site deployed • Today 10:08 AM", "Preview approved • 11:42 AM"],
+  },
+  {
+    id: "d4",
+    businessName: "Maverick Legal",
+    contactName: "Avery Mills",
+    rep: "AM",
+    value: 6900,
+    stage: "Demo Booked",
+    vercelStatus: "Live",
+    phone: "+1-312-555-0123",
+    email: "team@mavericklegal.com",
+    lastAction: "Demo confirmed today",
+    leadSource: "Partner",
+    websiteGoal: "Increase consult bookings from paid social",
+    history: ["Demo invite accepted • 9:22 AM", "Reminder SMS sent • 1:00 PM"],
+  },
+  {
+    id: "d5",
+    businessName: "Bloom Pediatrics",
+    contactName: "Kim Lee",
+    rep: "KL",
+    value: 5400,
+    stage: "Closed Won",
+    vercelStatus: "Live",
+    phone: "+1-202-555-0189",
+    email: "care@bloompediatrics.com",
+    lastAction: "Won this morning",
+    leadSource: "Inbound",
+    websiteGoal: "Convert new parent consultation calls",
+    history: ["Final call completed • 9:00 AM", "Deal marked Closed Won • 9:34 AM"],
+  },
+];
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
+}
+
 export default function PipelinePage() {
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
+  const [activeTab, setActiveTab] = useState<PlaybookTab>("Scripts");
 
-  const byStage = useMemo(() => Object.fromEntries(stages.map((s) => [s, deals.filter((d) => d.stage === s)])), []);
+  const byStage = useMemo(() => Object.fromEntries(stages.map((stage) => [stage, deals.filter((deal) => deal.stage === stage)])), []);
+
+  const playbookContent: Record<PlaybookTab, string[]> = {
+    Scripts: [
+      "30-second opener focused on ROI and speed-to-launch.",
+      "Objection interrupt script for budget hesitation.",
+      "Follow-up voicemail script with CTA to book demo.",
+    ],
+    Objections: [
+      '"We already have a site." → Position as a conversion upgrade, not a redesign.',
+      '"Need to think about it." → Offer phased launch with immediate lead capture.',
+      '"Too expensive." → Tie monthly spend to one additional closed customer.',
+    ],
+    Tips: [
+      "Mention competitor velocity: reps win when they show launch dates, not mockups.",
+      "Always confirm primary conversion event before demo begins.",
+      "Send live preview within 60 minutes after call to maintain momentum.",
+    ],
+  };
 
   return (
     <>
       <div className="grid gap-4 xl:grid-cols-5">
-        {stages.map((stage) => (
-          <section key={stage} className="min-h-[520px] rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3">
-            <h2 className="mb-3 text-sm font-semibold text-zinc-200">{stage}</h2>
-            <div className="space-y-3">
-              {(byStage[stage] as Deal[]).map((deal) => (
+        {stages.map((stage) => {
+          const stageDeals = byStage[stage] as Deal[];
+          const stageValue = stageDeals.reduce((total, deal) => total + deal.value, 0);
+
+          return (
+            <section key={stage} className="min-h-[560px] rounded-2xl border border-zinc-800 bg-zinc-900/30 p-3">
+              <header className="mb-3 border-b border-zinc-800/80 pb-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-zinc-100">{stage}</h2>
+                  <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300">{stageDeals.length}</span>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">{formatCurrency(stageValue)} pipeline value</p>
+              </header>
+
+              <div className="space-y-3">
+                {stageDeals.map((deal) => (
+                  <article
+                    key={deal.id}
+                    onClick={() => setActiveDeal(deal)}
+                    className="cursor-pointer rounded-xl border border-zinc-800 bg-zinc-950/90 p-3 transition hover:border-zinc-600"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-medium text-zinc-100">{deal.businessName}</h3>
+                        <p className="text-xs text-zinc-500">{deal.contactName}</p>
+                      </div>
+                      <p className="text-sm font-semibold text-zinc-100">{formatCurrency(deal.value)}</p>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`tel:${deal.phone}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                          aria-label={`Call ${deal.businessName}`}
+                        >
+                          <Phone className="h-4 w-4" />
+                        </a>
+                        <a
+                          href={`mailto:${deal.email}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                          aria-label={`Email ${deal.businessName}`}
+                        >
+                          <Mail className="h-4 w-4" />
+                        </a>
+                      </div>
+
+                      {deal.vercelStatus === "Live" ? (
+                        <button
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded-md bg-emerald-500/20 px-2.5 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/30"
+                        >
+                          Live Preview
+                        </button>
+                      ) : deal.vercelStatus === "Deploying" ? (
+                        <button
+                          onClick={(event) => event.stopPropagation()}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-medium text-amber-200"
+                        >
+                          <span className="h-3 w-3 animate-spin rounded-full border border-amber-200 border-t-transparent" />
+                          Building
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded-md bg-blue-500/20 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition hover:bg-blue-500/35"
+                        >
+                          Deploy Site
+                        </button>
+                      )}
+                    </div>
+
+                    <footer className="mt-3 text-[11px] text-zinc-500">{deal.lastAction}</footer>
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      <div
+        className={`fixed inset-0 z-40 bg-black/50 transition-opacity ${activeDeal ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+        onClick={() => setActiveDeal(null)}
+      />
+
+      <aside
+        className={`fixed right-0 top-0 z-50 h-full w-full max-w-xl border-l border-zinc-800 bg-zinc-950 p-5 shadow-2xl transition-transform duration-300 ${
+          activeDeal ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        {activeDeal && (
+          <>
+            <div className="flex items-start justify-between gap-4 border-b border-zinc-800 pb-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Deal Hub</p>
+                <h3 className="mt-1 text-xl font-semibold text-zinc-100">{activeDeal.businessName}</h3>
+                <p className="mt-1 text-sm text-zinc-400">{formatCurrency(activeDeal.value)} • {activeDeal.stage}</p>
+              </div>
+              <button onClick={() => setActiveDeal(null)} className="rounded-lg border border-zinc-700 p-2 text-zinc-400 hover:text-zinc-100">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              {(Object.keys(playbookContent) as PlaybookTab[]).map((tab) => (
                 <button
-                  key={deal.id}
-                  onClick={() => setActiveDeal(deal)}
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950/80 p-3 text-left transition hover:border-blue-400/50"
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                    activeTab === tab ? "bg-zinc-100 text-zinc-950" : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                  }`}
                 >
-                  <p className="font-medium text-zinc-100">{deal.name}</p>
-                  <div className="mt-2 flex items-center justify-between text-xs text-zinc-400">
-                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-zinc-800 text-zinc-200">{deal.rep}</span>
-                    <span className="font-medium text-zinc-200">{deal.value}</span>
-                  </div>
-                  <span className={`mt-3 inline-block rounded-full px-2 py-1 text-xs ${deal.vercelStatus === "Live" ? "bg-emerald-500/20 text-emerald-300" : deal.vercelStatus === "Deploying" ? "bg-amber-500/20 text-amber-200" : "bg-zinc-700 text-zinc-300"}`}>
-                    Vercel: {deal.vercelStatus}
-                  </span>
+                  {tab}
                 </button>
               ))}
             </div>
-          </section>
-        ))}
-      </div>
 
-      {activeDeal && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4" onClick={() => setActiveDeal(null)}>
-          <div className="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-900 p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-xl font-semibold">{activeDeal.name}</h3>
-            <p className="mb-4 mt-1 text-sm text-zinc-400">Communication history & deployment actions</p>
-            <div className="space-y-3 text-sm">
-              {["Intro email sent • 09:12", "SMS follow-up delivered • 11:45", "Prospect requested revised pricing • 14:10"].map((event) => (
-                <div key={event} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
-                  {event}
-                </div>
-              ))}
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button className="rounded-xl border border-zinc-700 px-4 py-2 text-sm" onClick={() => setActiveDeal(null)}>
-                Close
-              </button>
-              <button className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-400">Instant Site: Deploy Now</button>
-            </div>
-          </div>
-        </div>
-      )}
+            <section className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">AI Playbook</h4>
+              <ul className="mt-3 space-y-2 text-sm text-zinc-200">
+                {playbookContent[activeTab].map((item) => (
+                  <li key={item} className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Lead Details</h4>
+                <dl className="mt-3 space-y-2 text-sm">
+                  <div>
+                    <dt className="text-zinc-500">Primary Contact</dt>
+                    <dd className="text-zinc-200">{activeDeal.contactName}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-zinc-500">Source</dt>
+                    <dd className="text-zinc-200">{activeDeal.leadSource}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-zinc-500">Goal</dt>
+                    <dd className="text-zinc-200">{activeDeal.websiteGoal}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Communication History</h4>
+                <ul className="mt-3 space-y-2 text-sm text-zinc-200">
+                  {activeDeal.history.map((event) => (
+                    <li key={event} className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2">
+                      {event}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          </>
+        )}
+      </aside>
     </>
   );
 }
