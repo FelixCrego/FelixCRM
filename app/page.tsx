@@ -30,7 +30,7 @@ import {
 
 type Profile = { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole };
 type PlaybookTab = "SCRIPTS" | "OBJECTIONS" | "TIPS";
-type LoginForm = { name: string; email: string; role: UserRole };
+type LoginForm = { name: string; email: string };
 
 const TOUR_STEPS = [
   "Scrape high-fit accounts by city and niche.",
@@ -112,7 +112,7 @@ export default function HomePage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>({ niche: "", toneOfVoice: "CONSULTATIVE", calendarLink: "", onboardingCompleted: false, role: "REP" });
   const [loggedIn, setLoggedIn] = useState(false);
-  const [loginForm, setLoginForm] = useState<LoginForm>({ name: "", email: "", role: "REP" });
+  const [loginForm, setLoginForm] = useState<LoginForm>({ name: "", email: "" });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -209,11 +209,11 @@ export default function HomePage() {
   }
 
   async function signIn() {
-    setProfile((prev) => ({ ...prev, role: loginForm.role }));
+    setProfile((prev) => ({ ...prev, role: "REP" }));
     await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...profile, role: loginForm.role }),
+      body: JSON.stringify({ ...profile, role: "REP" }),
     });
     setLoggedIn(true);
     await hydrate();
@@ -234,7 +234,7 @@ export default function HomePage() {
             <ShieldCheck className="h-3.5 w-3.5" /> Role-aware access
           </p>
           <h1 className="text-3xl font-bold tracking-tight">Sign in to Felix CRM</h1>
-          <p className="mt-2 text-sm text-slate-300">Pick your role to unlock a fully customized workspace for that job.</p>
+          <p className="mt-2 text-sm text-slate-300">New signups start as reps. Super admins can update roles later.</p>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.2fr]">
             <section className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
@@ -246,16 +246,8 @@ export default function HomePage() {
                 Work email
                 <input className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" placeholder="alex@felixcrm.ai" value={loginForm.email} onChange={(e) => setLoginForm((prev) => ({ ...prev, email: e.target.value }))} />
               </label>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Role
-                <select className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" value={loginForm.role} onChange={(e) => setLoginForm((prev) => ({ ...prev, role: e.target.value as UserRole }))}>
-                  {(["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"] as UserRole[]).map((role) => (
-                    <option key={role} value={role}>{ROLE_LABELS[role]}</option>
-                  ))}
-                </select>
-              </label>
               <button className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500" onClick={signIn}>
-                Continue to role workspace <ChevronRight className="h-4 w-4" />
+                Continue as Rep <ChevronRight className="h-4 w-4" />
               </button>
             </section>
 
@@ -263,7 +255,7 @@ export default function HomePage() {
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Role preview</h2>
               <div className="mt-4 grid gap-2">
                 {(["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"] as UserRole[]).map((role) => (
-                  <article key={role} className={cn("rounded-xl border p-3", loginForm.role === role ? "border-blue-500 bg-blue-500/10" : "border-slate-800 bg-slate-900") }>
+                  <article key={role} className={cn("rounded-xl border p-3", role === "REP" ? "border-blue-500 bg-blue-500/10" : "border-slate-800 bg-slate-900") }>
                     <p className="text-sm font-semibold">{ROLE_LABELS[role]}</p>
                     <p className="mt-1 text-xs text-slate-300">{ROLE_EXPERIENCE[role].subtitle}</p>
                   </article>
@@ -304,20 +296,9 @@ export default function HomePage() {
                 </li>
               ))}
             </ol>
-            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-slate-500">
-              Select role
-              <select
-                className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                value={profile.role}
-                onChange={(e) => setProfile((prev) => ({ ...prev, role: e.target.value as UserRole }))}
-              >
-                {(["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"] as UserRole[]).map((role) => (
-                  <option key={role} value={role}>
-                    {ROLE_LABELS[role]}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-2 text-xs font-medium text-blue-700 dark:border-blue-900/60 dark:bg-blue-900/20 dark:text-blue-300">
+              Your account is currently set to <strong>{ROLE_LABELS[profile.role]}</strong>. Only a Super Admin can change user roles.
+            </p>
             <button className="mt-5 inline-flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500" onClick={submitProfile}>
               Enter dashboard <ChevronRight className="h-4 w-4" />
             </button>
