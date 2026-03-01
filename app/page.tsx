@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import {
   Bot,
+  CalendarClock,
   Briefcase,
   Building2,
   CheckCircle2,
@@ -15,12 +16,14 @@ import {
   Loader2,
   Moon,
   Phone,
+  PhoneCall,
   Search,
   ShieldCheck,
   Sparkles,
   Sun,
   ThumbsUp,
   Users,
+  Wallet,
   Zap,
 } from "lucide-react";
 
@@ -147,6 +150,10 @@ export default function HomePage() {
     const contacted = filteredLeads.filter((lead) => lead.status === "CONTACTED" || lead.status === "IN_PROGRESS" || lead.status === "CLOSED").length;
     const wins = filteredLeads.filter((lead) => lead.status === "CLOSED").length;
     const hotLeads = filteredLeads.filter((lead) => getPriorityScore(lead) >= 70).length;
+    const pipelineValue = filteredLeads.reduce((total, lead) => total + getPriorityScore(lead) * 32, 0);
+    const earnedCommission = Math.round(wins * 1150);
+    const monthlyGoal = 5000;
+    const commissionProgress = Math.min(100, Math.round((earnedCommission / monthlyGoal) * 100));
     return {
       total: filteredLeads.length,
       liveSites,
@@ -154,6 +161,9 @@ export default function HomePage() {
       wins,
       winRate: filteredLeads.length ? Math.round((wins / filteredLeads.length) * 100) : 0,
       hotLeads,
+      pipelineValue,
+      earnedCommission,
+      commissionProgress,
     };
   }, [filteredLeads]);
 
@@ -326,6 +336,7 @@ export default function HomePage() {
             </div>
 
             <nav className="mt-8 space-y-1">
+              <p className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Workspace</p>
               {[
                 { label: "Dashboard", icon: LayoutDashboard },
                 { label: "Scrape Leads", icon: Search },
@@ -334,6 +345,19 @@ export default function HomePage() {
                 const Icon = item.icon;
                 return (
                   <button key={item.label} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm", index === 0 ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")}>
+                    <Icon className="h-4 w-4" /> {item.label}
+                  </button>
+                );
+              })}
+
+              <p className="px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Financials</p>
+              {[
+                { label: "Commissions", icon: Wallet },
+                { label: "Payouts", icon: Briefcase },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button key={item.label} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200">
                     <Icon className="h-4 w-4" /> {item.label}
                   </button>
                 );
@@ -362,20 +386,45 @@ export default function HomePage() {
               </button>
             </div>
 
-            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              {[
-                { label: "Pipeline coverage", value: metrics.total, delta: "+12%" },
-                { label: "Proof assets shipped", value: metrics.liveSites, delta: "+8%" },
-                { label: "Outreach momentum", value: metrics.contacted, delta: "+5%" },
-                { label: "Hot opportunities", value: metrics.hotLeads, delta: "+18%" },
-                { label: "Close rate", value: `${metrics.winRate}%`, delta: "+3%" },
-              ].map((metric) => (
-                <article key={metric.label} className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{metric.label}</p>
-                  <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">{metric.value}</p>
-                  <span className="mt-3 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">{metric.delta}</span>
-                </article>
-              ))}
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Earned commission</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">${metrics.earnedCommission.toLocaleString()}</p>
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                  <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400" style={{ width: `${metrics.commissionProgress}%` }} />
+                </div>
+                <p className="mt-2 text-[11px] font-medium text-emerald-600 dark:text-emerald-300">{metrics.commissionProgress}% to Monthly Goal</p>
+              </article>
+
+              <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Pipeline value</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">${metrics.pipelineValue.toLocaleString()}</p>
+                <span className="mt-3 inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-medium text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">Potential commission</span>
+              </article>
+
+              <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Proof assets shipped</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">{metrics.liveSites}</p>
+                <span className="mt-3 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">+8% this week</span>
+              </article>
+
+              <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Close rate</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">{metrics.winRate}%</p>
+                <span className="mt-3 inline-flex rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">{metrics.wins} wins closed</span>
+              </article>
+            </section>
+
+            <section className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <CalendarClock className="h-4 w-4 text-cyan-400" /> Today&apos;s Schedule
+                </p>
+                <div className="h-5 w-px bg-zinc-300 dark:bg-zinc-700" />
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">11:00 AM · Demo with Joe&apos;s HVAC</p>
+                <div className="h-5 w-px bg-zinc-300 dark:bg-zinc-700" />
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">2:30 PM · Follow-up call with Apex Roofing</p>
+              </div>
             </section>
 
             {canManageLeads && (
@@ -396,7 +445,8 @@ export default function HomePage() {
               </section>
             )}
 
-            <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <section className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+              <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                   <thead className="bg-zinc-50 dark:bg-zinc-950/70">
@@ -451,6 +501,36 @@ export default function HomePage() {
                 </table>
               </div>
               {!sortedLeads.length && <p className="p-6 text-center text-sm text-zinc-500">No leads yet. Run Find High-Fit Leads to populate the queue.</p>}
+              </div>
+
+              <aside className="rounded-2xl border border-zinc-800 bg-black p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">Live Site Engagement</h3>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-rose-400" /> LIVE
+                  </span>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {[
+                    { alert: "⚡️ Apex Roofing viewed their site", time: "2 mins ago" },
+                    { alert: "🔥 Texas Plumbing clicked the contact button", time: "5 mins ago" },
+                    { alert: "⚡️ Summit Solar opened the pricing section", time: "8 mins ago" },
+                    { alert: "🔥 Prime Landscaping submitted a form", time: "12 mins ago" },
+                  ].map((entry) => (
+                    <article key={entry.alert} className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm text-zinc-100">{entry.alert}</p>
+                          <p className="mt-1 text-xs text-zinc-400">{entry.time}</p>
+                        </div>
+                        <button className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20" title="Call now">
+                          <PhoneCall className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </aside>
             </section>
           </div>
         </section>
