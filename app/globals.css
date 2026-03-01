@@ -2,18 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg: 0 0% 100%;
-  --fg: 224 71% 4%;
-  --muted: 220 14% 96%;
-}
-
-.dark {
-  --bg: 222 47% 10%;
-  --fg: 210 40% 98%;
-  --muted: 223 27% 18%;
-}
-
 body {
-  @apply bg-bg text-fg;
+  @apply bg-zinc-950 text-zinc-100;
 }
