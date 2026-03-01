@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ToneOfVoice {
+  PROFESSIONAL
+  AGGRESSIVE
+  CONSULTATIVE
+  FRIENDLY
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  IN_PROGRESS
+  CLOSED
+  DISQUALIFIED
+}
+
+enum ScriptType {
+  EMAIL
+  SMS
+  CALL
+  OBJECTION_RESPONSE
+  TIP
+}
+
+model User {
+  id                  String      @id @default(cuid())
+  email               String      @unique
+  name                String?
+  passwordHash        String?
+  niche               String?
+  toneOfVoice         ToneOfVoice?
+  calendarLink        String?
+  onboardingCompleted Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  leadsOwned  Lead[]       @relation("LeadOwner")
+  scripts     Script[]
+  scriptVotes ScriptVote[]
+
+  @@index([onboardingCompleted])
+}
+
+model Lead {
+  id                 String     @id @default(cuid())
+  businessName       String
+  city               String
+  businessType       String
+  phone              String?
+  email              String?
+  websiteUrl         String?
+  websiteStatus      String?
+  normalizedName     String
+  normalizedPhone    String?
+  normalizedDomain   String?
+  dedupeKey          String     @unique
+  ownerId            String?
+  status             LeadStatus @default(NEW)
+  vercelDeploymentId String?
+  vercelProjectId    String?
+  deployedUrl        String?
+  siteStatus         String?
+  sourceProvider     String?
+  sourcePayload      Json?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  owner   User?    @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  scripts Script[]
+
+  @@index([city, businessType])
+  @@index([ownerId, status])
+  @@index([updatedAt, status])
+}
+
+model Script {
+  id              String      @id @default(cuid())
+  type            ScriptType
+  title           String?
+  content         String      @db.Text
+  toneUsed        ToneOfVoice?
+  modelName       String?
+  promptVersion   String?
+  contextSnapshot Json?
+  authorId        String
+  leadId          String?
+  isShared        Boolean     @default(true)
+  upvoteCount     Int         @default(0)
+  successful      Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  author    User               @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  lead      Lead?              @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  votes     ScriptVote[]
+  successes SuccessfulScript[]
+
+  @@index([type, isShared, upvoteCount(sort: Desc)])
+}
+
+model ScriptVote {
+  id        String   @id @default(cuid())
+  userId    String
+  scriptId  String
+  value     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  script Script @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scriptId])
+}
+
+model SuccessfulScript {
+  id             String   @id @default(cuid())
+  scriptId       String
+  leadId         String?
+  markedByUserId String
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  script   Script @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  lead     Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  markedBy User   @relation(fields: [markedByUserId], references: [id], onDelete: Cascade)
+}
