@@ -30,11 +30,19 @@ enum ScriptType {
   TIP
 }
 
+enum UserRole {
+  REP
+  MANAGER
+  TEAM_LEAD
+  SUPER_ADMIN
+}
+
 model User {
   id                  String      @id @default(cuid())
   email               String      @unique
   name                String?
   passwordHash        String?
+  role                UserRole    @default(REP)
   niche               String?
   toneOfVoice         ToneOfVoice?
   calendarLink        String?
@@ -48,6 +56,7 @@ model User {
   successfulScriptsMarked SuccessfulScript[]
 
   @@index([onboardingCompleted])
+  @@index([role])
 }
 
 model Lead {
