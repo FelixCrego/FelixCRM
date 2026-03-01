@@ -36,6 +36,9 @@ VERCEL_TEMPLATE_REPO=
 VERCEL_TEMPLATE_BRANCH=main
 SCRAPING_API_URL=
 SCRAPING_API_KEY=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 > If keys are missing, the app uses graceful mock behavior so UI still works end-to-end.
@@ -64,4 +67,17 @@ select cron.schedule(
     and "status" not in ('IN_PROGRESS', 'CLOSED');
   $$
 );
+```
+
+
+## Supabase database + roles
+
+- Copy `.env.example` to `.env.local` and set your Supabase values.
+- The app uses `DATABASE_URL` for Prisma. If `DATABASE_URL` is not set but `POSTGRES_PRISMA_URL` is available, it automatically falls back to `POSTGRES_PRISMA_URL`.
+- User roles are defined at the database layer as `UserRole` with: `REP`, `MANAGER`, `TEAM_LEAD`, `SUPER_ADMIN`.
+
+Run migrations:
+
+```bash
+npx prisma migrate deploy
 ```
