@@ -30,6 +30,18 @@ import {
 type Profile = { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole };
 type PlaybookTab = "SCRIPTS" | "OBJECTIONS" | "TIPS";
 type LoginForm = { name: string; email: string; role: UserRole };
+type MenuView = "Dashboard" | "Scrape Leads" | "Pipeline" | "Commissions" | "Payouts";
+
+const WORKSPACE_MENU: Array<{ label: Extract<MenuView, "Dashboard" | "Scrape Leads" | "Pipeline">; icon: typeof LayoutDashboard }> = [
+  { label: "Dashboard", icon: LayoutDashboard },
+  { label: "Scrape Leads", icon: Search },
+  { label: "Pipeline", icon: Flame },
+];
+
+const FINANCIAL_MENU: Array<{ label: Extract<MenuView, "Commissions" | "Payouts">; icon: typeof Wallet }> = [
+  { label: "Commissions", icon: Wallet },
+  { label: "Payouts", icon: Briefcase },
+];
 
 const TOUR_STEPS = [
   "Scrape high-fit accounts by city and niche.",
@@ -117,6 +129,7 @@ export default function HomePage() {
   const [profile, setProfile] = useState<Profile>({ niche: "", toneOfVoice: "CONSULTATIVE", calendarLink: "", onboardingCompleted: false, role: "REP" });
   const [loggedIn, setLoggedIn] = useState(false);
   const [loginForm, setLoginForm] = useState<LoginForm>({ name: "", email: "", role: "REP" });
+  const [activeView, setActiveView] = useState<MenuView>("Dashboard");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -217,6 +230,18 @@ export default function HomePage() {
     });
     setLoggedIn(true);
     await hydrate();
+  }
+
+  function onMenuClick(view: MenuView) {
+    setActiveView(view);
+    const sectionMap: Record<MenuView, string> = {
+      Dashboard: "dashboard-top",
+      "Scrape Leads": "scrape-section",
+      Pipeline: "pipeline-section",
+      Commissions: "commissions-section",
+      Payouts: "payouts-section",
+    };
+    document.getElementById(sectionMap[view])?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   const showOnboarding = !profile.onboardingCompleted;
@@ -337,27 +362,22 @@ export default function HomePage() {
 
             <nav className="mt-8 space-y-1">
               <p className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Workspace</p>
-              {[
-                { label: "Dashboard", icon: LayoutDashboard },
-                { label: "Scrape Leads", icon: Search },
-                { label: "Pipeline", icon: Flame },
-              ].map((item, index) => {
+              {WORKSPACE_MENU.map((item) => {
                 const Icon = item.icon;
+                const active = activeView === item.label;
                 return (
-                  <button key={item.label} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm", index === 0 ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")}>
+                  <button key={item.label} onClick={() => onMenuClick(item.label)} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm", active ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")}>
                     <Icon className="h-4 w-4" /> {item.label}
                   </button>
                 );
               })}
 
               <p className="px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Financials</p>
-              {[
-                { label: "Commissions", icon: Wallet },
-                { label: "Payouts", icon: Briefcase },
-              ].map((item) => {
+              {FINANCIAL_MENU.map((item) => {
                 const Icon = item.icon;
+                const active = activeView === item.label;
                 return (
-                  <button key={item.label} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200">
+                  <button key={item.label} onClick={() => onMenuClick(item.label)} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm", active ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")}>
                     <Icon className="h-4 w-4" /> {item.label}
                   </button>
                 );
@@ -372,7 +392,7 @@ export default function HomePage() {
         </aside>
 
         <section className="flex-1 pl-72">
-          <div className="mx-auto max-w-[1600px] space-y-6 p-6">
+          <div id="dashboard-top" className="mx-auto max-w-[1600px] space-y-6 p-6">
             <div className="flex flex-wrap items-center gap-3">
               <label className="group flex min-w-[320px] flex-1 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                 <Command className="h-4 w-4 text-zinc-400" />
@@ -386,7 +406,7 @@ export default function HomePage() {
               </button>
             </div>
 
-            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <section id="commissions-section" className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Earned commission</p>
                 <p className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">${metrics.earnedCommission.toLocaleString()}</p>
@@ -427,8 +447,18 @@ export default function HomePage() {
               </div>
             </section>
 
+            <section id="payouts-section" className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Payouts center</p>
+                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">Track your next disbursement and payout readiness.</p>
+                </div>
+                <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">Next payout Friday</span>
+              </div>
+            </section>
+
             {canManageLeads && (
-              <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <section id="scrape-section" className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                 <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
                   <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                     City
@@ -445,7 +475,7 @@ export default function HomePage() {
               </section>
             )}
 
-            <section className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
+            <section id="pipeline-section" className="grid gap-4 xl:grid-cols-[1.65fr_1fr]">
               <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
