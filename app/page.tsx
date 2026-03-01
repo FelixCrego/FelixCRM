@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import {
   ArrowRight,
+  Briefcase,
   Bot,
   Building2,
   CalendarCheck2,
@@ -18,15 +19,18 @@ import {
   Mail,
   Phone,
   Search,
+  ShieldCheck,
   Sparkles,
   Target,
   ThumbsUp,
   Trophy,
+  Users,
   Zap,
 } from "lucide-react";
 
 type Profile = { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole };
 type PlaybookTab = "SCRIPTS" | "OBJECTIONS" | "TIPS";
+type LoginForm = { name: string; email: string; role: UserRole };
 
 const TOUR_STEPS = [
   "Scrape high-fit accounts by city and niche.",
@@ -48,6 +52,40 @@ const STATUS_LABELS: Record<Lead["status"], string> = {
   IN_PROGRESS: "In Progress",
   CLOSED: "Closed Won",
   DISQUALIFIED: "Disqualified",
+};
+
+const ROLE_EXPERIENCE: Record<UserRole, { headline: string; subtitle: string; accent: string; icon: typeof Briefcase }> = {
+  REP: {
+    headline: "Execution cockpit",
+    subtitle: "Daily outreach queue, scripts, and close-plan momentum.",
+    accent: "text-blue-600 dark:text-blue-300",
+    icon: Briefcase,
+  },
+  TEAM_LEAD: {
+    headline: "Coaching command",
+    subtitle: "Team pipeline control plus rep-level quality coaching.",
+    accent: "text-violet-600 dark:text-violet-300",
+    icon: Users,
+  },
+  MANAGER: {
+    headline: "Operations center",
+    subtitle: "Funnel velocity, forecasting confidence, and execution health.",
+    accent: "text-emerald-600 dark:text-emerald-300",
+    icon: Building2,
+  },
+  SUPER_ADMIN: {
+    headline: "Governance suite",
+    subtitle: "System-wide permissions, integrations, and compliance controls.",
+    accent: "text-rose-600 dark:text-rose-300",
+    icon: ShieldCheck,
+  },
+};
+
+const ROLE_PANEL_COPY: Record<UserRole, string[]> = {
+  REP: ["Top 3 leads ranked by conversion probability.", "1-click script generation for each account.", "Daily CTA checklist tied to your calendar link."],
+  TEAM_LEAD: ["Rep-by-rep pipeline heat map.", "Coaching priorities from stalled opportunities.", "Ownership controls for lead balancing."],
+  MANAGER: ["Weekly velocity targets by stage.", "Forecast confidence based on live pipeline quality.", "Ops blockers to unblock reps quickly."],
+  SUPER_ADMIN: ["Role policy matrix and overrides.", "Integration status for data + deployment providers.", "Audit-ready governance and access events."],
 };
 
 function cn(...classes: Array<string | boolean | undefined>) {
@@ -73,6 +111,8 @@ export default function HomePage() {
   const [playbookTab, setPlaybookTab] = useState<PlaybookTab>("SCRIPTS");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>({ niche: "", toneOfVoice: "CONSULTATIVE", calendarLink: "", onboardingCompleted: false, role: "REP" });
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [loginForm, setLoginForm] = useState<LoginForm>({ name: "", email: "", role: "REP" });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -168,10 +208,73 @@ export default function HomePage() {
     await hydrate();
   }
 
+  async function signIn() {
+    setProfile((prev) => ({ ...prev, role: loginForm.role }));
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...profile, role: loginForm.role }),
+    });
+    setLoggedIn(true);
+    await hydrate();
+  }
+
   const showOnboarding = !profile.onboardingCompleted;
   const canManageLeads = profile.role === "TEAM_LEAD" || profile.role === "MANAGER" || profile.role === "SUPER_ADMIN";
   const canAccessOps = profile.role === "MANAGER" || profile.role === "SUPER_ADMIN";
   const canAccessAdmin = profile.role === "SUPER_ADMIN";
+  const roleExperience = ROLE_EXPERIENCE[profile.role];
+  const RoleIcon = roleExperience.icon;
+
+  if (!loggedIn) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-4 text-slate-100">
+        <div className="w-full max-w-4xl rounded-3xl border border-slate-800 bg-slate-900/90 p-6 shadow-2xl md:p-8">
+          <p className="mb-2 inline-flex items-center gap-2 rounded-full bg-blue-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-200">
+            <ShieldCheck className="h-3.5 w-3.5" /> Role-aware access
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">Sign in to Felix CRM</h1>
+          <p className="mt-2 text-sm text-slate-300">Pick your role to unlock a fully customized workspace for that job.</p>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+            <section className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Name
+                <input className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" placeholder="Alex Rivera" value={loginForm.name} onChange={(e) => setLoginForm((prev) => ({ ...prev, name: e.target.value }))} />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Work email
+                <input className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" placeholder="alex@felixcrm.ai" value={loginForm.email} onChange={(e) => setLoginForm((prev) => ({ ...prev, email: e.target.value }))} />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Role
+                <select className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" value={loginForm.role} onChange={(e) => setLoginForm((prev) => ({ ...prev, role: e.target.value as UserRole }))}>
+                  {(["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"] as UserRole[]).map((role) => (
+                    <option key={role} value={role}>{ROLE_LABELS[role]}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500" onClick={signIn}>
+                Continue to role workspace <ChevronRight className="h-4 w-4" />
+              </button>
+            </section>
+
+            <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Role preview</h2>
+              <div className="mt-4 grid gap-2">
+                {(["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"] as UserRole[]).map((role) => (
+                  <article key={role} className={cn("rounded-xl border p-3", loginForm.role === role ? "border-blue-500 bg-blue-500/10" : "border-slate-800 bg-slate-900") }>
+                    <p className="text-sm font-semibold">{ROLE_LABELS[role]}</p>
+                    <p className="mt-1 text-xs text-slate-300">{ROLE_EXPERIENCE[role].subtitle}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:p-6">
@@ -230,6 +333,9 @@ export default function HomePage() {
             </h1>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A high-conviction workspace for reps who ship value before they pitch.</p>
             <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Role: {ROLE_LABELS[profile.role]}</span>
+            <p className={cn("mt-2 inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide", roleExperience.accent)}>
+              <RoleIcon className="h-3.5 w-3.5" /> {roleExperience.headline}
+            </p>
           </div>
           <div className="flex flex-1 flex-col gap-2 md:flex-row md:items-center md:justify-end">
             <label className="group flex w-full max-w-xl items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
@@ -269,6 +375,18 @@ export default function HomePage() {
           <p className="mt-2 text-2xl font-bold">{metrics.winRate}%</p>
           <p className="text-xs text-slate-500 dark:text-slate-400">wins from visible pipeline</p>
         </article>
+      </section>
+
+      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{ROLE_LABELS[profile.role]} workspace modules</h2>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{roleExperience.subtitle}</p>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {ROLE_PANEL_COPY[profile.role].map((item) => (
+            <article key={item} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-950/40">
+              <p className="font-medium">{item}</p>
+            </article>
+          ))}
+        </div>
       </section>
 
       {canManageLeads && (
