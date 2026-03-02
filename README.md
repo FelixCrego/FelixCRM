@@ -36,12 +36,25 @@ VERCEL_TEMPLATE_REPO=
 VERCEL_TEMPLATE_BRANCH=main
 SCRAPING_API_URL=
 SCRAPING_API_KEY=
+MAPS_API_KEY=
+GEMINI_API_KEY=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 > If keys are missing, the app uses graceful mock behavior so UI still works end-to-end.
+
+
+## Lead scraper (CRM + Supabase)
+
+- `POST /api/scrape` now runs a Google Maps text-search + place-details scraping workflow when `MAPS_API_KEY` is configured.
+- Results are persisted through Prisma into your Supabase Postgres (`DATABASE_URL`).
+- Dedupe is handled by the existing `Lead.dedupeKey` plus in-run duplicate guards for place IDs, normalized names, and normalized phone numbers.
+- If `GEMINI_API_KEY` is set, the scraper also:
+  - generates micro-queries from the city+niche input, and
+  - creates an AI research summary per lead for enrichment.
+- The scrape response includes `chatbotPrompt`, a ready-to-use lead-scraping assistant prompt template.
 
 ## Prisma
 
