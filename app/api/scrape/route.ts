@@ -12,14 +12,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "City and businessType are required." }, { status: 400 });
   }
 
-  const scraped = await scrapeLeads(city, businessType);
+  const minRating = Number(body.minRating ?? 0);
+  const scraped = await scrapeLeads(city, businessType, Number.isFinite(minRating) ? minRating : 0);
   const inserted = await insertLeads(scraped);
 
   const chatbotPrompt = buildLeadScraperChatPrompt({
     niche: businessType,
     area: city,
     includeNoWebsiteOnly: true,
-    minRating: Number(body.minRating ?? 0),
+    minRating: Number.isFinite(minRating) ? minRating : 0,
   });
 
   return NextResponse.json({ inserted, fetched: scraped.length, chatbotPrompt });

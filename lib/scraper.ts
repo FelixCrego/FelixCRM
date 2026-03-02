@@ -103,7 +103,7 @@ Address: ${address}`;
   return text.trim() || "AI Research timeout or quota limit reached.";
 }
 
-export async function scrapeLeads(city: string, businessType: string): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
+export async function scrapeLeads(city: string, businessType: string, minRating = 0): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
   const provider = process.env.SCRAPING_API_URL;
   if (provider && process.env.SCRAPING_API_KEY) {
     const response = await fetch(provider, {
@@ -196,6 +196,7 @@ export async function scrapeLeads(city: string, businessType: string): Promise<O
 
         const address = details.formatted_address ?? "N/A";
         const rating = details.rating ?? 0;
+        if (rating < minRating) continue;
         const totalReviews = details.user_ratings_total ?? 0;
         const latestReviewTime = details.reviews?.[0]?.time ?? 0;
         const leadScore = scoreLead(totalReviews, latestReviewTime);
