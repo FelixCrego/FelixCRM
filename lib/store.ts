@@ -34,6 +34,8 @@ function leadToMemory(lead: any): Lead {
     ownerId: lead.ownerId,
     updatedAt: lead.updatedAt.toISOString(),
     socialLinks: Array.isArray(lead.sourcePayload?.socialLinks) ? lead.sourcePayload.socialLinks : [],
+    aiResearchSummary: typeof lead.sourcePayload?.aiResearchSummary === "string" ? lead.sourcePayload.aiResearchSummary : null,
+    sourceQuery: typeof lead.sourcePayload?.sourceQuery === "string" ? lead.sourcePayload.sourceQuery : null,
   };
 }
 
@@ -107,7 +109,11 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
           status: "NEW",
           siteStatus: "UNBUILT",
           ownerId: null,
-          sourcePayload: { socialLinks: lead.socialLinks ?? [] },
+          sourcePayload: {
+            socialLinks: lead.socialLinks ?? [],
+            aiResearchSummary: lead.aiResearchSummary ?? null,
+            sourceQuery: lead.sourceQuery ?? null,
+          },
         },
       });
       inserted++;
