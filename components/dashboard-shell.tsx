@@ -5,6 +5,11 @@ import { usePathname } from "next/navigation";
 import { Bot, Command, Flame, LayoutDashboard, Search, Wallet, Briefcase, Bell, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 
+type PlaybookCard = {
+  title: string;
+  body: string;
+};
+
 const navSections = [
   {
     title: "Workspace",
@@ -30,6 +35,32 @@ function cn(...classes: Array<string | false | null | undefined>) {
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
+  const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
+    { title: "Cold Openers", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
+    { title: "Objection Handling", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
+    { title: "Close-Ready Follow Ups", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
+  ]);
+
+  const generatePlaybook = async () => {
+    setIsGeneratingPlaybook(true);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    setPlaybookCards([
+      {
+        title: "Cold Openers",
+        body: "Lead with a 20-second value hook: time-to-launch, expected lead gain, and one quick win specific to their business type.",
+      },
+      {
+        title: "Objection Handling",
+        body: "When budget comes up, anchor to one extra closed customer per month and position rollout as a phased conversion upgrade.",
+      },
+      {
+        title: "Close-Ready Follow Ups",
+        body: "Send a same-day recap with demo link, clear CTA to book, and a 48-hour urgency window to keep momentum high.",
+      },
+    ]);
+    setIsGeneratingPlaybook(false);
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -124,13 +155,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="space-y-4 text-sm">
-          {["Cold Openers", "Objection Handling", "Close-Ready Follow Ups"].map((section) => (
-            <div key={section} className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-              <p className="mb-2 font-medium text-zinc-100">{section}</p>
-              <p className="text-zinc-400">Generate role-aware scripts and send sequences aligned to your current pipeline stage.</p>
+          {playbookCards.map((section) => (
+            <div key={section.title} className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
+              <p className="mb-2 font-medium text-zinc-100">{section.title}</p>
+              <p className="text-zinc-400">{section.body}</p>
             </div>
           ))}
-          <button className="w-full rounded-xl bg-blue-500 px-4 py-2.5 font-medium text-white hover:bg-blue-400">Generate New Playbook</button>
+          <button
+            onClick={generatePlaybook}
+            disabled={isGeneratingPlaybook}
+            className="w-full rounded-xl bg-blue-500 px-4 py-2.5 font-medium text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isGeneratingPlaybook ? "Generating..." : "Generate New Playbook"}
+          </button>
         </div>
       </aside>
     </div>
