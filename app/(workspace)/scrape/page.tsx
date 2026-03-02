@@ -2,17 +2,23 @@
 
 import { useMemo, useState } from "react";
 import {
+  Activity,
+  Bot,
   BriefcaseBusiness,
   Building2,
   Check,
   ExternalLink,
+  LineChart,
   Mail,
   MapPin,
   Phone,
   Plus,
+  Radar,
   Search,
   Sparkles,
+  Target,
   Triangle,
+  Wand2,
   Zap,
 } from "lucide-react";
 
@@ -32,6 +38,12 @@ const initialLeads: ScrapedLead[] = [
   { id: "4", business: "Prime Auto Spa", phone: "(555) 191-9931", email: "service@primeautospa.com", socialStatus: "Connected", websiteLive: true },
 ];
 
+const aiMissions = [
+  { title: "Autopilot sequences", detail: "Launches channel-specific outreach from lead health and intent data.", status: "Active" },
+  { title: "Intent pulse detection", detail: "Monitors review changes, website velocity, and social freshness for urgency signals.", status: "Learning" },
+  { title: "Revenue path simulator", detail: "Forecasts close probability by persona, timing, and offer angle.", status: "Ready" },
+];
+
 export default function ScrapePage() {
   const [city, setCity] = useState("Austin");
   const [niche, setNiche] = useState("Dental");
@@ -42,6 +54,19 @@ export default function ScrapePage() {
 
   const allSelected = selected.length === initialLeads.length;
   const selectedLeads = useMemo(() => initialLeads.filter((lead) => selected.includes(lead.id)), [selected]);
+
+  const aiSnapshot = useMemo(() => {
+    const missingSite = initialLeads.filter((lead) => !lead.websiteLive).length;
+    const connectedSocial = initialLeads.filter((lead) => lead.socialStatus === "Connected").length;
+    const avgReadiness = Math.round(((connectedSocial * 1.1 + (initialLeads.length - missingSite) * 1.3) / (initialLeads.length * 2.4)) * 100);
+
+    return {
+      missingSite,
+      connectedSocial,
+      avgReadiness,
+      hotNow: initialLeads.filter((lead) => !lead.websiteLive || lead.socialStatus !== "Connected").length,
+    };
+  }, []);
 
   function handleScrape() {
     setIsLoading(true);
@@ -134,11 +159,88 @@ export default function ScrapePage() {
         )}
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-[0_20px_40px_-24px_rgba(0,0,0,0.8)]">
+      <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+        <article className="rounded-2xl border border-violet-500/30 bg-gradient-to-br from-violet-500/15 via-zinc-900 to-zinc-950 p-4">
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-200">AI Lead Command</h3>
+            <span className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-violet-100">
+              <Bot className="size-3" />
+              Quantum Assist
+            </span>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-3">
+              <p className="text-xs text-zinc-400">Readiness Score</p>
+              <p className="mt-1 text-2xl font-semibold text-zinc-100">{aiSnapshot.avgReadiness}%</p>
+              <p className="mt-1 text-xs text-emerald-300">+12% week over week</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-3">
+              <p className="text-xs text-zinc-400">Hot Opportunities</p>
+              <p className="mt-1 text-2xl font-semibold text-zinc-100">{aiSnapshot.hotNow}</p>
+              <p className="mt-1 text-xs text-amber-300">Need immediate follow-up</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/70 p-3">
+              <p className="text-xs text-zinc-400">No-site targets</p>
+              <p className="mt-1 text-2xl font-semibold text-zinc-100">{aiSnapshot.missingSite}</p>
+              <p className="mt-1 text-xs text-blue-300">Perfect for instant demo builds</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            {aiMissions.map((mission) => (
+              <div key={mission.title} className="flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-950/80 px-3 py-2.5">
+                <Wand2 className="mt-0.5 size-4 text-violet-300" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-zinc-100">{mission.title}</p>
+                  <p className="text-xs text-zinc-400">{mission.detail}</p>
+                </div>
+                <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.11em] text-zinc-300">{mission.status}</span>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-300">Live AI Radar</h3>
+          <div className="space-y-2">
+            {[
+              { icon: Radar, label: "Intent spike", value: "Blue Atlas Dental opened pricing 3x today" },
+              { icon: Activity, label: "Engagement drift", value: "Silverline Attorneys hasn't replied in 5 days" },
+              { icon: Target, label: "Best close path", value: "Call + 45s voicemail + SMS follow-up" },
+              { icon: LineChart, label: "Pipeline projection", value: "$31,200 likely in next 14 days" },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.label} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5">
+                  <p className="mb-1 inline-flex items-center gap-1 text-xs uppercase tracking-[0.11em] text-zinc-400">
+                    <Icon className="size-3.5 text-cyan-300" />
+                    {item.label}
+                  </p>
+                  <p className="text-sm text-zinc-100">{item.value}</p>
+                </div>
+              );
+            })}
+          </div>
+        </article>
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-[0.13em] text-zinc-200">Lead Table</h3>
+            <p className="text-xs text-zinc-500">AI-ranked outreach queue with one-tap actions</p>
+          </div>
+          <span className="inline-flex items-center gap-1 rounded-md border border-cyan-400/30 bg-cyan-500/10 px-2 py-1 text-xs text-cyan-200">
+            <Zap className="size-3" />
+            Auto-prioritizing
+          </span>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-950/80 text-xs uppercase tracking-wide text-zinc-400">
-              <tr className="border-b border-zinc-800">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="bg-zinc-950/70 text-xs uppercase tracking-[0.12em] text-zinc-400">
+              <tr>
                 <th className="px-3 py-3">
                   <input
                     type="checkbox"
@@ -151,6 +253,7 @@ export default function ScrapePage() {
                 <th className="px-2 py-3">Phone</th>
                 <th className="px-2 py-3">Social</th>
                 <th className="px-2 py-3">Website Status</th>
+                <th className="px-2 py-3">AI Next Step</th>
                 <th className="px-2 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -210,7 +313,12 @@ export default function ScrapePage() {
                       )}
                     </div>
                   </td>
-
+                  <td className="px-2 py-3">
+                    <p className="inline-flex items-center gap-1 rounded-md border border-violet-400/25 bg-violet-500/10 px-2 py-1 text-xs text-violet-200">
+                      <Sparkles className="size-3" />
+                      {lead.websiteLive ? "Send personalization email" : "Deploy demo + send loom"}
+                    </p>
+                  </td>
                   <td className="px-2 py-3">
                     <div className="flex justify-end gap-1 opacity-35 transition group-hover:opacity-100">
                       <button className="rounded-md border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100" aria-label="Call lead">
@@ -245,6 +353,10 @@ export default function ScrapePage() {
               <button className="inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-100 hover:border-zinc-500 hover:bg-zinc-700">
                 <Check className="size-4" />
                 Push to Pipeline
+              </button>
+              <button className="inline-flex items-center justify-center gap-2 rounded-lg border border-violet-400/30 bg-violet-500/20 px-4 py-2 text-sm font-semibold text-violet-100 hover:border-violet-300/40 hover:bg-violet-500/30">
+                <Bot className="size-4" />
+                Run AI Multichannel Sequence
               </button>
               <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">
                 <Triangle className="size-4 fill-current" />
