@@ -11,6 +11,14 @@ export type Lead = {
   websiteUrl?: string | null;
   websiteStatus?: string | null;
   socialLinks?: string[];
+  sourceMeta?: {
+    leadScore?: string;
+    rating?: number | null;
+    totalReviews?: number;
+    latestReviewDate?: string | null;
+    aiResearchSummary?: string;
+    queryUsed?: string;
+  };
   status: "NEW" | "CONTACTED" | "IN_PROGRESS" | "CLOSED" | "DISQUALIFIED";
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;

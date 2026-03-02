@@ -34,6 +34,7 @@ function leadToMemory(lead: any): Lead {
     ownerId: lead.ownerId,
     updatedAt: lead.updatedAt.toISOString(),
     socialLinks: Array.isArray(lead.sourcePayload?.socialLinks) ? lead.sourcePayload.socialLinks : [],
+    sourceMeta: lead.sourcePayload?.sourceMeta ?? undefined,
   };
 }
 
@@ -73,6 +74,46 @@ export async function listLeads() {
 
 export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
   if (!hasDb) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (supabaseUrl && supabaseServiceRoleKey) {
+      const payload = leads.map((lead) => {
+        const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
+        return {
+          businessName: lead.businessName,
+          city: lead.city,
+          businessType: lead.businessType,
+          phone: lead.phone,
+          email: lead.email,
+          websiteUrl: lead.websiteUrl,
+          websiteStatus: lead.websiteStatus,
+          normalizedName: lead.businessName.toLowerCase(),
+          normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
+          normalizedDomain: domain.toLowerCase(),
+          dedupeKey: dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain),
+          status: "NEW",
+          siteStatus: lead.siteStatus ?? "UNBUILT",
+          ownerId: null,
+          sourceProvider: "google_maps",
+          sourcePayload: { socialLinks: lead.socialLinks ?? [], sourceMeta: lead.sourceMeta ?? {} },
+        };
+      });
+
+      const response = await fetch(`${supabaseUrl}/rest/v1/Lead`, {
+        method: "POST",
+        headers: {
+          apikey: supabaseServiceRoleKey,
+          Authorization: `Bearer ${supabaseServiceRoleKey}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=ignore-duplicates,return=minimal",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) return payload.length;
+    }
+
     const existing = new Set(memory.leads.map((lead) => dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? "")));
     const newLeads = leads.filter((lead) => !existing.has(dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? ""))).map((lead, idx) => ({
       ...lead,
@@ -107,7 +148,8 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
           status: "NEW",
           siteStatus: "UNBUILT",
           ownerId: null,
-          sourcePayload: { socialLinks: lead.socialLinks ?? [] },
+          sourceProvider: "google_maps",
+          sourcePayload: { socialLinks: lead.socialLinks ?? [], sourceMeta: lead.sourceMeta ?? {} },
         },
       });
       inserted++;
