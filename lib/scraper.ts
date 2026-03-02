@@ -103,7 +103,7 @@ Address: ${address}`;
   return text.trim() || "AI Research timeout or quota limit reached.";
 }
 
-export async function scrapeLeads(city: string, businessType: string, minRating = 0): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
+export async function scrapeLeads(city: string, businessType: string, minRating = 0, includeNoWebsiteOnly = false): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
   const provider = process.env.SCRAPING_API_URL;
   if (provider && process.env.SCRAPING_API_KEY) {
     const response = await fetch(provider, {
@@ -144,8 +144,9 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
   const leads: Omit<Lead, "id" | "updatedAt" | "status">[] = [];
 
   const queries = await generateMicroQueries(`${businessType} in ${city}`, geminiApiKey);
+  const querySet = new Set<string>([...queries, `${businessType} ${city}`, `${businessType} near ${city}`, `${businessType} in ${city}`]);
 
-  for (const query of queries) {
+  for (const query of querySet) {
     let params = new URLSearchParams({ query, key: mapsApiKey });
 
     while (true) {
@@ -154,7 +155,12 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
       if (!searchResponse.ok) break;
 
       const searchJson = (await searchResponse.json()) as GooglePlaceSearchResponse;
-      if (!["OK", "ZERO_RESULTS"].includes(searchJson.status ?? "")) break;
+      const status = searchJson.status ?? "";
+      if (status === "INVALID_REQUEST" && params.has("pagetoken")) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        continue;
+      }
+      if (!["OK", "ZERO_RESULTS"].includes(status)) break;
 
       const results = searchJson.results ?? [];
       if (!results.length) break;
@@ -181,7 +187,7 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         const hasRealWebsite =
           Boolean(website) && !fakeWebsiteDomains.some((domain) => website.includes(domain));
 
-        if (hasRealWebsite) continue;
+        if (includeNoWebsiteOnly && hasRealWebsite) continue;
 
         const name = (details.name ?? "N/A").trim();
         const phone = details.formatted_phone_number ?? "N/A";
@@ -210,7 +216,7 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
           phone,
           email: null,
           websiteUrl: details.website ?? null,
-          websiteStatus: "MISSING",
+          websiteStatus: hasRealWebsite ? "LIVE" : "MISSING",
           socialLinks: [],
           aiResearchSummary: `${leadScore} | Rating: ${rating} | Reviews: ${totalReviews}. ${aiResearchSummary}`,
           sourceQuery: query,

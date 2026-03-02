@@ -18,6 +18,13 @@ let memory = {
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
+
+function shouldUseMemoryFallback(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return msg.includes("does not exist") || msg.includes("p2021") || msg.includes("p2022");
+}
+
 function leadToMemory(lead: any): Lead {
   return {
     id: lead.id,
@@ -69,8 +76,13 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
 
 export async function listLeads() {
   if (!hasDb) return memory.leads;
-  const leads = await prisma.lead.findMany({ orderBy: { updatedAt: "desc" } });
-  return leads.map(leadToMemory);
+  try {
+    const leads = await prisma.lead.findMany({ orderBy: { updatedAt: "desc" } });
+    return leads.map(leadToMemory);
+  } catch (error) {
+    if (shouldUseMemoryFallback(error)) return memory.leads;
+    throw error;
+  }
 }
 
 export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
@@ -161,8 +173,13 @@ export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
 
 export async function listScripts() {
   if (!hasDb) return memory.scripts;
-  const rows = await prisma.script.findMany({ where: { isShared: true }, orderBy: [{ upvoteCount: "desc" }, { createdAt: "desc" }] });
-  return rows.map((row) => ({ id: row.id, content: row.content, type: row.type as Script["type"], upvoteCount: row.upvoteCount, leadId: row.leadId ?? undefined }));
+  try {
+    const rows = await prisma.script.findMany({ where: { isShared: true }, orderBy: [{ upvoteCount: "desc" }, { createdAt: "desc" }] });
+    return rows.map((row) => ({ id: row.id, content: row.content, type: row.type as Script["type"], upvoteCount: row.upvoteCount, leadId: row.leadId ?? undefined }));
+  } catch (error) {
+    if (shouldUseMemoryFallback(error)) return memory.scripts;
+    throw error;
+  }
 }
 
 export async function upvoteScript(scriptId: string) {
@@ -182,14 +199,19 @@ export async function releaseStaleLeads() {
     });
     return;
   }
-  await prisma.lead.updateMany({
-    where: {
-      ownerId: { not: null },
-      status: { notIn: ["IN_PROGRESS", "CLOSED"] },
-      updatedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-    },
-    data: { ownerId: null },
-  });
+  try {
+    await prisma.lead.updateMany({
+      where: {
+        ownerId: { not: null },
+        status: { notIn: ["IN_PROGRESS", "CLOSED"] },
+        updatedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+      },
+      data: { ownerId: null },
+    });
+  } catch (error) {
+    if (shouldUseMemoryFallback(error)) return;
+    throw error;
+  }
 }
 
 export async function getLeadById(leadId: string) {

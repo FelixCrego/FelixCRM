@@ -13,15 +13,9 @@ export async function POST(request: Request) {
   }
 
   const minRating = Number(body.minRating ?? 0);
-  const scraped = await scrapeLeads(city, businessType, Number.isFinite(minRating) ? minRating : 0);
+  const includeNoWebsiteOnly = Boolean(body.includeNoWebsiteOnly ?? false);
+  const scraped = await scrapeLeads(city, businessType, Number.isFinite(minRating) ? minRating : 0, includeNoWebsiteOnly);
   const inserted = await insertLeads(scraped);
 
-  const chatbotPrompt = buildLeadScraperChatPrompt({
-    niche: businessType,
-    area: city,
-    includeNoWebsiteOnly: true,
-    minRating: Number.isFinite(minRating) ? minRating : 0,
-  });
-
-  return NextResponse.json({ inserted, fetched: scraped.length, chatbotPrompt });
+  return NextResponse.json({ inserted, fetched: scraped.length });
 }

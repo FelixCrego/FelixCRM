@@ -1,29 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, BriefcaseBusiness, Loader2, MapPin, RefreshCcw, Search } from "lucide-react";
+import { BriefcaseBusiness, Loader2, MapPin, RefreshCcw, Search } from "lucide-react";
 
 type Lead = {
   id: string;
   businessName: string;
-  city: string;
-  businessType: string;
   phone?: string | null;
   websiteUrl?: string | null;
   websiteStatus?: string | null;
-  aiResearchSummary?: string | null;
   sourceQuery?: string | null;
-  updatedAt: string;
+  aiResearchSummary?: string | null;
 };
 
 export default function ScrapePage() {
   const [city, setCity] = useState("Austin");
   const [niche, setNiche] = useState("Garage Door Repair");
-  const [minRating, setMinRating] = useState(4.2);
+  const [minRating, setMinRating] = useState(0);
+  const [includeNoWebsiteOnly, setIncludeNoWebsiteOnly] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chatbotPrompt, setChatbotPrompt] = useState("");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stats, setStats] = useState<{ fetched: number; inserted: number } | null>(null);
 
@@ -54,12 +51,12 @@ export default function ScrapePage() {
       const response = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city, businessType: niche, minRating }),
+        body: JSON.stringify({ city, businessType: niche, minRating, includeNoWebsiteOnly }),
       });
+
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Scrape failed.");
 
-      setChatbotPrompt(String(payload.chatbotPrompt ?? ""));
       setStats({ fetched: Number(payload.fetched ?? 0), inserted: Number(payload.inserted ?? 0) });
       await refreshLeads();
     } catch (err) {
@@ -69,64 +66,44 @@ export default function ScrapePage() {
     }
   }
 
-  const latestLeads = useMemo(() => leads.slice(0, 25), [leads]);
+  const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
 
   return (
     <div className="space-y-5 pb-16">
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-zinc-100">CRM Lead Scraper</h2>
-          <button
-            onClick={refreshLeads}
-            disabled={isRefreshing}
-            className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 disabled:opacity-60"
-          >
-            <RefreshCcw className="size-3.5" />
-            Refresh
+          <button onClick={refreshLeads} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 disabled:opacity-60">
+            <RefreshCcw className="size-3.5" /> Refresh
           </button>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_auto]">
+        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px_auto]">
           <label className="relative block">
             <MapPin className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
             <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="City / Area" className="h-11 w-full rounded-xl border border-zinc-800 bg-zinc-900 pl-9 pr-3 text-sm text-zinc-100" />
           </label>
-
           <label className="relative block">
             <BriefcaseBusiness className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
             <input value={niche} onChange={(e) => setNiche(e.target.value)} placeholder="Business Type" className="h-11 w-full rounded-xl border border-zinc-800 bg-zinc-900 pl-9 pr-3 text-sm text-zinc-100" />
           </label>
-
           <label className="block rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2">
-            <p className="text-[11px] text-zinc-400">Minimum Google Rating</p>
+            <p className="text-[11px] text-zinc-400">Minimum Rating</p>
             <input type="number" min={0} max={5} step={0.1} value={minRating} onChange={(e) => setMinRating(Number(e.target.value))} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
           </label>
-
-          <button
-            onClick={handleScrape}
-            disabled={isScraping}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-100 px-4 text-sm font-medium text-zinc-950 hover:bg-white disabled:opacity-70"
-          >
+          <button onClick={handleScrape} disabled={isScraping} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-zinc-100 px-4 text-sm font-medium text-zinc-950 hover:bg-white disabled:opacity-70">
             {isScraping ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
             {isScraping ? "Scraping..." : "Run Scrape"}
           </button>
         </div>
 
+        <label className="mt-3 inline-flex items-center gap-2 text-sm text-zinc-300">
+          <input type="checkbox" checked={includeNoWebsiteOnly} onChange={(e) => setIncludeNoWebsiteOnly(e.target.checked)} className="size-4 rounded border-zinc-600 bg-zinc-900" />
+          Only include businesses with no website
+        </label>
+
         {stats && <p className="mt-3 text-sm text-emerald-300">Fetched {stats.fetched} records, inserted {stats.inserted} new leads.</p>}
         {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
-      </section>
-
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
-        <h3 className="mb-2 inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-zinc-200">
-          <Bot className="size-4" />
-          Lead Scraper Chatbot Prompt
-        </h3>
-        <textarea
-          value={chatbotPrompt}
-          onChange={(e) => setChatbotPrompt(e.target.value)}
-          placeholder="Run scrape to generate prompt..."
-          className="h-56 w-full rounded-xl border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-200 outline-none"
-        />
       </section>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
@@ -153,11 +130,7 @@ export default function ScrapePage() {
                 </tr>
               ))}
               {!latestLeads.length && (
-                <tr>
-                  <td className="py-4 text-zinc-500" colSpan={5}>
-                    No leads yet. Run a scrape to load and insert leads.
-                  </td>
-                </tr>
+                <tr><td className="py-4 text-zinc-500" colSpan={5}>No leads yet. Run a scrape to load and insert leads.</td></tr>
               )}
             </tbody>
           </table>
