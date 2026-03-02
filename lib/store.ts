@@ -214,6 +214,31 @@ export async function releaseStaleLeads() {
   }
 }
 
+
+export async function setLeadResearchSummary(leadId: string, summary: string) {
+  if (!hasDb) {
+    memory.leads = memory.leads.map((lead) => (lead.id === leadId ? { ...lead, aiResearchSummary: summary, updatedAt: new Date().toISOString() } : lead));
+    return;
+  }
+
+  try {
+    const existing = await prisma.lead.findUnique({ where: { id: leadId }, select: { sourcePayload: true } });
+    const payload = existing?.sourcePayload && typeof existing.sourcePayload === "object" ? existing.sourcePayload as Record<string, unknown> : {};
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        sourcePayload: {
+          ...payload,
+          aiResearchSummary: summary,
+        },
+      },
+    });
+  } catch (error) {
+    if (shouldUseMemoryFallback(error)) return;
+    throw error;
+  }
+}
+
 export async function getLeadById(leadId: string) {
   const leads = await listLeads();
   return leads.find((lead) => lead.id === leadId);

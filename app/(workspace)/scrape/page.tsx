@@ -20,6 +20,7 @@ export default function ScrapePage() {
   const [includeNoWebsiteOnly, setIncludeNoWebsiteOnly] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isResearchingLeadId, setIsResearchingLeadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stats, setStats] = useState<{ fetched: number; inserted: number } | null>(null);
@@ -66,6 +67,27 @@ export default function ScrapePage() {
     }
   }
 
+  async function handleResearchLead(leadId: string) {
+    setIsResearchingLeadId(leadId);
+    setError(null);
+    try {
+      const response = await fetch("/api/leads/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Research failed.");
+      await refreshLeads();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Research failed.");
+    } finally {
+      setIsResearchingLeadId(null);
+    }
+  }
+
+  const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
+
   const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
 
   return (
@@ -109,7 +131,7 @@ export default function ScrapePage() {
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-200">Latest Leads ({leads.length})</h3>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-sm">
+          <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-zinc-400">
               <tr>
                 <th className="pb-2">Business</th>
@@ -117,6 +139,7 @@ export default function ScrapePage() {
                 <th className="pb-2">Website</th>
                 <th className="pb-2">Source Query</th>
                 <th className="pb-2">AI Summary</th>
+                <th className="pb-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -126,11 +149,20 @@ export default function ScrapePage() {
                   <td className="py-2 pr-3 text-zinc-300">{lead.phone || "N/A"}</td>
                   <td className="py-2 pr-3 text-zinc-300">{lead.websiteUrl || lead.websiteStatus || "N/A"}</td>
                   <td className="py-2 pr-3 text-zinc-400">{lead.sourceQuery || "N/A"}</td>
-                  <td className="py-2 text-zinc-400">{lead.aiResearchSummary || "N/A"}</td>
+                  <td className="py-2 pr-3 text-zinc-400">{lead.aiResearchSummary || "Not researched yet"}</td>
+                  <td className="py-2">
+                    <button
+                      onClick={() => handleResearchLead(lead.id)}
+                      disabled={isResearchingLeadId === lead.id}
+                      className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-900 disabled:opacity-60"
+                    >
+                      {isResearchingLeadId === lead.id ? "Researching..." : "Deep Research"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {!latestLeads.length && (
-                <tr><td className="py-4 text-zinc-500" colSpan={5}>No leads yet. Run a scrape to load and insert leads.</td></tr>
+                <tr><td className="py-4 text-zinc-500" colSpan={6}>No leads yet. Run a scrape to load and insert leads.</td></tr>
               )}
             </tbody>
           </table>

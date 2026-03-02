@@ -24,16 +24,6 @@ function cleanPhoneNumber(phoneStr?: string | null) {
   return phoneStr.replace(/\D/g, "");
 }
 
-function scoreLead(reviewCount: number, latestReviewTime: number) {
-  if (reviewCount === 0 || latestReviewTime === 0) return "⭐";
-  const daysSinceReview = (Date.now() / 1000 - latestReviewTime) / 86400;
-
-  if (reviewCount > 20 && daysSinceReview <= 30) return "⭐⭐⭐⭐⭐";
-  if (reviewCount > 10 && daysSinceReview <= 90) return "⭐⭐⭐⭐";
-  if (reviewCount > 5 && daysSinceReview <= 365) return "⭐⭐⭐";
-  if (reviewCount > 0 && daysSinceReview > 365) return "⭐⭐";
-  return "⭐";
-}
 
 function buildFallbackLeads(city: string, businessType: string): Omit<Lead, "id" | "updatedAt" | "status">[] {
   return Array.from({ length: 8 }).map((_, idx) => ({
@@ -45,7 +35,7 @@ function buildFallbackLeads(city: string, businessType: string): Omit<Lead, "id"
     websiteUrl: idx % 2 === 0 ? `https://${businessType.toLowerCase().replace(/\s+/g, "")}${idx}.com` : null,
     websiteStatus: idx % 2 === 0 ? "LIVE" : "MISSING",
     socialLinks: ["https://facebook.com/example", "https://instagram.com/example"],
-    aiResearchSummary: "Limited online footprint found.",
+    aiResearchSummary: null,
     sourceQuery: `${businessType} ${city}`,
     ownerId: null,
     deployedUrl: null,
@@ -89,7 +79,7 @@ Return ONLY a comma-separated list. No bullets or markdown.`;
   return queries.length ? queries : [userPrompt];
 }
 
-async function researchLead(name: string, phone: string, address: string, geminiApiKey?: string) {
+async function researchLeadWithGemini(name: string, phone: string, address: string, geminiApiKey?: string) {
   if (!geminiApiKey) return "Limited online footprint found.";
 
   const prompt = `You are an expert lead generation researcher. Research this local business and return a concise 2-3 sentence summary.
@@ -101,6 +91,11 @@ Address: ${address}`;
 
   const text = await callGeminiText(prompt, geminiApiKey);
   return text.trim() || "AI Research timeout or quota limit reached.";
+}
+
+export async function runLeadDeepResearch(input: { name: string; phone?: string | null; address?: string | null }) {
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  return researchLeadWithGemini(input.name, input.phone ?? "N/A", input.address ?? "N/A", geminiApiKey);
 }
 
 export async function scrapeLeads(city: string, businessType: string, minRating = 0, includeNoWebsiteOnly = false): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
@@ -203,12 +198,6 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         const address = details.formatted_address ?? "N/A";
         const rating = details.rating ?? 0;
         if (rating < minRating) continue;
-        const totalReviews = details.user_ratings_total ?? 0;
-        const latestReviewTime = details.reviews?.[0]?.time ?? 0;
-        const leadScore = scoreLead(totalReviews, latestReviewTime);
-
-        const aiResearchSummary = await researchLead(name, phone, address, geminiApiKey);
-
         leads.push({
           businessName: name,
           city,
@@ -218,7 +207,7 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
           websiteUrl: details.website ?? null,
           websiteStatus: hasRealWebsite ? "LIVE" : "MISSING",
           socialLinks: [],
-          aiResearchSummary: `${leadScore} | Rating: ${rating} | Reviews: ${totalReviews}. ${aiResearchSummary}`,
+          aiResearchSummary: null,
           sourceQuery: query,
           ownerId: null,
           deployedUrl: null,
