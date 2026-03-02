@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scrapeLeads } from "@/lib/scraper";
 import { insertLeads } from "@/lib/store";
+import { buildLeadScraperChatPrompt } from "@/lib/lead-scraper-prompt";
 
 export async function POST(request: Request) {
   const body = await request.json();
