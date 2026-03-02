@@ -88,8 +88,6 @@ export default function ScrapePage() {
 
   const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
 
-  const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
-
   return (
     <div className="space-y-5 pb-16">
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
