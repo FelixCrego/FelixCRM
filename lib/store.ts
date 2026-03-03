@@ -6,7 +6,7 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const hasDb = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
 const USERS_TABLE_CANDIDATES = ["User", "user"];
-const LEADS_TABLE_CANDIDATES = ["lead", "Lead"];
+const LEADS_TABLE_CANDIDATES = ["leads", "lead", "Lead"];
 const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
 
 const resolvedTableCache = new Map<string, string>();
@@ -56,6 +56,12 @@ function isMissingTableError(error: unknown) {
   return code === "42P01" || code === "PGRST205" || (message.includes("Could not find the table") && message.includes("schema cache"));
 }
 
+function isSchemaCacheColumnError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as SupabaseError).code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return code === "PGRST204" || (message.includes("Could not find the") && message.includes("column") && message.includes("schema cache"));
+}
+
 async function withTableFallback<T>(cacheKey: string, candidates: string[], requester: (table: string) => Promise<T>): Promise<T> {
   const cached = resolvedTableCache.get(cacheKey);
   if (cached) return requester(cached);
@@ -73,6 +79,36 @@ async function withTableFallback<T>(cacheKey: string, candidates: string[], requ
   }
 
   throw lastError ?? new Error(`Unable to resolve Supabase table for ${cacheKey}`);
+}
+
+async function withLeadTableFallback<T>(requester: (table: string) => Promise<T>): Promise<T> {
+  const cached = resolvedTableCache.get("leads");
+  if (cached) {
+    try {
+      return await requester(cached);
+    } catch (error) {
+      if (!isMissingTableError(error) && !isSchemaCacheColumnError(error)) throw error;
+      resolvedTableCache.delete("leads");
+    }
+  }
+
+  let lastError: unknown = null;
+  for (const candidate of LEADS_TABLE_CANDIDATES) {
+    try {
+      const result = await requester(candidate);
+      resolvedTableCache.set("leads", candidate);
+      return result;
+    } catch (error) {
+      if (!isMissingTableError(error) && !isSchemaCacheColumnError(error)) throw error;
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error("Unable to resolve Supabase table for leads");
+}
+
+function isSnakeLeadsTable(table: string) {
+  return table === "leads";
 }
 
 function isMissingUserTableError(error: unknown) {
@@ -103,21 +139,21 @@ async function getSafeFirstUser() {
 function leadToMemory(lead: any): Lead {
   return {
     id: lead.id,
-    businessName: lead.businessName,
+    businessName: lead.businessName ?? lead.business_name,
     city: lead.city,
-    businessType: lead.businessType,
+    businessType: lead.businessType ?? lead.business_type,
     phone: lead.phone,
     email: lead.email,
-    websiteUrl: lead.websiteUrl,
-    websiteStatus: lead.websiteStatus,
+    websiteUrl: lead.websiteUrl ?? lead.website_url,
+    websiteStatus: lead.websiteStatus ?? lead.website_status,
     status: lead.status,
-    deployedUrl: lead.deployedUrl,
-    siteStatus: (lead.siteStatus ?? "UNBUILT") as Lead["siteStatus"],
-    ownerId: lead.ownerId,
-    updatedAt: new Date(lead.updatedAt).toISOString(),
-    socialLinks: Array.isArray(lead.sourcePayload?.socialLinks) ? lead.sourcePayload.socialLinks : [],
-    aiResearchSummary: typeof lead.sourcePayload?.aiResearchSummary === "string" ? lead.sourcePayload.aiResearchSummary : null,
-    sourceQuery: typeof lead.sourcePayload?.sourceQuery === "string" ? lead.sourcePayload.sourceQuery : null,
+    deployedUrl: lead.deployedUrl ?? lead.deployed_url,
+    siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
+    ownerId: lead.ownerId ?? lead.owner_id,
+    updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
+    socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
+    aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
+    sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
   };
 }
 
@@ -162,7 +198,10 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
 
 export async function listLeads() {
   if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
-  const leads = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "*", order: "updatedAt.desc" }));
+  const leads = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: "*",
+    order: isSnakeLeadsTable(table) ? "updated_at.desc" : "updatedAt.desc",
+  }));
   return leads.map(leadToMemory);
 }
 
@@ -176,30 +215,52 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
     const key = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
     try {
-      await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
+      await withLeadTableFallback((table) => supabaseRequest(table, {
         method: "POST",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({
-          businessName: lead.businessName,
-          city: lead.city,
-          businessType: lead.businessType,
-          phone: lead.phone,
-          email: lead.email,
-          websiteUrl: lead.websiteUrl,
-          websiteStatus: lead.websiteStatus,
-          normalizedName: lead.businessName.toLowerCase(),
-          normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
-          normalizedDomain: domain.toLowerCase(),
-          dedupeKey: key,
-          status: "NEW",
-          siteStatus: "UNBUILT",
-          ownerId: null,
-          sourcePayload: {
-            socialLinks: lead.socialLinks ?? [],
-            aiResearchSummary: lead.aiResearchSummary ?? null,
-            sourceQuery: lead.sourceQuery ?? null,
-          },
-        }),
+        body: JSON.stringify(isSnakeLeadsTable(table)
+          ? {
+              business_name: lead.businessName,
+              city: lead.city,
+              business_type: lead.businessType,
+              phone: lead.phone,
+              email: lead.email,
+              website_url: lead.websiteUrl,
+              website_status: lead.websiteStatus,
+              normalized_name: lead.businessName.toLowerCase(),
+              normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
+              normalized_domain: domain.toLowerCase(),
+              dedupe_key: key,
+              status: "NEW",
+              site_status: "UNBUILT",
+              owner_id: null,
+              source_payload: {
+                socialLinks: lead.socialLinks ?? [],
+                aiResearchSummary: lead.aiResearchSummary ?? null,
+                sourceQuery: lead.sourceQuery ?? null,
+              },
+            }
+          : {
+              businessName: lead.businessName,
+              city: lead.city,
+              businessType: lead.businessType,
+              phone: lead.phone,
+              email: lead.email,
+              websiteUrl: lead.websiteUrl,
+              websiteStatus: lead.websiteStatus,
+              normalizedName: lead.businessName.toLowerCase(),
+              normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
+              normalizedDomain: domain.toLowerCase(),
+              dedupeKey: key,
+              status: "NEW",
+              siteStatus: "UNBUILT",
+              ownerId: null,
+              sourcePayload: {
+                socialLinks: lead.socialLinks ?? [],
+                aiResearchSummary: lead.aiResearchSummary ?? null,
+                sourceQuery: lead.sourceQuery ?? null,
+              },
+            }),
       }));
       inserted++;
     } catch (error) {
@@ -217,15 +278,20 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
 
 export async function setLeadDeployment(leadId: string, deployment: { deployedUrl?: string; siteStatus: "BUILDING" | "LIVE" | "FAILED"; vercelDeploymentId?: string }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to update lead deployment.");
-  await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
+  await withLeadTableFallback((table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      deployedUrl: deployment.deployedUrl,
-      siteStatus: deployment.siteStatus,
-      vercelDeploymentId: deployment.vercelDeploymentId,
-    }),
-  }, { id: `eq.${leadId}` }));
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? {
+          deployed_url: deployment.deployedUrl,
+          site_status: deployment.siteStatus,
+        }
+      : {
+          deployedUrl: deployment.deployedUrl,
+          siteStatus: deployment.siteStatus,
+          vercelDeploymentId: deployment.vercelDeploymentId,
+        }),
+  }, { [isSnakeLeadsTable(table) ? "id" : "id"]: `eq.${leadId}` }));
 }
 
 export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
@@ -285,33 +351,45 @@ export async function upvoteScript(scriptId: string) {
 export async function releaseStaleLeads() {
   if (!hasDb) throw new Error("Supabase environment variables are required to release stale leads.");
 
-  await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
+  await withLeadTableFallback((table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ ownerId: null }),
+    body: JSON.stringify(isSnakeLeadsTable(table) ? { owner_id: null } : { ownerId: null }),
   }, {
-    ownerId: "not.is.null",
+    [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: "not.is.null",
     status: "not.in.(IN_PROGRESS,CLOSED)",
-    updatedAt: `lt.${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}`,
+    [isSnakeLeadsTable(table) ? "updated_at" : "updatedAt"]: `lt.${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}`,
   }));
 }
 
 export async function setLeadResearchSummary(leadId: string, summary: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save lead research.");
 
-  const rows = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "sourcePayload", id: `eq.${leadId}`, limit: "1" }));
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "source_payload" : "sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
   const existing = rows[0];
-  const payload = existing?.sourcePayload && typeof existing.sourcePayload === "object" ? existing.sourcePayload as Record<string, unknown> : {};
+  const existingPayload = existing?.sourcePayload ?? existing?.source_payload;
+  const payload = existingPayload && typeof existingPayload === "object" ? existingPayload as Record<string, unknown> : {};
 
-  await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
+  await withLeadTableFallback((table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      sourcePayload: {
-        ...payload,
-        aiResearchSummary: summary,
-      },
-    }),
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? {
+          source_payload: {
+            ...payload,
+            aiResearchSummary: summary,
+          },
+        }
+      : {
+          sourcePayload: {
+            ...payload,
+            aiResearchSummary: summary,
+          },
+        }),
   }, { id: `eq.${leadId}` }));
 }
 
@@ -320,10 +398,10 @@ export async function claimLeads(leadIds: string[], ownerId: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to claim leads.");
 
   const idFilter = `in.(${leadIds.join(",")})`;
-  const rows = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, {
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ ownerId, status: "IN_PROGRESS" }),
+    body: JSON.stringify(isSnakeLeadsTable(table) ? { owner_id: ownerId, status: "IN_PROGRESS" } : { ownerId, status: "IN_PROGRESS" }),
   }, { id: idFilter, select: "id" }));
 
   return rows.length;
