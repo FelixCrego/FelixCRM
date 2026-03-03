@@ -1,8 +1,7 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { LeadExecutionWorkspace } from "@/components/leads/lead-execution-workspace";
-import type { Lead } from "@/lib/types";
 
 type LeadExecutionPageProps = {
   params: {
@@ -10,103 +9,398 @@ type LeadExecutionPageProps = {
   };
 };
 
-const CLAIMED_LEADS_STORAGE_KEY = "claimedLeads";
-
-const FALLBACK_LEAD: Lead = {
-  id: "mock-eustis-garage-door-repair",
-  businessName: "Eustis Garage Door Repair",
-  city: "Eustis",
-  businessType: "Garage Door Repair",
-  phone: "(352) 555-0147",
-  email: "service@eustisgaragedoorrepair.example",
-  websiteUrl: null,
-  websiteStatus: "MISSING",
-  status: "IN_PROGRESS",
-  siteStatus: "UNBUILT",
-  ownerId: "demo-user",
-  aiResearchSummary:
-    "Analyzed 14 Google Reviews and local SEO. Weakness: No mobile booking. Competitors rank higher for 'emergency repair'.",
-  deployedUrl: "https://eustis-garage-door-repair.vercel.app",
-  updatedAt: new Date().toISOString(),
+type LeadRecord = {
+  id: string;
+  business_name?: string | null;
+  businessName?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  website_url?: string | null;
+  websiteUrl?: string | null;
+  city?: string | null;
+  business_type?: string | null;
+  businessType?: string | null;
+  email?: string | null;
+  deployed_url?: string | null;
+  deployedUrl?: string | null;
 };
 
-function normalizeLead(raw: unknown): Lead | null {
-  if (!raw || typeof raw !== "object") return null;
+type SupabaseResult<T> = {
+  data: T | null;
+  error: { message: string; code?: string } | null;
+};
 
-  const lead = raw as Partial<Lead> & Record<string, unknown>;
-  if (typeof lead.id !== "string" || typeof lead.businessName !== "string") return null;
+type FetchStatus = "loading" | "ready" | "error";
+type OmniTab = "Notes" | "SMS" | "Email";
+type ScriptTab = "Scripts" | "Objections";
 
-  const validStatus = ["NEW", "CONTACTED", "IN_PROGRESS", "CLOSED", "DISQUALIFIED"] as const;
-  const validSiteStatus = ["UNBUILT", "BUILDING", "LIVE", "FAILED"] as const;
+const FALLBACK_LEAD: LeadRecord = {
+  id: "mock-eustis-garage-door-repair",
+  business_name: "Eustis Garage Door Repair",
+  phone: "(352) 555-0147",
+  website: "https://eustis-garage-door-repair.example",
+  city: "Eustis",
+  business_type: "Garage Door Repair",
+  email: "service@eustisgaragedoorrepair.example",
+  deployed_url: "https://eustis-garage-door-repair.vercel.app",
+};
+
+function createClientComponentClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   return {
-    id: lead.id,
-    businessName: lead.businessName,
-    city: typeof lead.city === "string" ? lead.city : "Unknown",
-    businessType: typeof lead.businessType === "string" ? lead.businessType : "Local Services",
-    phone: typeof lead.phone === "string" ? lead.phone : null,
-    email: typeof lead.email === "string" ? lead.email : null,
-    websiteUrl: typeof lead.websiteUrl === "string" ? lead.websiteUrl : null,
-    websiteStatus: typeof lead.websiteStatus === "string" ? lead.websiteStatus : null,
-    socialLinks: Array.isArray(lead.socialLinks) ? (lead.socialLinks.filter((link) => typeof link === "string") as string[]) : [],
-    aiResearchSummary: typeof lead.aiResearchSummary === "string" ? lead.aiResearchSummary : null,
-    sourceQuery: typeof lead.sourceQuery === "string" ? lead.sourceQuery : null,
-    status: validStatus.includes(lead.status as (typeof validStatus)[number]) ? (lead.status as Lead["status"]) : "NEW",
-    deployedUrl: typeof lead.deployedUrl === "string" ? lead.deployedUrl : null,
-    siteStatus: validSiteStatus.includes(lead.siteStatus as (typeof validSiteStatus)[number]) ? (lead.siteStatus as Lead["siteStatus"]) : "UNBUILT",
-    ownerId: typeof lead.ownerId === "string" ? lead.ownerId : null,
-    updatedAt: typeof lead.updatedAt === "string" ? lead.updatedAt : new Date().toISOString(),
+    from(table: string) {
+      return {
+        select(_columns: string) {
+          return {
+            eq(column: string, value: string) {
+              return {
+                async single(): Promise<SupabaseResult<LeadRecord>> {
+                  if (!url || !key) {
+                    return {
+                      data: null,
+                      error: { message: "Missing Supabase environment variables.", code: "ENV_MISSING" },
+                    };
+                  }
+
+                  const query = new URL(`${url}/rest/v1/${table}`);
+                  query.searchParams.set(column, `eq.${value}`);
+                  query.searchParams.set("select", "*");
+                  query.searchParams.set("limit", "1");
+
+                  try {
+                    const response = await fetch(query.toString(), {
+                      headers: {
+                        apikey: key,
+                        Authorization: `Bearer ${key}`,
+                        Accept: "application/json",
+                      },
+                    });
+
+                    const payload = await response.json().catch(() => null);
+
+                    if (!response.ok) {
+                      const message =
+                        (payload && typeof payload.message === "string" && payload.message) ||
+                        (payload && typeof payload.error === "string" && payload.error) ||
+                        `Supabase request failed (${response.status}).`;
+
+                      return {
+                        data: null,
+                        error: {
+                          message,
+                          code: payload && typeof payload.code === "string" ? payload.code : `${response.status}`,
+                        },
+                      };
+                    }
+
+                    if (!Array.isArray(payload) || payload.length === 0) {
+                      return {
+                        data: null,
+                        error: { message: "No lead found for this ID.", code: "PGRST116" },
+                      };
+                    }
+
+                    return {
+                      data: payload[0] as LeadRecord,
+                      error: null,
+                    };
+                  } catch {
+                    return {
+                      data: null,
+                      error: { message: "Network error while contacting Supabase.", code: "NETWORK_ERROR" },
+                    };
+                  }
+                },
+              };
+            },
+          };
+        },
+      };
+    },
   };
 }
 
-
-function isLead(value: Lead | null): value is Lead {
-  return value !== null;
+function LeadWorkspaceSkeleton() {
+  return (
+    <div className="min-h-screen bg-zinc-950 p-6 text-zinc-100">
+      <div className="grid grid-cols-12 gap-4 animate-pulse">
+        <div className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3">
+          <div className="h-7 w-3/4 rounded bg-zinc-800" />
+          <div className="h-4 w-2/3 rounded bg-zinc-800" />
+          <div className="h-4 w-4/5 rounded bg-zinc-800" />
+          <div className="h-14 w-full rounded-xl bg-zinc-800" />
+          <div className="h-44 w-full rounded-xl bg-zinc-800" />
+        </div>
+        <div className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-5">
+          <div className="h-40 w-full rounded-xl bg-zinc-800" />
+          <div className="h-12 w-full rounded-xl bg-zinc-800" />
+          <div className="h-48 w-full rounded-xl bg-zinc-800" />
+        </div>
+        <div className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-4">
+          <div className="h-12 w-full rounded-xl bg-zinc-800" />
+          <div className="h-56 w-full rounded-xl bg-zinc-800" />
+          <div className="h-36 w-full rounded-xl bg-zinc-800" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
-  const [resolvedLead, setResolvedLead] = useState<Lead>(FALLBACK_LEAD);
-
   const leadId = useMemo(() => params?.id?.trim() ?? "", [params?.id]);
 
+  const [status, setStatus] = useState<FetchStatus>("loading");
+  const [lead, setLead] = useState<LeadRecord | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string>("");
+
+  const [researchLoading, setResearchLoading] = useState(false);
+  const [researchInsight, setResearchInsight] = useState<string>("");
+
+  const [omniTab, setOmniTab] = useState<OmniTab>("Notes");
+  const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
+
+  const [callActive, setCallActive] = useState(false);
+  const [callSeconds, setCallSeconds] = useState(0);
+
+  const [meetingDate, setMeetingDate] = useState("");
+  const [meetingTime, setMeetingTime] = useState("");
+  const [meetingLoading, setMeetingLoading] = useState(false);
+  const [meetingLink, setMeetingLink] = useState("");
+
   useEffect(() => {
-    const hydrateLead = () => {
+    if (!callActive) return;
+
+    const id = window.setInterval(() => {
+      setCallSeconds((prev) => prev + 1);
+    }, 1000);
+
+    return () => window.clearInterval(id);
+  }, [callActive]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadLead() {
       if (!leadId) {
-        setResolvedLead(FALLBACK_LEAD);
+        setStatus("error");
+        setErrorMessage("Lead ID was missing from the URL.");
         return;
       }
 
-      try {
-        const raw = window.localStorage.getItem(CLAIMED_LEADS_STORAGE_KEY);
-        if (!raw) {
-          setResolvedLead({ ...FALLBACK_LEAD, id: leadId });
-          return;
-        }
+      setStatus("loading");
+      const supabase = createClientComponentClient();
+      const { data, error } = await supabase.from("leads").select("*").eq("id", leadId).single();
 
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) {
-          setResolvedLead({ ...FALLBACK_LEAD, id: leadId });
-          return;
-        }
+      if (!alive) return;
 
-        const foundLead = parsed
-          .map(normalizeLead)
-          .filter(isLead)
-          .find((lead) => lead.id === leadId);
-
-        if (foundLead) {
-          setResolvedLead(foundLead);
-          return;
-        }
-
-        setResolvedLead({ ...FALLBACK_LEAD, id: leadId });
-      } catch {
-        setResolvedLead({ ...FALLBACK_LEAD, id: leadId });
+      if (data) {
+        setLead(data);
+        setStatus("ready");
+        return;
       }
-    };
 
-    hydrateLead();
+      const tableMissing = error?.message.toLowerCase().includes("relation") || error?.message.toLowerCase().includes("does not exist");
+
+      if (tableMissing || error?.code === "ENV_MISSING" || error?.code === "NETWORK_ERROR") {
+        setLead({ ...FALLBACK_LEAD, id: leadId });
+        setStatus("ready");
+        return;
+      }
+
+      setStatus("error");
+      setErrorMessage(error?.message || "Could not load the lead.");
+    }
+
+    loadLead();
+
+    return () => {
+      alive = false;
+    };
   }, [leadId]);
 
-  return <LeadExecutionWorkspace lead={resolvedLead} />;
+  const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
+  const leadPhone = lead?.phone || "No phone on file";
+  const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
+  const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "https://vercel.com/new";
+
+  async function runResearch() {
+    setResearchLoading(true);
+    setResearchInsight("");
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    setResearchInsight("Analyzed 14 Google Reviews. Weakness: No mobile booking.");
+    setResearchLoading(false);
+  }
+
+  async function generateMeetingLink() {
+    setMeetingLoading(true);
+    setMeetingLink("");
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    setMeetingLink("https://meet.google.com/abc-defg");
+    setMeetingLoading(false);
+  }
+
+  const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
+
+  if (status === "loading") return <LeadWorkspaceSkeleton />;
+
+  if (status === "error" || !lead) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-6 text-zinc-100">
+        <div className="w-full max-w-xl rounded-2xl border border-red-500/30 bg-zinc-900 p-8 text-center shadow-2xl shadow-red-500/10">
+          <p className="text-xs uppercase tracking-[0.2em] text-red-400">Lead unavailable</p>
+          <h1 className="mt-3 text-3xl font-semibold">Couldn&apos;t load this execution workspace.</h1>
+          <p className="mt-4 text-zinc-300">{errorMessage || "The lead may have been removed, or the ID is invalid."}</p>
+          <Link
+            href="/leads"
+            className="mt-8 inline-flex rounded-xl bg-zinc-100 px-6 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-white"
+          >
+            Return to Territory
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
+      <div className="grid grid-cols-12 gap-4">
+        <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">Intelligence</p>
+            <h1 className="mt-2 text-2xl font-semibold leading-tight">{leadName}</h1>
+            <p className="mt-3 text-sm text-zinc-300">{leadPhone}</p>
+            <p className="text-sm text-zinc-400">{leadWebsite}</p>
+          </div>
+
+          <a
+            href={deployedUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-16 items-center justify-center rounded-xl bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 text-base font-bold text-zinc-950 shadow-lg shadow-cyan-500/30 transition hover:scale-[1.01]"
+          >
+            Deploy Vercel Site
+          </a>
+
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">AI Deep Research</h2>
+              <button
+                onClick={runResearch}
+                disabled={researchLoading}
+                className="rounded-lg border border-zinc-600 px-3 py-1 text-xs transition hover:border-zinc-300 disabled:opacity-50"
+              >
+                {researchLoading ? "Running..." : "Run Analysis"}
+              </button>
+            </div>
+            <p className="mt-4 min-h-14 text-sm text-zinc-300">
+              {researchInsight || "Run analysis to generate localized insights and conversion weaknesses."}
+            </p>
+          </div>
+        </section>
+
+        <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-5">
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Amazon Connect Dialer</h2>
+              <span className="text-xs text-zinc-400">{callActive ? `Live ${formattedTimer}` : "Ready"}</span>
+            </div>
+            <div className="mt-4 flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+              <p className="text-sm text-zinc-300">Softphone connected • {leadPhone}</p>
+              <button
+                onClick={() => {
+                  if (!callActive) {
+                    setCallSeconds(0);
+                    setCallActive(true);
+                    return;
+                  }
+                  setCallActive(false);
+                }}
+                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400"
+              >
+                {callActive ? "End" : "Call"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <div className="mb-3 flex gap-2">
+              {(["Notes", "SMS", "Email"] as OmniTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setOmniTab(tab)}
+                  className={`rounded-lg px-3 py-1 text-xs font-medium ${omniTab === tab ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-300"}`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="h-28 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-3 text-sm outline-none focus:border-zinc-400"
+              placeholder={`Draft ${omniTab} content for ${leadName}...`}
+            />
+          </div>
+
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <h2 className="text-sm font-semibold">Calendar Booking Widget</h2>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <input
+                type="date"
+                value={meetingDate}
+                onChange={(event) => setMeetingDate(event.target.value)}
+                className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+              />
+              <input
+                type="time"
+                value={meetingTime}
+                onChange={(event) => setMeetingTime(event.target.value)}
+                className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+              />
+            </div>
+            <button
+              onClick={generateMeetingLink}
+              disabled={meetingLoading || !meetingDate || !meetingTime}
+              className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {meetingLoading ? "Generating..." : "Book & Generate Meet Link"}
+            </button>
+            {meetingLink ? <p className="mt-3 text-sm text-emerald-300">{meetingLink}</p> : null}
+          </div>
+        </section>
+
+        <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-4">
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <div className="mb-4 flex gap-2">
+              {(["Scripts", "Objections"] as ScriptTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setScriptTab(tab)}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold ${scriptTab === tab ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-300"}`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {scriptTab === "Scripts" ? (
+              <div className="space-y-3 text-sm text-zinc-200">
+                <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                  Hey {leadName}, I noticed your site makes it hard to book on mobile. I built a faster site for you here: {deployedUrl}.
+                </p>
+                <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                  We can launch this today and route calls directly into your booking flow.
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-3 text-sm text-zinc-300">
+                <li className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">“I already have a website.” → Totally fair. This version is tuned for speed-to-booking and mobile conversions.</li>
+                <li className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">“Send me details.” → Perfect. I’ll text a preview and hold your deployment slot for 24 hours.</li>
+              </ul>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }
