@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
-import { claimLeads, getCurrentUserId } from "@/lib/store";
+import { claimLeads } from "@/lib/store";
+import { getAuthenticatedUserId } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
+    const ownerId = await getAuthenticatedUserId();
+    if (!ownerId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const payload = await request.json();
     const leadIds = Array.isArray(payload?.leadIds) ? payload.leadIds.filter((id: unknown): id is string => typeof id === "string" && id.length > 0) : [];
 
@@ -10,7 +14,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "leadIds is required." }, { status: 400 });
     }
 
-    const ownerId = await getCurrentUserId();
     const claimed = await claimLeads(leadIds, ownerId);
     return NextResponse.json({ claimed });
   } catch (error) {

@@ -134,13 +134,13 @@ function isMissingUserTableError(error: unknown) {
   return isMissingTableError(error) || (message.includes("relation") && message.includes("User") && message.includes("does not exist"));
 }
 
-async function getSafeFirstUser() {
+async function getSafeFirstUser(userId: string) {
   if (!hasDb) return null;
 
   try {
     const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, {
       select: "*",
-      order: 'createdAt.asc',
+      id: `eq.${userId}`,
       limit: "1",
     }));
     return rows[0] ?? null;
@@ -174,8 +174,8 @@ function leadToMemory(lead: any): Lead {
   };
 }
 
-export async function getProfile() {
-  const user = await getSafeFirstUser();
+export async function getProfile(userId: string) {
+  const user = await getSafeFirstUser(userId);
 
   if (!user) {
     return {
@@ -196,14 +196,11 @@ export async function getProfile() {
   };
 }
 
-export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole }) {
+export async function saveProfile(userId: string, profile: { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole }) {
   if (!hasDb) return;
 
   try {
-    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "id", order: "createdAt.asc", limit: "1" }));
-    const user = rows[0];
-    if (!user?.id) return;
-    await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest(table, { method: "PATCH", body: JSON.stringify(profile), headers: { Prefer: "return=minimal" } }, { id: `eq.${user.id}` }));
+    await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest(table, { method: "PATCH", body: JSON.stringify(profile), headers: { Prefer: "return=minimal" } }, { id: `eq.${userId}` }));
   } catch (error) {
     if (isMissingUserTableError(error)) {
       console.warn("[store] Skipping profile save because user table is unavailable.");
@@ -213,16 +210,17 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
   }
 }
 
-export async function listLeads() {
+export async function listLeads(ownerId: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
   const leads = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
     select: "*",
+    [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: `eq.${ownerId}`,
     order: isSnakeLeadsTable(table) ? "updated_at.desc" : "updatedAt.desc",
   }));
   return leads.map(leadToMemory);
 }
 
-export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
+export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
   let inserted = 0;
@@ -230,7 +228,8 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
 
   for (const lead of leads) {
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
-    const key = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
+    const rawKey = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
+    const key = `${ownerId}:${rawKey}`;
     try {
       await withLeadTableFallback((table) => supabaseRequest(table, {
         method: "POST",
@@ -248,9 +247,9 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
               normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
               normalized_domain: domain.toLowerCase(),
               dedupe_key: key,
-              status: "NEW",
+              status: "IN_PROGRESS",
               site_status: "UNBUILT",
-              owner_id: null,
+              owner_id: ownerId,
               source_payload: {
                 socialLinks: lead.socialLinks ?? [],
                 aiResearchSummary: lead.aiResearchSummary ?? null,
@@ -269,9 +268,9 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
               normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
               normalizedDomain: domain.toLowerCase(),
               dedupeKey: key,
-              status: "NEW",
+              status: "IN_PROGRESS",
               siteStatus: "UNBUILT",
-              ownerId: null,
+              ownerId,
               sourcePayload: {
                 socialLinks: lead.socialLinks ?? [],
                 aiResearchSummary: lead.aiResearchSummary ?? null,
@@ -311,19 +310,11 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
   }, { [isSnakeLeadsTable(table) ? "id" : "id"]: `eq.${leadId}` }));
 }
 
-export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
+export async function saveScript(ownerId: string, script: Omit<Script, "id" | "upvoteCount">) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save scripts.");
 
-  let authorId = MOCK_USER.id;
-  try {
-    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "id", order: "createdAt.asc", limit: "1" }));
-    authorId = rows[0]?.id ?? MOCK_USER.id;
-  } catch (error) {
-    if (!isMissingUserTableError(error)) throw error;
-    console.warn("[store] Saving script with mock author because user table is unavailable.");
-  }
-
-  const profile = await getProfile();
+  const authorId = ownerId || MOCK_USER.id;
+  const profile = await getProfile(authorId);
   const rows = await withTableFallback("scripts", SCRIPTS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -424,22 +415,7 @@ export async function claimLeads(leadIds: string[], ownerId: string) {
   return rows.length;
 }
 
-export async function getLeadById(leadId: string) {
-  const leads = await listLeads();
+export async function getLeadById(leadId: string, ownerId: string) {
+  const leads = await listLeads(ownerId);
   return leads.find((lead) => lead.id === leadId);
-}
-
-export async function getCurrentUserId() {
-  if (!hasDb) return MOCK_USER.id;
-
-  try {
-    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "id", order: "createdAt.asc", limit: "1" }));
-    return rows[0]?.id ?? MOCK_USER.id;
-  } catch (error) {
-    if (isMissingUserTableError(error)) {
-      console.warn("[store] Falling back to mock user id because user table is unavailable.");
-      return MOCK_USER.id;
-    }
-    throw error;
-  }
 }
