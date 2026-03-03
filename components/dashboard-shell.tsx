@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Command, Flame, LayoutDashboard, Search, Wallet, Briefcase, Bell, Sparkles, X, Inbox } from "lucide-react";
+import { Bot, Command, Flame, LayoutDashboard, Search, Wallet, Briefcase, Bell, Sparkles, X, Users } from "lucide-react";
 import { useState } from "react";
 
 type PlaybookCard = {
@@ -16,7 +16,7 @@ const navSections = [
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/scrape", label: "Scrape Leads", icon: Search },
-      { href: "/leads", label: "My Leads", icon: Inbox },
+      { href: "/leads", label: "My Leads", icon: Users },
       { href: "/pipeline", label: "Pipeline", icon: Flame },
     ],
   },
