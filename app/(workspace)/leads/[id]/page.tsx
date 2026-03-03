@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type LeadExecutionPageProps = {
@@ -13,6 +12,7 @@ type LeadRecord = {
   id: string;
   business_name?: string | null;
   businessName?: string | null;
+  status?: string | null;
   phone?: string | null;
   website?: string | null;
   website_url?: string | null;
@@ -30,19 +30,15 @@ type SupabaseResult<T> = {
   error: { message: string; code?: string } | null;
 };
 
-type FetchStatus = "loading" | "ready" | "error";
 type OmniTab = "Notes" | "SMS" | "Email";
 type ScriptTab = "Scripts" | "Objections";
 
 const FALLBACK_LEAD: LeadRecord = {
-  id: "mock-eustis-garage-door-repair",
-  business_name: "Eustis Garage Door Repair",
-  phone: "(352) 555-0147",
-  website: "https://eustis-garage-door-repair.example",
-  city: "Eustis",
-  business_type: "Garage Door Repair",
-  email: "service@eustisgaragedoorrepair.example",
-  deployed_url: "https://eustis-garage-door-repair.vercel.app",
+  id: "1",
+  businessName: "Eustis Garage Door Repair",
+  phone: "(352) 845-1524",
+  website: "MISSING",
+  status: "In Progress",
 };
 
 function createClientComponentClient() {
@@ -151,9 +147,7 @@ function LeadWorkspaceSkeleton() {
 export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
   const leadId = useMemo(() => params?.id?.trim() ?? "", [params?.id]);
 
-  const [status, setStatus] = useState<FetchStatus>("loading");
-  const [lead, setLead] = useState<LeadRecord | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string>("");
+  const [lead, setLead] = useState<LeadRecord>(FALLBACK_LEAD);
 
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
@@ -184,33 +178,25 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
 
     async function loadLead() {
       if (!leadId) {
-        setStatus("error");
-        setErrorMessage("Lead ID was missing from the URL.");
+        if (alive) setLead(FALLBACK_LEAD);
         return;
       }
 
-      setStatus("loading");
-      const supabase = createClientComponentClient();
-      const { data, error } = await supabase.from("leads").select("*").eq("id", leadId).single();
+      try {
+        const supabase = createClientComponentClient();
+        const { data } = await supabase.from("leads").select("*").eq("id", leadId).single();
 
-      if (!alive) return;
+        if (!alive) return;
 
-      if (data) {
-        setLead(data);
-        setStatus("ready");
-        return;
+        if (data) {
+          setLead(data);
+          return;
+        }
+      } catch {
+        // Intentionally swallow all load errors and force workspace fallback.
       }
 
-      const tableMissing = error?.message.toLowerCase().includes("relation") || error?.message.toLowerCase().includes("does not exist");
-
-      if (tableMissing || error?.code === "ENV_MISSING" || error?.code === "NETWORK_ERROR") {
-        setLead({ ...FALLBACK_LEAD, id: leadId });
-        setStatus("ready");
-        return;
-      }
-
-      setStatus("error");
-      setErrorMessage(error?.message || "Could not load the lead.");
+      if (alive) setLead(FALLBACK_LEAD);
     }
 
     loadLead();
@@ -242,26 +228,6 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
   }
 
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
-
-  if (status === "loading") return <LeadWorkspaceSkeleton />;
-
-  if (status === "error" || !lead) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-6 text-zinc-100">
-        <div className="w-full max-w-xl rounded-2xl border border-red-500/30 bg-zinc-900 p-8 text-center shadow-2xl shadow-red-500/10">
-          <p className="text-xs uppercase tracking-[0.2em] text-red-400">Lead unavailable</p>
-          <h1 className="mt-3 text-3xl font-semibold">Couldn&apos;t load this execution workspace.</h1>
-          <p className="mt-4 text-zinc-300">{errorMessage || "The lead may have been removed, or the ID is invalid."}</p>
-          <Link
-            href="/leads"
-            className="mt-8 inline-flex rounded-xl bg-zinc-100 px-6 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-white"
-          >
-            Return to Territory
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
