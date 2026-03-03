@@ -15,13 +15,22 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 const hasDb = Boolean(process.env.DATABASE_URL);
 const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole };
 
-function isMissingUserTableError(error: unknown) {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return error.code === "P2021" && (error.meta?.table as string | undefined)?.includes("User");
+function isMissingTableError(error: unknown, tableName: string) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+    const table = typeof error.meta?.table === "string" ? error.meta.table : "";
+    return table.includes(tableName);
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("public.User") || message.includes("prisma.user.findFirst") || message.includes("table") && message.includes("User") && message.includes("does not exist");
+  return message.includes("table") && message.includes(tableName) && message.includes("does not exist");
+}
+
+function isMissingUserTableError(error: unknown) {
+  return isMissingTableError(error, "User") || isMissingTableError(error, "user");
+}
+
+function isMissingLeadTableError(error: unknown) {
+  return isMissingTableError(error, "Lead") || isMissingTableError(error, "lead");
 }
 
 async function getSafeFirstUser() {
@@ -105,8 +114,17 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
 
 export async function listLeads() {
   if (!hasDb) throw new Error("DATABASE_URL is required to load leads.");
-  const leads = await prisma.lead.findMany({ orderBy: { updatedAt: "desc" } });
-  return leads.map(leadToMemory);
+
+  try {
+    const leads = await prisma.lead.findMany({ orderBy: { updatedAt: "desc" } });
+    return leads.map(leadToMemory);
+  } catch (error) {
+    if (isMissingLeadTableError(error)) {
+      console.warn("[store] Falling back to empty leads because lead table is unavailable.");
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
@@ -207,14 +225,23 @@ export async function upvoteScript(scriptId: string) {
 
 export async function releaseStaleLeads() {
   if (!hasDb) throw new Error("DATABASE_URL is required to release stale leads.");
-  await prisma.lead.updateMany({
-    where: {
-      ownerId: { not: null },
-      status: { notIn: ["IN_PROGRESS", "CLOSED"] },
-      updatedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-    },
-    data: { ownerId: null },
-  });
+
+  try {
+    await prisma.lead.updateMany({
+      where: {
+        ownerId: { not: null },
+        status: { notIn: ["IN_PROGRESS", "CLOSED"] },
+        updatedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+      },
+      data: { ownerId: null },
+    });
+  } catch (error) {
+    if (isMissingLeadTableError(error)) {
+      console.warn("[store] Skipping stale lead release because lead table is unavailable.");
+      return;
+    }
+    throw error;
+  }
 }
 
 
