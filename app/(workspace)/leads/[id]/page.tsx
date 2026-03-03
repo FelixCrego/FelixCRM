@@ -234,24 +234,47 @@ export default function LeadExecutionPage() {
 
   if (!lead) return <LeadWorkspaceSkeleton />;
 
+  const leadEmail = lead?.email || "No email on file";
+  const leadLocation = lead?.city || "Unknown location";
+
   return (
     <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
       <div className="grid grid-cols-12 gap-4">
         <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">Intelligence</p>
-            <h1 className="mt-2 text-2xl font-semibold leading-tight">{leadName}</h1>
-            <p className="mt-3 text-sm text-zinc-300">{leadPhone}</p>
-            <p className="text-sm text-zinc-400">{leadWebsite}</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Lead Context</p>
+            <h1 className="mt-2 text-2xl font-semibold leading-tight text-zinc-100">{leadName}</h1>
+            <p className="mt-2 text-xs uppercase tracking-[0.14em] text-zinc-500">Execution target: {leadWebsite}</p>
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="flex items-center gap-2 text-sm text-zinc-300">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">📞</span>
+              <span>{leadPhone}</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-zinc-300">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">✉️</span>
+              <span>{leadEmail}</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-zinc-300">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">📍</span>
+              <span>{leadLocation}</span>
+            </div>
           </div>
 
           <a
             href={deployedUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex h-16 items-center justify-center rounded-xl bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 text-base font-bold text-zinc-950 shadow-lg shadow-cyan-500/30 transition hover:scale-[1.01]"
+            className="group block rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-4 shadow-lg shadow-indigo-900/40 transition hover:scale-[1.01]"
           >
-            Deploy Vercel Site
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">Deploy Vercel Site</p>
+                <p className="mt-1 text-xs text-indigo-100/90">Push this lead from conversation to live site with one click.</p>
+              </div>
+              <span className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-sm text-white">🚀</span>
+            </div>
           </a>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
@@ -274,7 +297,7 @@ export default function LeadExecutionPage() {
         <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-5">
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Amazon Connect Dialer</h2>
+              <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Amazon Connect • Softphone</h2>
               <span className="text-xs text-zinc-400">{callActive ? `Live ${formattedTimer}` : "Ready"}</span>
             </div>
             <div className="mt-4 flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-950 p-3">
@@ -293,24 +316,55 @@ export default function LeadExecutionPage() {
                 {callActive ? "End" : "Call"}
               </button>
             </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
+                <p className="text-zinc-500">Queue</p>
+                <p className="mt-1 font-semibold text-zinc-100">00:09</p>
+              </div>
+              <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
+                <p className="text-zinc-500">Call Timer</p>
+                <p className="mt-1 font-semibold text-zinc-100">02:14</p>
+              </div>
+              <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
+                <p className="text-zinc-500">Rep</p>
+                <p className="mt-1 font-semibold text-emerald-300">Online</p>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <div className="mb-3 flex gap-2">
+            <div className="mb-3 flex gap-4 border-b border-zinc-800 pb-2">
               {(["Notes", "SMS", "Email"] as OmniTab[]).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setOmniTab(tab)}
-                  className={`rounded-lg px-3 py-1 text-xs font-medium ${omniTab === tab ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-300"}`}
+                  className={`relative px-1 pb-1 text-xs font-medium transition ${omniTab === tab ? "text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
                 >
                   {tab}
+                  {omniTab === tab ? <span className="absolute inset-x-0 -bottom-[9px] h-0.5 rounded bg-blue-500" /> : null}
                 </button>
               ))}
             </div>
-            <textarea
-              className="h-28 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-3 text-sm outline-none focus:border-zinc-400"
-              placeholder={`Draft ${omniTab} content for ${leadName}...`}
-            />
+
+            <div className="space-y-2">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Today • 09:41</p>
+                <p className="mt-1">Owner asked to prioritize speed and mobile booking flow before launch.</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Today • 10:12</p>
+                <p className="mt-1">Confirmed follow-up after previewing the live Vercel draft.</p>
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
+              <button className="rounded-md border border-zinc-600 bg-zinc-900 px-3 py-2 text-xs text-zinc-300">AI draft</button>
+              <input
+                className="h-9 flex-1 bg-transparent px-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
+                placeholder={`Draft ${omniTab} content for ${leadName}...`}
+              />
+              <button className="rounded-md bg-indigo-500 px-4 py-2 text-xs font-semibold text-white">Send</button>
+            </div>
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
@@ -342,26 +396,36 @@ export default function LeadExecutionPage() {
 
         <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-4">
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <div className="mb-4 flex gap-2">
-              {(["Scripts", "Objections"] as ScriptTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setScriptTab(tab)}
-                  className={`rounded-lg px-3 py-1 text-xs font-semibold ${scriptTab === tab ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-300"}`}
-                >
-                  {tab}
-                </button>
-              ))}
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-300">
+                <span>🧠</span>
+                Dynamic AI Playbook
+              </h2>
+              <div className="flex gap-2">
+                {(["Scripts", "Objections"] as ScriptTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setScriptTab(tab)}
+                    className={`rounded-lg px-3 py-1 text-xs font-semibold ${scriptTab === tab ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-300"}`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {scriptTab === "Scripts" ? (
               <div className="space-y-3 text-sm text-zinc-200">
+                <h3 className="text-sm font-semibold text-zinc-100">Context-Aware Script</h3>
                 <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                   Hey {leadName}, I noticed your site makes it hard to book on mobile. I built a faster site for you here: {deployedUrl}.
                 </p>
                 <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                   We can launch this today and route calls directly into your booking flow.
                 </p>
+                <span className="inline-flex rounded-md border border-zinc-600 px-2 py-1 text-[11px] text-zinc-300">
+                  Injected data: Google Reviews + Vercel Link + mobile booking gap
+                </span>
               </div>
             ) : (
               <ul className="space-y-3 text-sm text-zinc-300">
