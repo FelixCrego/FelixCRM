@@ -17,6 +17,19 @@ type SupabaseAuthSession = {
   user: SupabaseUser;
 };
 
+type SupabaseSignUpResponse = {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  user?: SupabaseUser | null;
+  session?: {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    user?: SupabaseUser | null;
+  } | null;
+};
+
 function requireSupabaseAuthConfig() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("Supabase auth requires NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
@@ -25,8 +38,8 @@ function requireSupabaseAuthConfig() {
 
 function getNormalizedEmail(usernameOrEmail: string) {
   const normalized = usernameOrEmail.trim().toLowerCase();
-  if (!normalized) return "";
-  return normalized.includes("@") ? normalized : `${normalized}@felixcrm.local`;
+  if (!normalized || !normalized.includes("@")) return "";
+  return normalized;
 }
 
 async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -63,25 +76,30 @@ async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise
 export async function signUpWithUsernamePassword(username: string, password: string) {
   const email = getNormalizedEmail(username);
   if (!email || password.length < 8) {
-    throw new Error("Username and password (min 8 chars) are required.");
+    throw new Error("A valid email and password (min 8 chars) are required.");
   }
 
-  const payload = await supabaseAuthRequest<SupabaseAuthSession | { user: SupabaseUser }>('/signup', {
+  const payload = await supabaseAuthRequest<SupabaseSignUpResponse>("/signup", {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
 
-  if ('access_token' in payload) {
+  const sessionAccessToken = payload.session?.access_token ?? payload.access_token ?? null;
+  const sessionRefreshToken = payload.session?.refresh_token ?? payload.refresh_token ?? null;
+  const sessionExpiresIn = payload.session?.expires_in ?? payload.expires_in ?? 0;
+  const userId = payload.session?.user?.id ?? payload.user?.id ?? null;
+
+  if (sessionAccessToken && sessionRefreshToken && userId) {
     return {
-      userId: payload.user.id,
-      accessToken: payload.access_token,
-      refreshToken: payload.refresh_token,
-      expiresIn: payload.expires_in,
+      userId,
+      accessToken: sessionAccessToken,
+      refreshToken: sessionRefreshToken,
+      expiresIn: sessionExpiresIn,
     };
   }
 
   return {
-    userId: payload.user.id,
+    userId,
     accessToken: null,
     refreshToken: null,
     expiresIn: 0,
@@ -91,7 +109,7 @@ export async function signUpWithUsernamePassword(username: string, password: str
 export async function signInWithUsernamePassword(username: string, password: string) {
   const email = getNormalizedEmail(username);
   if (!email || !password) {
-    throw new Error("Username and password are required.");
+    throw new Error("Email and password are required.");
   }
 
   const payload = await supabaseAuthRequest<SupabaseAuthSession>("/token?grant_type=password", {
