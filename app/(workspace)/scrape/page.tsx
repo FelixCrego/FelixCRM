@@ -154,7 +154,7 @@ export default function ScrapePage() {
                       disabled={isResearchingLeadId === lead.id}
                       className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-900 disabled:opacity-60"
                     >
-                      {isResearchingLeadId === lead.id ? "Researching..." : "Deep Research"}
+                      {isResearchingLeadId === lead.id ? "Researching..." : "Research Lead"}
                     </button>
                   </td>
                 </tr>

@@ -93,7 +93,7 @@ Address: ${address}`;
   return text.trim() || "AI Research timeout or quota limit reached.";
 }
 
-export async function runLeadDeepResearch(input: { name: string; phone?: string | null; address?: string | null }) {
+export async function runLeadResearch(input: { name: string; phone?: string | null; address?: string | null }) {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   return researchLeadWithGemini(input.name, input.phone ?? "N/A", input.address ?? "N/A", geminiApiKey);
 }
