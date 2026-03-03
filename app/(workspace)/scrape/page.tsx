@@ -14,6 +14,7 @@ type Lead = {
   sourceQuery?: string | null;
   aiResearchSummary?: string | null;
   ownerId?: string | null;
+  transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
 };
 
 function websitePill(lead: Lead) {
@@ -46,13 +47,14 @@ export default function ScrapePage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [stats, setStats] = useState<{ fetched: number; inserted: number } | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const router = useRouter();
 
   async function refreshLeads() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const response = await fetch("/api/leads", { cache: "no-store" });
+      const response = await fetch("/api/leads?scope=all", { cache: "no-store" });
       if (!response.ok) throw new Error("Failed to load leads.");
       const data = await response.json();
       setLeads(Array.isArray(data.leads) ? data.leads : []);
@@ -65,6 +67,26 @@ export default function ScrapePage() {
 
   useEffect(() => {
     void refreshLeads();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadCurrentUser() {
+      try {
+        const response = await fetch("/api/health", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (mounted && typeof data.userId === "string") setCurrentUserId(data.userId);
+      } catch {
+        // noop
+      }
+    }
+
+    void loadCurrentUser();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   async function handleScrape() {
@@ -124,8 +146,15 @@ export default function ScrapePage() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Claim failed.");
       setSelectedLeadIds([]);
-      setClaimSuccessMessage(`Successfully claimed ${Number(payload.claimed ?? 0)} lead${Number(payload.claimed ?? 0) === 1 ? "" : "s"}.`);
-      router.push("/leads");
+      const claimed = Number(payload.claimed ?? 0);
+      const claimedByOthers = Number(payload.claimedByOthers ?? 0);
+      const alreadyOwnedByYou = Number(payload.alreadyOwnedByYou ?? 0);
+      const fragments = [`Successfully claimed ${claimed} lead${claimed === 1 ? "" : "s"}.`];
+      if (alreadyOwnedByYou > 0) fragments.push(`${alreadyOwnedByYou} already belonged to you.`);
+      if (claimedByOthers > 0) fragments.push(`${claimedByOthers} are already claimed by another user.`);
+      setClaimSuccessMessage(fragments.join(" "));
+      await refreshLeads();
+      if (claimed > 0) router.push("/leads");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Claim failed.");
     } finally {
@@ -133,9 +162,27 @@ export default function ScrapePage() {
     }
   }
 
+  async function handleRequestTransfer(leadId: string) {
+    setError(null);
+    try {
+      const response = await fetch("/api/leads/transfer-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Transfer request failed.");
+      setClaimSuccessMessage(payload.requested ? "Ownership transfer requested." : "You already requested transfer for this lead.");
+      await refreshLeads();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Transfer request failed.");
+    }
+  }
+
   const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
 
   const selectedCount = selectedLeadIds.length;
+  const claimableCount = latestLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).length;
 
   return (
     <div className="space-y-5 pb-24">
@@ -180,11 +227,11 @@ export default function ScrapePage() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">Latest Leads ({leads.length})</h3>
           <button
-            onClick={() => handleClaimLeads(latestLeads.map((lead) => lead.id))}
-            disabled={isClaiming || !latestLeads.length}
+            onClick={() => handleClaimLeads(latestLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).map((lead) => lead.id))}
+            disabled={isClaiming || claimableCount === 0}
             className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
           >
-            {isClaiming ? "Claiming..." : `Claim All ${latestLeads.length} Leads`}
+            {isClaiming ? "Claiming..." : `Claim All ${claimableCount} Leads`}
           </button>
         </div>
         <div className="overflow-x-auto">
@@ -197,7 +244,7 @@ export default function ScrapePage() {
                     checked={latestLeads.length > 0 && selectedLeadIds.length === latestLeads.length}
                     onChange={(event) => {
                       if (event.target.checked) {
-                        setSelectedLeadIds(latestLeads.map((lead) => lead.id));
+                        setSelectedLeadIds(latestLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).map((lead) => lead.id));
                         return;
                       }
                       setSelectedLeadIds([]);
@@ -231,6 +278,7 @@ export default function ScrapePage() {
                           setSelectedLeadIds((prev) => prev.filter((id) => id !== lead.id));
                         }}
                         className="size-4 rounded border-zinc-700 bg-zinc-900"
+                        disabled={Boolean(lead.ownerId && currentUserId && lead.ownerId !== currentUserId)}
                         aria-label={`Select ${lead.businessName}`}
                       />
                     </td>
@@ -252,14 +300,26 @@ export default function ScrapePage() {
                       )}
                     </td>
                     <td className="space-x-2 py-2">
-                      <button
-                        onClick={() => handleClaimLeads([lead.id])}
-                        disabled={isClaiming}
-                        className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
-                      >
-                        {isClaiming ? "Claiming..." : "Claim Lead"}
-                      </button>
-                      {lead.ownerId ? (
+                      {lead.ownerId && currentUserId && lead.ownerId !== currentUserId ? (
+                        <>
+                          <span className="rounded-md border border-amber-700/60 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-300">Claimed by another user</span>
+                          <button
+                            onClick={() => handleRequestTransfer(lead.id)}
+                            className="rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900"
+                          >
+                            Request Transfer
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => handleClaimLeads([lead.id])}
+                          disabled={isClaiming || Boolean(lead.ownerId && currentUserId && lead.ownerId !== currentUserId)}
+                          className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
+                        >
+                          {isClaiming ? "Claiming..." : "Claim Lead"}
+                        </button>
+                      )}
+                      {lead.ownerId === currentUserId ? (
                         <Link href={`/leads/${lead.id}`} className="rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900">
                           Open Workspace
                         </Link>

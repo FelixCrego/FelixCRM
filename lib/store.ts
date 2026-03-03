@@ -171,6 +171,11 @@ function leadToMemory(lead: any): Lead {
     socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
     aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
     sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
+    transferRequests: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.transferRequests)
+      ? (lead.sourcePayload ?? lead.source_payload).transferRequests.filter((request: any) =>
+          request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",
+        )
+      : [],
   };
 }
 
@@ -220,6 +225,16 @@ export async function listLeads(ownerId: string) {
   return leads.map(leadToMemory);
 }
 
+export async function listClaimableLeads(limit = 100) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
+  const leads = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: "*",
+    order: isSnakeLeadsTable(table) ? "updated_at.desc" : "updatedAt.desc",
+    limit: String(limit),
+  }));
+  return leads.map(leadToMemory);
+}
+
 export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
@@ -229,7 +244,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
   for (const lead of leads) {
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
     const rawKey = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
-    const key = `${ownerId}:${rawKey}`;
+    const key = rawKey;
     try {
       await withLeadTableFallback((table) => supabaseRequest(table, {
         method: "POST",
@@ -402,17 +417,107 @@ export async function setLeadResearchSummary(leadId: string, summary: string) {
 }
 
 export async function claimLeads(leadIds: string[], ownerId: string) {
-  if (!leadIds.length) return 0;
+  if (!leadIds.length) return { claimed: 0, alreadyOwnedByYou: 0, claimedByOthers: 0, missing: 0 };
   if (!hasDb) throw new Error("Supabase environment variables are required to claim leads.");
 
   const idFilter = `in.(${leadIds.join(",")})`;
-  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
-    method: "PATCH",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(isSnakeLeadsTable(table) ? { owner_id: ownerId, status: "IN_PROGRESS" } : { ownerId, status: "IN_PROGRESS" }),
-  }, { id: idFilter, select: "id" }));
 
-  return rows.length;
+  const existing = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id" : "id,ownerId",
+    id: idFilter,
+  }));
+
+  const ownableLeadIds: string[] = [];
+  let alreadyOwnedByYou = 0;
+  let claimedByOthers = 0;
+
+  for (const lead of existing) {
+    const leadOwnerId = lead.ownerId ?? lead.owner_id ?? null;
+    if (!leadOwnerId) {
+      ownableLeadIds.push(lead.id);
+      continue;
+    }
+    if (leadOwnerId === ownerId) {
+      alreadyOwnedByYou += 1;
+      continue;
+    }
+    claimedByOthers += 1;
+  }
+
+  let claimed = 0;
+  if (ownableLeadIds.length) {
+    const ownableIdFilter = `in.(${ownableLeadIds.join(",")})`;
+    const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(isSnakeLeadsTable(table) ? { owner_id: ownerId, status: "IN_PROGRESS" } : { ownerId, status: "IN_PROGRESS" }),
+    }, {
+      id: ownableIdFilter,
+      [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: "is.null",
+      select: "id",
+    }));
+    claimed = rows.length;
+  }
+
+  const missing = leadIds.length - existing.length;
+  return { claimed, alreadyOwnedByYou, claimedByOthers, missing };
+}
+
+export async function requestLeadOwnershipTransfer(leadId: string, requesterId: string) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to request transfer.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const currentOwnerId = lead.ownerId ?? lead.owner_id ?? null;
+  if (!currentOwnerId) throw new Error("Lead is not currently claimed; claim it directly.");
+  if (currentOwnerId === requesterId) throw new Error("You already own this lead.");
+
+  const payload = (lead.sourcePayload ?? lead.source_payload ?? {}) as Record<string, unknown>;
+  const existingRequests = Array.isArray(payload.transferRequests) ? payload.transferRequests as any[] : [];
+
+  const alreadyRequested = existingRequests.some((request) =>
+    request && request.requesterId === requesterId && request.status === "PENDING",
+  );
+
+  if (alreadyRequested) {
+    return { requested: false, reason: "ALREADY_REQUESTED" as const };
+  }
+
+  const nextRequests = [
+    ...existingRequests,
+    {
+      requesterId,
+      requestedAt: new Date().toISOString(),
+      status: "PENDING",
+    },
+  ];
+
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? {
+          source_payload: {
+            ...payload,
+            transferRequests: nextRequests,
+          },
+        }
+      : {
+          sourcePayload: {
+            ...payload,
+            transferRequests: nextRequests,
+          },
+        }),
+  }, { id: `eq.${leadId}` }));
+
+  return { requested: true as const, reason: null };
 }
 
 export async function getLeadById(leadId: string, ownerId: string) {

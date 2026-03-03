@@ -14,8 +14,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "leadIds is required." }, { status: 400 });
     }
 
-    const claimed = await claimLeads(leadIds, ownerId);
-    return NextResponse.json({ claimed });
+    const result = await claimLeads(leadIds, ownerId);
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to claim leads." }, { status: 500 });
   }
