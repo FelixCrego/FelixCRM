@@ -37,6 +37,7 @@ MAPS_API_KEY=
 GEMINI_API_KEY=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
+NEXT_PUBLIC_APP_URL=https://felix-crm-xi.vercel.app
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
@@ -77,6 +78,8 @@ select cron.schedule(
 
 - Copy `.env.example` to `.env.local` and set your Supabase values.
 - The app uses `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for server-side database operations.
+- Set `NEXT_PUBLIC_APP_URL` to your deployed app origin so Supabase confirmation emails return to the correct domain (instead of localhost).
+- In Supabase Auth settings, add `https://felix-crm-xi.vercel.app/login?confirmed=1` to your allowed redirect URLs.
 - User roles are defined at the database layer as `UserRole` with: `REP`, `MANAGER`, `TEAM_LEAD`, `SUPER_ADMIN`.
 
 Manage your schema directly in Supabase (SQL editor, migrations, or CLI) and keep table names/columns aligned with the app queries.
