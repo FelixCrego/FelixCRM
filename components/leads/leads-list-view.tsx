@@ -258,8 +258,8 @@ export function LeadsListView({ leads }: LeadsListViewProps) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 px-2.5 py-1.5 text-xs text-zinc-400 opacity-0 transition group-hover:opacity-100">
-                    Open Workspace <ArrowRight className="h-3.5 w-3.5" />
+                  <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 bg-zinc-900/40 px-2.5 py-1.5 text-xs text-zinc-300 opacity-0 transition group-hover:opacity-100">
+                    Open Workspace → <ArrowRight className="h-3.5 w-3.5" />
                   </span>
                 </td>
               </tr>
