@@ -90,6 +90,7 @@ model Lead {
   @@index([city, businessType])
   @@index([ownerId, status])
   @@index([updatedAt, status])
+  @@map("lead")
 }
 
 model Script {
