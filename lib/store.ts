@@ -16,7 +16,12 @@ const hasDb = Boolean(process.env.DATABASE_URL);
 const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole };
 
 function isMissingUserTableError(error: unknown) {
-  return error instanceof Error && (error.message.includes("public.User") || error.message.includes("prisma.user.findFirst"));
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === "P2021" && (error.meta?.table as string | undefined)?.includes("User");
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("public.User") || message.includes("prisma.user.findFirst") || message.includes("table") && message.includes("User") && message.includes("does not exist");
 }
 
 async function getSafeFirstUser() {
