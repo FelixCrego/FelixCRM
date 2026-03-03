@@ -11,7 +11,7 @@ const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
 
 const resolvedTableCache = new Map<string, string>();
 
-const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole };
+const MOCK_USER = { id: "00000000-0000-4000-8000-000000000001", name: "Alex Rep", role: "REP" as UserRole };
 
 type SupabaseError = { code?: string; message?: string };
 
