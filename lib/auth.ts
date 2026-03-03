@@ -73,14 +73,18 @@ async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise
   return payload as T;
 }
 
-export async function signUpWithUsernamePassword(username: string, password: string) {
+export async function signUpWithUsernamePassword(username: string, password: string, emailRedirectTo?: string) {
   const email = getNormalizedEmail(username);
   if (!email || password.length < 8) {
     throw new Error("A valid email and password (min 8 chars) are required.");
   }
 
-  const payload = await supabaseAuthRequest<SupabaseSignUpResponse>("/signup", {
-    method: 'POST',
+  const signupPath = emailRedirectTo
+    ? `/signup?redirect_to=${encodeURIComponent(emailRedirectTo)}`
+    : "/signup";
+
+  const payload = await supabaseAuthRequest<SupabaseSignUpResponse>(signupPath, {
+    method: "POST",
     body: JSON.stringify({ email, password }),
   });
 
