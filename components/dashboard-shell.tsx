@@ -2,32 +2,72 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Command, Flame, LayoutDashboard, Search, Wallet, Briefcase, Bell, Sparkles, X, Users } from "lucide-react";
+import {
+  Bell,
+  Bot,
+  Briefcase,
+  Command,
+  Flame,
+  LayoutDashboard,
+  Search,
+  Sparkles,
+  Wallet,
+  X,
+  Users,
+  Shield,
+  Radar,
+  Banknote,
+  ScrollText,
+  Trophy,
+  Map,
+  Gauge,
+} from "lucide-react";
 import { useState } from "react";
+import { useRole } from "@/components/role-context";
+import type { UserRole } from "@/lib/types";
 
 type PlaybookCard = {
   title: string;
   body: string;
 };
 
-const navSections = [
-  {
-    title: "Workspace",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/scrape", label: "Scrape Leads", icon: Search },
-      { href: "/leads", label: "My Leads", icon: Users },
-      { href: "/pipeline", label: "Pipeline", icon: Flame },
-    ],
-  },
-  {
-    title: "Finance",
-    items: [
-      { href: "/commissions", label: "Commissions", icon: Wallet },
-      { href: "/payouts", label: "Payouts", icon: Briefcase },
-    ],
-  },
-];
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+const roleOptions: UserRole[] = ["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"];
+
+const navByRole: Record<UserRole, NavItem[]> = {
+  REP: [
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/scrape", label: "Scrape Leads", icon: Search },
+    { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/pipeline", label: "Pipeline", icon: Flame },
+    { href: "/commissions", label: "Commissions", icon: Wallet },
+  ],
+  TEAM_LEAD: [
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/scrape", label: "Scrape Leads", icon: Search },
+    { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/pipeline", label: "Pipeline", icon: Flame },
+    { href: "/commissions", label: "Commissions", icon: Wallet },
+    { href: "/team-overview", label: "Team Overview", icon: Trophy },
+  ],
+  MANAGER: [
+    { href: "/dashboard", label: "Manager Dashboard", icon: Gauge },
+    { href: "/territory-setup", label: "Territory Setup", icon: Map },
+    { href: "/rep-performance", label: "Rep Performance", icon: Trophy },
+    { href: "/payouts", label: "Payouts", icon: Briefcase },
+  ],
+  SUPER_ADMIN: [
+    { href: "/dashboard", label: "Global Command Center", icon: Shield },
+    { href: "/billing", label: "Billing/Stripe", icon: Banknote },
+    { href: "/user-management", label: "User Management", icon: Users },
+    { href: "/system-logs", label: "System Logs", icon: ScrollText },
+  ],
+};
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -35,6 +75,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { activeRole, setActiveRole } = useRole();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
   const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
@@ -77,32 +118,37 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          {navSections.map((section) => (
-            <div key={section.title} className="mb-6">
-              <p className="mb-2 px-3 text-xs uppercase tracking-[0.2em] text-zinc-500">{section.title}</p>
-              <div className="space-y-1">
-                {section.items.map((item) => {
-                  const Icon = item.icon;
-                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={cn(
-                        "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200",
-                        active
-                          ? "bg-zinc-800 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
-                          : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </div>
+          <div className="mb-3 px-3">
+            <span className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-200">
+              <Radar className="h-3.5 w-3.5" />
+              {activeRole.replace("_", " ")}
+            </span>
+          </div>
+
+          <div className="mb-6">
+            <p className="mb-2 px-3 text-xs uppercase tracking-[0.2em] text-zinc-500">Workspace</p>
+            <div className="space-y-1">
+              {navByRole[activeRole].map((item) => {
+                const Icon = item.icon;
+                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200",
+                      active
+                        ? "bg-zinc-800 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                        : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200",
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {item.label}
+                  </Link>
+                );
+              })}
             </div>
-          ))}
+          </div>
         </aside>
 
         <div className="flex min-h-screen flex-1 flex-col">
@@ -115,6 +161,20 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                   placeholder="Magic Bar: find leads, notes, or command workflows"
                   className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                 />
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-2.5 py-2">
+                <select
+                  aria-label="Active role"
+                  value={activeRole}
+                  onChange={(event) => setActiveRole(event.target.value as UserRole)}
+                  className="bg-transparent text-xs font-semibold uppercase tracking-[0.16em] text-zinc-200 outline-none"
+                >
+                  {roleOptions.map((role) => (
+                    <option key={role} value={role} className="bg-zinc-900 text-zinc-200">
+                      {role.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
               </div>
               <button
                 onClick={() => setDrawerOpen(true)}
