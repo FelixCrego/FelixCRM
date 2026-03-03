@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Search, SlidersHorizontal } from "lucide-react";
 import type { Lead } from "@/lib/types";
 
 type LeadsListViewProps = {
@@ -17,12 +17,29 @@ const statusLabelMap: Record<Lead["status"], string> = {
   DISQUALIFIED: "Disqualified",
 };
 
-const vercelStatusMap = {
+type LeadSiteStatus = NonNullable<Lead["siteStatus"]>;
+
+const vercelStatusMap: Record<LeadSiteStatus, string> = {
   UNBUILT: "Unbuilt",
   BUILDING: "Deploying",
   LIVE: "Live",
   FAILED: "Failed",
 } as const;
+
+const leadStatusPillMap: Record<Lead["status"], string> = {
+  NEW: "border-zinc-700/90 bg-zinc-800/80 text-zinc-300",
+  CONTACTED: "border-sky-500/30 bg-sky-500/10 text-sky-300",
+  IN_PROGRESS: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  CLOSED: "border-emerald-500/35 bg-emerald-500/15 text-emerald-300",
+  DISQUALIFIED: "border-rose-500/30 bg-rose-500/10 text-rose-300",
+};
+
+const vercelStatusPillMap: Record<LeadSiteStatus, string> = {
+  UNBUILT: "border-zinc-700/90 bg-zinc-900 text-zinc-400",
+  BUILDING: "border-indigo-500/30 bg-indigo-500/10 text-indigo-300",
+  LIVE: "border-emerald-400/40 bg-emerald-400/20 text-emerald-200 shadow-[0_0_24px_rgba(52,211,153,0.2)]",
+  FAILED: "border-rose-500/30 bg-rose-500/10 text-rose-300",
+};
 
 const CLAIMED_LEADS_STORAGE_KEY = "claimedLeads";
 
@@ -222,14 +239,28 @@ export function LeadsListView({ leads }: LeadsListViewProps) {
               <tr
                 key={lead?.id}
                 onClick={() => router.push(`/leads/${lead?.id}`)}
-                className="cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-900/50"
+                className="group cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-900/50"
               >
-                <td className="px-4 py-3 font-medium">{lead?.businessName ?? "Unknown business"}</td>
+                <td className="px-4 py-3 font-semibold text-white">{lead?.businessName ?? "Unknown business"}</td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td>
-                <td className="px-4 py-3 text-zinc-300">{statusLabelMap[lead?.status ?? "NEW"]}</td>
-                <td className="px-4 py-3 text-zinc-300">{vercelStatusMap[lead?.siteStatus ?? "UNBUILT"]}</td>
-                <td className="px-4 py-3 text-zinc-500">
-                  <ChevronRight className="h-4 w-4" />
+                <td className="px-4 py-3">
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${leadStatusPillMap[lead?.status ?? "NEW"]}`}
+                  >
+                    {statusLabelMap[lead?.status ?? "NEW"]}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${vercelStatusPillMap[lead?.siteStatus ?? "UNBUILT"]}`}
+                  >
+                    {vercelStatusMap[lead?.siteStatus ?? "UNBUILT"]}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 px-2.5 py-1.5 text-xs text-zinc-400 opacity-0 transition group-hover:opacity-100">
+                    Open Workspace <ArrowRight className="h-3.5 w-3.5" />
+                  </span>
                 </td>
               </tr>
             ))}
