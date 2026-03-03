@@ -1,10 +1,13 @@
 import type { UserRole } from "@/lib/types";
 import { NextResponse } from "next/server";
 import { getProfile, saveProfile } from "@/lib/store";
+import { getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET() {
   try {
-    return NextResponse.json(await getProfile());
+    const userId = getAuthenticatedUserId();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(await getProfile(userId));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load profile." }, { status: 500 });
   }
@@ -12,8 +15,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const userId = getAuthenticatedUserId();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const body = await request.json();
-    await saveProfile({
+    await saveProfile(userId, {
       niche: body.niche ?? "",
       toneOfVoice: body.toneOfVoice ?? "CONSULTATIVE",
       calendarLink: body.calendarLink ?? "",
