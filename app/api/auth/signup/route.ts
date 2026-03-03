@@ -6,6 +6,8 @@ import {
   signUpWithUsernamePassword,
 } from "@/lib/auth";
 
+const DEFAULT_PRODUCTION_APP_URL = "https://felix-crm-xi.vercel.app";
+
 function setAuthCookies(response: NextResponse, accessToken: string, refreshToken: string, expiresIn: number) {
   response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, accessToken, {
     httpOnly: true,
@@ -23,14 +25,24 @@ function setAuthCookies(response: NextResponse, accessToken: string, refreshToke
   });
 }
 
+function resolveConfirmationRedirectBase(request: Request) {
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configuredAppUrl) return configuredAppUrl;
+
+  const origin = request.headers.get("origin")?.trim() ?? "";
+  if (origin && !origin.includes("localhost")) return origin;
+
+  return DEFAULT_PRODUCTION_APP_URL;
+}
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const username = String(body?.username ?? "").trim();
   const password = String(body?.password ?? "");
 
   try {
-    const origin = request.headers.get("origin") ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
-    const emailRedirectTo = origin ? `${origin.replace(/\/$/, "")}/login?confirmed=1` : undefined;
+    const baseUrl = resolveConfirmationRedirectBase(request);
+    const emailRedirectTo = `${baseUrl.replace(/\/$/, "")}/login?confirmed=1`;
     const session = await signUpWithUsernamePassword(username, password, emailRedirectTo);
 
     const response = NextResponse.json({
