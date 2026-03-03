@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 const upcomingDemos = [
   {
     id: "demo-1",
-    leadId: "1",
+    leadId: "123e4567-e89b-12d3-a456-426614174000",
     dateTimeLabel: "Today, 2:30 PM",
     businessName: "Northstar Fitness Club",
     leadStatus: "Proposal Sent",
@@ -14,7 +14,7 @@ const upcomingDemos = [
   },
   {
     id: "demo-2",
-    leadId: "2",
+    leadId: "223e4567-e89b-12d3-a456-426614174001",
     dateTimeLabel: "Tomorrow, 10:00 AM",
     businessName: "Hillside Dental Group",
     leadStatus: "Discovery Call Complete",
@@ -23,7 +23,7 @@ const upcomingDemos = [
   },
   {
     id: "demo-3",
-    leadId: "3",
+    leadId: "323e4567-e89b-12d3-a456-426614174002",
     dateTimeLabel: "Friday, 4:15 PM",
     businessName: "Riverfront Spa & Wellness",
     leadStatus: "Follow-up Scheduled",
