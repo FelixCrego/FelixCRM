@@ -7,6 +7,7 @@ import type { Lead } from "@/lib/types";
 
 type LeadsListViewProps = {
   leads?: Lead[] | null;
+  errorMessage?: string | null;
 };
 
 const statusLabelMap: Record<Lead["status"], string> = {
@@ -42,51 +43,6 @@ const vercelStatusPillMap: Record<LeadSiteStatus, string> = {
 };
 
 const CLAIMED_LEADS_STORAGE_KEY = "claimedLeads";
-
-const MOCK_LEADS: Lead[] = [
-  {
-    id: "mock-lead-1",
-    businessName: "Apex Roofing",
-    city: "Austin",
-    businessType: "Roofing",
-    phone: "(512) 555-0191",
-    email: "hello@apexroofing.example",
-    websiteUrl: null,
-    websiteStatus: "MISSING",
-    status: "IN_PROGRESS",
-    siteStatus: "UNBUILT",
-    ownerId: "demo-user",
-    updatedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "mock-lead-2",
-    businessName: "Texas Plumbing",
-    city: "Dallas",
-    businessType: "Plumbing",
-    phone: "(214) 555-0114",
-    email: "service@texasplumbing.example",
-    websiteUrl: "https://texasplumbing.example",
-    websiteStatus: "LIVE",
-    status: "CONTACTED",
-    siteStatus: "LIVE",
-    ownerId: "demo-user",
-    updatedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "mock-lead-3",
-    businessName: "Hill Country Garage Doors",
-    city: "Round Rock",
-    businessType: "Garage Door Repair",
-    phone: null,
-    email: "service@hcdoors.example",
-    websiteUrl: null,
-    websiteStatus: "MISSING",
-    status: "NEW",
-    siteStatus: "UNBUILT",
-    ownerId: "demo-user",
-    updatedAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-];
 
 function normalizeLead(raw: unknown): Lead | null {
   if (!raw || typeof raw !== "object") return null;
@@ -140,7 +96,7 @@ function safelyBucketLastContact(updatedAt?: string | null) {
   return "30d+" as const;
 }
 
-export function LeadsListView({ leads }: LeadsListViewProps) {
+export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
@@ -167,7 +123,7 @@ export function LeadsListView({ leads }: LeadsListViewProps) {
   const displayLeads = useMemo(() => {
     if (normalizedServerLeads.length > 0) return normalizedServerLeads;
     if (storageLeads.length > 0) return storageLeads;
-    return MOCK_LEADS;
+    return [];
   }, [normalizedServerLeads, storageLeads]);
 
   const filteredLeads = useMemo(() => {
@@ -187,6 +143,12 @@ export function LeadsListView({ leads }: LeadsListViewProps) {
         <p className="mt-1 text-sm text-zinc-400">Claimed territory ready for live outreach and rapid deployment closes.</p>
       </header>
 
+
+      {errorMessage && (
+        <section className="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+          {errorMessage}
+        </section>
+      )}
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
         <div className="grid gap-3 lg:grid-cols-[minmax(220px,2fr)_1fr_1fr]">
           <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-zinc-400 focus-within:border-zinc-500">
