@@ -4,7 +4,17 @@ import { insertLeads } from "@/lib/store";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const rawBody = await request.text();
+    let body: Record<string, unknown> = {};
+
+    if (rawBody.trim()) {
+      try {
+        body = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+      }
+    }
+
     const city = String(body.city ?? "").trim();
     const businessType = String(body.businessType ?? "").trim();
 
