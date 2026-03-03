@@ -1,15 +1,22 @@
+"use client";
+
 import {
+  Activity,
   CalendarClock,
   CheckCircle2,
+  ExternalLink,
   Flame,
   Mail,
   Phone,
   Rocket,
+  Server,
   TrendingUp,
-  ExternalLink,
+  Users,
+  Wallet,
 } from "lucide-react";
+import { useRole } from "@/components/role-context";
 
-const kpis = [
+const repKpis = [
   { label: "Earned Commission", value: "$18,250", trend: "+14%", icon: TrendingUp },
   { label: "Pipeline Value", value: "$94,000", trend: "+8%", icon: Flame },
   { label: "Proof Assets Shipped", value: "37", trend: "+6 today", icon: CheckCircle2 },
@@ -17,82 +24,29 @@ const kpis = [
 ];
 
 const focusLeads = [
-  {
-    rank: 1,
-    business: "Apex Roofing",
-    status: "Awaiting deployment",
-    deploymentLabel: "Deploy Vercel Site",
-    deployed: false,
-  },
-  {
-    rank: 2,
-    business: "Texas Plumbing",
-    status: "Demo follow-up due in 45m",
-    deploymentLabel: "View Site",
-    deployed: true,
-  },
-  {
-    rank: 3,
-    business: "Maverick Legal Co.",
-    status: "Requested legal copy edits",
-    deploymentLabel: "Deploy Vercel Site",
-    deployed: false,
-  },
-  {
-    rank: 4,
-    business: "Bloom Pediatrics",
-    status: "Contract sent • no response",
-    deploymentLabel: "View Site",
-    deployed: true,
-  },
-  {
-    rank: 5,
-    business: "Northline Roofing",
-    status: "Pricing approved • waiting on launch",
-    deploymentLabel: "Deploy Vercel Site",
-    deployed: false,
-  },
+  { rank: 1, business: "Apex Roofing", status: "Awaiting deployment", deploymentLabel: "Deploy Vercel Site", deployed: false },
+  { rank: 2, business: "Texas Plumbing", status: "Demo follow-up due in 45m", deploymentLabel: "View Site", deployed: true },
+  { rank: 3, business: "Maverick Legal Co.", status: "Requested legal copy edits", deploymentLabel: "Deploy Vercel Site", deployed: false },
+  { rank: 4, business: "Bloom Pediatrics", status: "Contract sent • no response", deploymentLabel: "View Site", deployed: true },
+  { rank: 5, business: "Northline Roofing", status: "Pricing approved • waiting on launch", deploymentLabel: "Deploy Vercel Site", deployed: false },
 ];
 
 const liveEngagement = [
-  {
-    business: "Apex Roofing",
-    event: "is viewing their site RIGHT NOW",
-    context: "Pricing section open • 40s active",
-    live: true,
-  },
-  {
-    business: "Texas Plumbing",
-    event: "clicked the contact button 2 mins ago",
-    context: "Mobile traffic • Austin, TX",
-    live: true,
-  },
-  {
-    business: "Maverick Legal Co.",
-    event: "returned for a second session 6 mins ago",
-    context: "Viewed testimonials + FAQ",
-    live: false,
-  },
-  {
-    business: "Bloom Pediatrics",
-    event: "opened the booking form 9 mins ago",
-    context: "Desktop traffic • Houston, TX",
-    live: false,
-  },
+  { business: "Apex Roofing", event: "is viewing their site RIGHT NOW", context: "Pricing section open • 40s active", live: true },
+  { business: "Texas Plumbing", event: "clicked the contact button 2 mins ago", context: "Mobile traffic • Austin, TX", live: true },
+  { business: "Maverick Legal Co.", event: "returned for a second session 6 mins ago", context: "Viewed testimonials + FAQ", live: false },
+  { business: "Bloom Pediatrics", event: "opened the booking form 9 mins ago", context: "Desktop traffic • Houston, TX", live: false },
 ];
 
-export default function DashboardPage() {
+function RepDashboard() {
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_350px]">
       <div className="space-y-5">
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {kpis.map((kpi) => {
+          {repKpis.map((kpi) => {
             const Icon = kpi.icon;
             return (
-              <article
-                key={kpi.label}
-                className="group rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700 hover:shadow-[0_0_0_1px_rgba(113,113,122,0.25)]"
-              >
+              <article key={kpi.label} className="group rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700 hover:shadow-[0_0_0_1px_rgba(113,113,122,0.25)]">
                 <p className="mb-1.5 text-[11px] uppercase tracking-[0.18em] text-zinc-400">{kpi.label}</p>
                 <div className="flex items-end justify-between gap-2">
                   <h2 className="text-3xl font-semibold tracking-tight text-white">{kpi.value}</h2>
@@ -108,12 +62,7 @@ export default function DashboardPage() {
           <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Today&apos;s Schedule</h3>
             <div className="space-y-2 text-sm">
-              {[
-                "09:30 - Team standup",
-                "11:00 - Demo: Pulse Fitness",
-                "14:30 - Call: Northline Roofing",
-                "17:00 - Daily close review",
-              ].map((event) => (
+              {["09:30 - Team standup", "11:00 - Demo: Pulse Fitness", "14:30 - Call: Northline Roofing", "17:00 - Daily close review"].map((event) => (
                 <div key={event} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-300">
                   {event}
                 </div>
@@ -128,36 +77,19 @@ export default function DashboardPage() {
             </div>
             <ul className="space-y-2">
               {focusLeads.map((lead) => (
-                <li
-                  key={lead.business}
-                  className="group flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 transition-all duration-200 hover:border-zinc-700"
-                >
-                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-blue-400/30 bg-blue-500/10 text-[11px] font-semibold text-blue-200">
-                    {lead.rank}
-                  </span>
+                <li key={lead.business} className="group flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 transition-all duration-200 hover:border-zinc-700">
+                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-blue-400/30 bg-blue-500/10 text-[11px] font-semibold text-blue-200">{lead.rank}</span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-zinc-100">{lead.business}</p>
                     <p className="truncate text-xs text-zinc-400">{lead.status}</p>
                   </div>
                   <div className="flex items-center gap-1.5 opacity-80 transition group-hover:opacity-100">
-                    <button
-                      aria-label={`Call ${lead.business}`}
-                      className="rounded-lg border border-zinc-700 p-1.5 text-zinc-300 transition hover:border-emerald-400/40 hover:text-emerald-300"
-                    >
-                      <Phone className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      aria-label={`Email ${lead.business}`}
-                      className="rounded-lg border border-zinc-700 p-1.5 text-zinc-300 transition hover:border-sky-400/40 hover:text-sky-300"
-                    >
-                      <Mail className="h-3.5 w-3.5" />
-                    </button>
+                    <button aria-label={`Call ${lead.business}`} className="rounded-lg border border-zinc-700 p-1.5 text-zinc-300 transition hover:border-emerald-400/40 hover:text-emerald-300"><Phone className="h-3.5 w-3.5" /></button>
+                    <button aria-label={`Email ${lead.business}`} className="rounded-lg border border-zinc-700 p-1.5 text-zinc-300 transition hover:border-sky-400/40 hover:text-sky-300"><Mail className="h-3.5 w-3.5" /></button>
                     <button
                       aria-label={`${lead.deploymentLabel} for ${lead.business}`}
                       className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition ${
-                        lead.deployed
-                          ? "border-zinc-700 bg-zinc-800 text-zinc-200 hover:border-zinc-600"
-                          : "border-blue-500/40 bg-blue-500/15 text-blue-100 hover:border-blue-400/60 hover:bg-blue-500/20"
+                        lead.deployed ? "border-zinc-700 bg-zinc-800 text-zinc-200 hover:border-zinc-600" : "border-blue-500/40 bg-blue-500/15 text-blue-100 hover:border-blue-400/60 hover:bg-blue-500/20"
                       }`}
                     >
                       {lead.deployed ? <ExternalLink className="h-3.5 w-3.5" /> : <Rocket className="h-3.5 w-3.5" />}
@@ -175,23 +107,16 @@ export default function DashboardPage() {
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Live Site Engagement</h3>
         <div className="space-y-2">
           {liveEngagement.map((feed) => (
-            <article
-              key={feed.business + feed.event}
-              className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 transition-all duration-200 hover:border-zinc-700"
-            >
+            <article key={feed.business + feed.event} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 transition-all duration-200 hover:border-zinc-700">
               <div className="mb-2 flex items-start justify-between gap-2">
-                <p className="text-sm text-zinc-100">
-                  <span className="font-semibold">{feed.business}</span> {feed.event}
-                </p>
+                <p className="text-sm text-zinc-100"><span className="font-semibold">{feed.business}</span> {feed.event}</p>
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-200">
-                  <span className={`h-1.5 w-1.5 rounded-full bg-emerald-300 ${feed.live ? "animate-pulse" : "opacity-60"}`} />
-                  Live
+                  <span className={`h-1.5 w-1.5 rounded-full bg-emerald-300 ${feed.live ? "animate-pulse" : "opacity-60"}`} />Live
                 </span>
               </div>
               <p className="mb-2 text-xs text-zinc-400">{feed.context}</p>
               <button className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-200 transition hover:border-emerald-300/50 hover:bg-emerald-500/20">
-                <Phone className="h-3.5 w-3.5" />
-                Call Now
+                <Phone className="h-3.5 w-3.5" />Call Now
               </button>
             </article>
           ))}
@@ -199,4 +124,140 @@ export default function DashboardPage() {
       </aside>
     </div>
   );
+}
+
+function TeamLeadDashboard() {
+  return (
+    <div className="space-y-5">
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Squad Pacing</p>
+        <div className="mt-2 flex items-end justify-between">
+          <h2 className="text-3xl font-semibold text-white">Squad Quota: 85% to goal</h2>
+          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">+12% this week</span>
+        </div>
+      </section>
+      <RepDashboard />
+    </div>
+  );
+}
+
+function ManagerDashboard() {
+  const reps = [
+    { name: "Alex Rep", revenue: "$228K", sites: 26, winRate: "31%" },
+    { name: "Nina Cole", revenue: "$207K", sites: 24, winRate: "29%" },
+    { name: "Jordan Lee", revenue: "$184K", sites: 21, winRate: "27%" },
+    { name: "Marco Diaz", revenue: "$169K", sites: 19, winRate: "25%" },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <section className="grid gap-3 md:grid-cols-3">
+        {[
+          { title: "Total Pipeline", value: "$1.2M", icon: Wallet },
+          { title: "Active Reps", value: "14", icon: Users },
+          { title: "Deals Deployed", value: "142", icon: Rocket },
+        ].map((card) => {
+          const Icon = card.icon;
+          return (
+            <article key={card.title} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+              <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">{card.title}</p>
+              <div className="mt-3 flex items-center justify-between">
+                <h2 className="text-4xl font-semibold tracking-tight text-white">{card.value}</h2>
+                <Icon className="h-5 w-5 text-blue-300" />
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Leaderboard</h3>
+        <div className="overflow-hidden rounded-xl border border-zinc-800">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-zinc-950 text-zinc-400">
+              <tr>
+                <th className="px-4 py-3">Rank</th>
+                <th className="px-4 py-3">Rep</th>
+                <th className="px-4 py-3">Closed Revenue</th>
+                <th className="px-4 py-3">Vercel Sites Deployed</th>
+                <th className="px-4 py-3">Win Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reps.map((rep, idx) => (
+                <tr key={rep.name} className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-200">
+                  <td className="px-4 py-3">#{idx + 1}</td>
+                  <td className="px-4 py-3 font-medium">{rep.name}</td>
+                  <td className="px-4 py-3">{rep.revenue}</td>
+                  <td className="px-4 py-3">{rep.sites}</td>
+                  <td className="px-4 py-3 text-emerald-300">{rep.winRate}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SuperAdminDashboard() {
+  return (
+    <div className="space-y-5">
+      <section className="grid gap-3 md:grid-cols-3">
+        {[
+          { title: "Server Uptime", value: "99.9%", detail: "30-day rolling", icon: Server },
+          { title: "Monthly Recurring Revenue", value: "$82,400", detail: "+9.4% MoM", icon: TrendingUp },
+          { title: "Request Throughput", value: "1.8M", detail: "Last 24h", icon: Activity },
+        ].map((card) => {
+          const Icon = card.icon;
+          return (
+            <article key={card.title} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+              <div className="flex items-center justify-between">
+                <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">{card.title}</p>
+                <Icon className="h-4 w-4 text-blue-300" />
+              </div>
+              <h2 className="mt-2 text-3xl font-semibold text-white">{card.value}</h2>
+              <p className="mt-1 text-xs text-zinc-400">{card.detail}</p>
+              <div className="mt-4 h-16 rounded-lg border border-zinc-800 bg-zinc-950" />
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">System Log Feed</h3>
+        <div className="space-y-2 text-sm">
+          {[
+            "New user joined: maria@northline.com",
+            "Database backup complete",
+            "Billing webhook processed for org_721",
+            "Role updated: TEAM_LEAD -> MANAGER",
+          ].map((event) => (
+            <div key={event} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-zinc-300">
+              {event}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export default function DashboardPage() {
+  const { activeRole } = useRole();
+
+  if (activeRole === "TEAM_LEAD") {
+    return <TeamLeadDashboard />;
+  }
+
+  if (activeRole === "MANAGER") {
+    return <ManagerDashboard />;
+  }
+
+  if (activeRole === "SUPER_ADMIN") {
+    return <SuperAdminDashboard />;
+  }
+
+  return <RepDashboard />;
 }
