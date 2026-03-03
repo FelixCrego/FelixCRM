@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { dedupeKey, fakeUserId } from "@/lib/utils";
 import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 
@@ -85,23 +85,27 @@ export async function listLeads() {
   }
 }
 
+function insertLeadsInMemory(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
+  const existing = new Set(memory.leads.map((lead) => dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? "")));
+  const newLeads = leads.filter((lead) => !existing.has(dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? ""))).map((lead, idx) => ({
+    ...lead,
+    id: `lead-${Date.now()}-${idx}`,
+    status: "NEW" as const,
+    siteStatus: "UNBUILT" as const,
+    updatedAt: new Date().toISOString(),
+    ownerId: null,
+  }));
+  memory.leads.unshift(...newLeads);
+  return newLeads.length;
+}
+
 export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
   if (!hasDb) {
-    const existing = new Set(memory.leads.map((lead) => dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? "")));
-    const newLeads = leads.filter((lead) => !existing.has(dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? ""))).map((lead, idx) => ({
-      ...lead,
-      id: `lead-${Date.now()}-${idx}`,
-      status: "NEW" as const,
-      siteStatus: "UNBUILT" as const,
-      updatedAt: new Date().toISOString(),
-      ownerId: null,
-    }));
-    memory.leads.unshift(...newLeads);
-    return newLeads.length;
+    return insertLeadsInMemory(leads);
   }
 
   let inserted = 0;
-  for (const lead of leads) {
+  for (const [index, lead] of leads.entries()) {
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
     const key = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
     try {
@@ -129,8 +133,14 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
         },
       });
       inserted++;
-    } catch {
-      // dedupe conflict ignored
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        continue;
+      }
+      if (shouldUseMemoryFallback(error)) {
+        return inserted + insertLeadsInMemory(leads.slice(index));
+      }
+      throw error;
     }
   }
   return inserted;

@@ -41,7 +41,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-> If keys are missing, the app uses graceful mock behavior so UI still works end-to-end.
+> Most features degrade gracefully without optional keys, but lead scraping specifically requires `MAPS_API_KEY`.
 
 
 ## Lead scraper (CRM + Supabase)
