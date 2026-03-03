@@ -121,6 +121,8 @@ export default function ScrapePage() {
 
     try {
       await mockClaimLeads();
+      const claimed = (leads || []).filter((lead) => (leadIds || []).includes(lead?.id));
+      window.localStorage.setItem("felixcrm.claimedLeads", JSON.stringify(claimed || []));
       setSelectedLeadIds([]);
       setClaimSuccessMessage("Successfully claimed leads!");
       router.push("/leads");
