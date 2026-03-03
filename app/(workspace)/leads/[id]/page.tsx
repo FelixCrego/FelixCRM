@@ -1,12 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
-type LeadExecutionPageProps = {
-  params: {
-    id?: string;
-  };
-};
+import { useParams } from "next/navigation";
 
 type LeadRecord = {
   id: string;
@@ -138,8 +133,12 @@ function LeadWorkspaceSkeleton() {
   );
 }
 
-export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
-  const leadId = useMemo(() => params?.id?.trim() ?? "", [params?.id]);
+export default function LeadExecutionPage() {
+  const params = useParams<{ id?: string | string[] }>();
+  const leadId = useMemo(() => {
+    const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
+    return typeof rawId === "string" ? rawId.trim() : "";
+  }, [params]);
 
   const [status, setStatus] = useState<FetchStatus>("loading");
   const [lead, setLead] = useState<LeadRecord | null>(null);
