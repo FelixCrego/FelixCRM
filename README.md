@@ -9,7 +9,7 @@ Production-ready starter for a lead-gen CRM with scrape, instant site deployment
 - AI Sales Playbook (Scripts with upvotes, sorted by success signal).
 - Magic Bar for quick natural-language filtering/actions.
 - Dark/light mode toggle.
-- Prisma PostgreSQL schema for Users, Leads, Scripts, votes, success markers.
+- Supabase-backed PostgreSQL schema for Users, Leads, Scripts, votes, success markers.
 - 30-day lead release rule implemented in app logic + SQL cron example.
 
 ## Quick Start
@@ -27,7 +27,6 @@ Open http://localhost:3000
 3. Configure env vars:
 
 ```bash
-DATABASE_URL=
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
 VERCEL_TOKEN=
@@ -47,19 +46,12 @@ SUPABASE_SERVICE_ROLE_KEY=
 ## Lead scraper (CRM + Supabase)
 
 - `POST /api/scrape` runs exclusively on Google Places API (Text Search + Place Details) and requires `MAPS_API_KEY`.
-- Results are persisted through Prisma into your Supabase Postgres (`DATABASE_URL`).
+- Results are persisted through the Supabase client into your Supabase Postgres.
 - Dedupe is handled by the existing `Lead.dedupeKey` plus in-run duplicate guards for place IDs, normalized names, and normalized phone numbers.
 - If `GEMINI_API_KEY` is set, the scraper also:
   - generates micro-queries from the city+niche input, and
   - creates an AI research summary per lead for enrichment.
 - The scrape response includes `chatbotPrompt`, a ready-to-use lead-scraping assistant prompt template.
-
-## Prisma
-
-```bash
-npx prisma generate
-npx prisma migrate dev --name init
-```
 
 ## 30-Day Rule SQL (pg_cron)
 
@@ -84,11 +76,7 @@ select cron.schedule(
 ## Supabase database + roles
 
 - Copy `.env.example` to `.env.local` and set your Supabase values.
-- The app uses `DATABASE_URL` for Prisma. If `DATABASE_URL` is not set but `POSTGRES_PRISMA_URL` is available, it automatically falls back to `POSTGRES_PRISMA_URL`.
+- The app uses `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for server-side database operations.
 - User roles are defined at the database layer as `UserRole` with: `REP`, `MANAGER`, `TEAM_LEAD`, `SUPER_ADMIN`.
 
-Run migrations:
-
-```bash
-npx prisma migrate deploy
-```
+Manage your schema directly in Supabase (SQL editor, migrations, or CLI) and keep table names/columns aligned with the app queries.
