@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getLeadById, setLeadDeployment } from "@/lib/store";
 
 export async function POST(request: Request) {
+  try {
   const body = await request.json();
   const leadId = String(body.leadId ?? "");
   if (!leadId) return NextResponse.json({ error: "leadId required" }, { status: 400 });
@@ -14,9 +15,8 @@ export async function POST(request: Request) {
   const token = process.env.VERCEL_TOKEN;
   const project = process.env.VERCEL_TEMPLATE_PROJECT;
   if (!token || !project) {
-    const mockUrl = `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`;
-    await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: mockUrl, vercelDeploymentId: "mock-deployment" });
-    return NextResponse.json({ url: mockUrl, mock: true });
+    await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+    return NextResponse.json({ error: "Missing Vercel configuration (VERCEL_TOKEN and VERCEL_TEMPLATE_PROJECT)." }, { status: 500 });
   }
 
   const response = await fetch("https://api.vercel.com/v13/deployments", {
@@ -45,11 +45,16 @@ export async function POST(request: Request) {
 
   if (!response.ok) {
     await setLeadDeployment(leadId, { siteStatus: "FAILED" });
-    return NextResponse.json({ error: "Deployment failed" }, { status: 500 });
+    const errorText = await response.text();
+    return NextResponse.json({ error: `Deployment failed: ${errorText || response.statusText}` }, { status: 500 });
   }
 
   const payload = await response.json();
   const url = payload?.url ? `https://${payload.url}` : undefined;
   await setLeadDeployment(leadId, { siteStatus: url ? "LIVE" : "BUILDING", deployedUrl: url, vercelDeploymentId: payload.id });
   return NextResponse.json({ url, deploymentId: payload.id });
+
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
+  }
 }

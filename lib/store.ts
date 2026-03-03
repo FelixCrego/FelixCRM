@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import { dedupeKey, fakeUserId } from "@/lib/utils";
+import { dedupeKey } from "@/lib/utils";
 import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
 
 if (!process.env.DATABASE_URL && process.env.POSTGRES_PRISMA_URL) {
@@ -10,20 +10,9 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
-let memory = {
-  profile: { niche: "Local Services", toneOfVoice: "CONSULTATIVE" as ToneOfVoice, calendarLink: "", onboardingCompleted: false, role: "REP" as UserRole },
-  leads: [] as Lead[],
-  scripts: [] as Script[],
-};
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
-
-function shouldUseMemoryFallback(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  return msg.includes("does not exist") || msg.includes("p2021") || msg.includes("p2022");
-}
 
 function leadToMemory(lead: any): Lead {
   return {
@@ -47,12 +36,9 @@ function leadToMemory(lead: any): Lead {
 }
 
 export async function getProfile() {
-  if (!hasDb) return memory.profile;
-  const user = await prisma.user.upsert({
-    where: { email: "demo@felixcrm.ai" },
-    create: { email: "demo@felixcrm.ai", name: "Demo Rep" },
-    update: {},
-  });
+  if (!hasDb) throw new Error("DATABASE_URL is required to load profile data.");
+  const user = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!user) throw new Error("No user profile found. Create a user record before using the app.");
   return {
     niche: user.niche ?? "",
     toneOfVoice: (user.toneOfVoice ?? "CONSULTATIVE") as ToneOfVoice,
@@ -63,52 +49,27 @@ export async function getProfile() {
 }
 
 export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfVoice; calendarLink: string; onboardingCompleted: boolean; role: UserRole }) {
-  if (!hasDb) {
-    memory.profile = profile;
-    return;
-  }
-  await prisma.user.upsert({
-    where: { email: "demo@felixcrm.ai" },
-    create: { email: "demo@felixcrm.ai", ...profile, name: "Demo Rep" },
-    update: profile,
+  if (!hasDb) throw new Error("DATABASE_URL is required to save profile data.");
+  const user = await prisma.user.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
+  if (!user) throw new Error("No user profile found. Create a user record before saving profile settings.");
+  await prisma.user.update({
+    where: { id: user.id },
+    data: profile,
   });
 }
 
 export async function listLeads() {
-  if (!hasDb) return memory.leads;
-  try {
-    const leads = await prisma.lead.findMany({ orderBy: { updatedAt: "desc" } });
-    return leads.map(leadToMemory);
-  } catch (error) {
-    if (shouldUseMemoryFallback(error)) return memory.leads;
-    throw error;
-  }
-}
-
-function insertLeadsInMemory(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
-  const existing = new Set(memory.leads.map((lead) => dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? "")));
-  const newLeads = leads.filter((lead) => !existing.has(dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", lead.websiteUrl ?? ""))).map((lead, idx) => ({
-    ...lead,
-    id: `lead-${Date.now()}-${idx}`,
-    status: "NEW" as const,
-    siteStatus: "UNBUILT" as const,
-    updatedAt: new Date().toISOString(),
-    ownerId: null,
-  }));
-  memory.leads.unshift(...newLeads);
-  return newLeads.length;
+  if (!hasDb) throw new Error("DATABASE_URL is required to load leads.");
+  const leads = await prisma.lead.findMany({ orderBy: { updatedAt: "desc" } });
+  return leads.map(leadToMemory);
 }
 
 export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
-  if (!hasDb) {
-    const inserted = insertLeadsInMemory(leads);
-    console.info("[insertLeads] in-memory path used", { dbPathUsed: false, inserted, duplicatesSkipped: leads.length - inserted });
-    return inserted;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to insert leads.");
 
   let inserted = 0;
   let duplicatesSkipped = 0;
-  for (const [index, lead] of leads.entries()) {
+  for (const lead of leads) {
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
     const key = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
     try {
@@ -141,13 +102,6 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
         duplicatesSkipped += 1;
         continue;
       }
-      if (shouldUseMemoryFallback(error)) {
-        const fallbackInserted = insertLeadsInMemory(leads.slice(index));
-        const totalInserted = inserted + fallbackInserted;
-        const totalDuplicatesSkipped = duplicatesSkipped + (leads.slice(index).length - fallbackInserted);
-        console.info("[insertLeads] db path fallback to in-memory", { dbPathUsed: false, inserted: totalInserted, duplicatesSkipped: totalDuplicatesSkipped });
-        return totalInserted;
-      }
       throw error;
     }
   }
@@ -156,10 +110,7 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
 }
 
 export async function setLeadDeployment(leadId: string, deployment: { deployedUrl?: string; siteStatus: "BUILDING" | "LIVE" | "FAILED"; vercelDeploymentId?: string }) {
-  if (!hasDb) {
-    memory.leads = memory.leads.map((lead) => (lead.id === leadId ? { ...lead, ...deployment, updatedAt: new Date().toISOString() } : lead));
-    return;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to update lead deployment.");
   await prisma.lead.update({
     where: { id: leadId },
     data: {
@@ -171,17 +122,13 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
 }
 
 export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
-  if (!hasDb) {
-    const row = { ...script, id: `script-${Date.now()}`, upvoteCount: 0 };
-    memory.scripts.unshift(row);
-    return row;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to save scripts.");
   const row = await prisma.script.create({
     data: {
       content: script.content,
       type: script.type,
       ...(script.leadId ? { lead: { connect: { id: script.leadId } } } : {}),
-      author: { connectOrCreate: { where: { email: "demo@felixcrm.ai" }, create: { email: "demo@felixcrm.ai" } } },
+      author: { connect: { id: (await prisma.user.findFirstOrThrow({ select: { id: true }, orderBy: { createdAt: "asc" } })).id } },
       toneUsed: (await getProfile()).toneOfVoice,
       modelName: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       promptVersion: "v1",
@@ -191,87 +138,49 @@ export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
 }
 
 export async function listScripts() {
-  if (!hasDb) return memory.scripts;
-  try {
-    const rows = await prisma.script.findMany({ where: { isShared: true }, orderBy: [{ upvoteCount: "desc" }, { createdAt: "desc" }] });
-    return rows.map((row) => ({ id: row.id, content: row.content, type: row.type as Script["type"], upvoteCount: row.upvoteCount, leadId: row.leadId ?? undefined }));
-  } catch (error) {
-    if (shouldUseMemoryFallback(error)) return memory.scripts;
-    throw error;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to list scripts.");
+  const rows = await prisma.script.findMany({ where: { isShared: true }, orderBy: [{ upvoteCount: "desc" }, { createdAt: "desc" }] });
+  return rows.map((row) => ({ id: row.id, content: row.content, type: row.type as Script["type"], upvoteCount: row.upvoteCount, leadId: row.leadId ?? undefined }));
 }
 
 export async function upvoteScript(scriptId: string) {
-  if (!hasDb) {
-    memory.scripts = memory.scripts.map((script) => (script.id === scriptId ? { ...script, upvoteCount: script.upvoteCount + 1 } : script));
-    return;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to upvote scripts.");
   await prisma.script.update({ where: { id: scriptId }, data: { upvoteCount: { increment: 1 } } });
 }
 
 export async function releaseStaleLeads() {
-  if (!hasDb) {
-    memory.leads = memory.leads.map((lead) => {
-      const stale = new Date(lead.updatedAt).getTime() < Date.now() - 30 * 24 * 60 * 60 * 1000;
-      if (stale && !["IN_PROGRESS", "CLOSED"].includes(lead.status)) return { ...lead, ownerId: null };
-      return lead;
-    });
-    return;
-  }
-  try {
-    await prisma.lead.updateMany({
-      where: {
-        ownerId: { not: null },
-        status: { notIn: ["IN_PROGRESS", "CLOSED"] },
-        updatedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-      },
-      data: { ownerId: null },
-    });
-  } catch (error) {
-    if (shouldUseMemoryFallback(error)) return;
-    throw error;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to release stale leads.");
+  await prisma.lead.updateMany({
+    where: {
+      ownerId: { not: null },
+      status: { notIn: ["IN_PROGRESS", "CLOSED"] },
+      updatedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+    },
+    data: { ownerId: null },
+  });
 }
 
 
 export async function setLeadResearchSummary(leadId: string, summary: string) {
-  if (!hasDb) {
-    memory.leads = memory.leads.map((lead) => (lead.id === leadId ? { ...lead, aiResearchSummary: summary, updatedAt: new Date().toISOString() } : lead));
-    return;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to save lead research.");
 
-  try {
-    const existing = await prisma.lead.findUnique({ where: { id: leadId }, select: { sourcePayload: true } });
-    const payload = existing?.sourcePayload && typeof existing.sourcePayload === "object" ? existing.sourcePayload as Record<string, unknown> : {};
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: {
-        sourcePayload: {
-          ...payload,
-          aiResearchSummary: summary,
-        },
+  const existing = await prisma.lead.findUnique({ where: { id: leadId }, select: { sourcePayload: true } });
+  const payload = existing?.sourcePayload && typeof existing.sourcePayload === "object" ? existing.sourcePayload as Record<string, unknown> : {};
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      sourcePayload: {
+        ...payload,
+        aiResearchSummary: summary,
       },
-    });
-  } catch (error) {
-    if (shouldUseMemoryFallback(error)) return;
-    throw error;
-  }
+    },
+  });
 }
 
-export async function claimLeads(leadIds: string[], ownerId: string = fakeUserId) {
+export async function claimLeads(leadIds: string[], ownerId: string) {
   if (!leadIds.length) return 0;
 
-  if (!hasDb) {
-    const idSet = new Set(leadIds);
-    let claimed = 0;
-    memory.leads = memory.leads.map((lead) => {
-      if (!idSet.has(lead.id)) return lead;
-      if (lead.ownerId === ownerId) return lead;
-      claimed += 1;
-      return { ...lead, ownerId, status: "IN_PROGRESS", updatedAt: new Date().toISOString() };
-    });
-    return claimed;
-  }
+  if (!hasDb) throw new Error("DATABASE_URL is required to claim leads.");
 
   const result = await prisma.lead.updateMany({
     where: { id: { in: leadIds } },
@@ -285,6 +194,10 @@ export async function getLeadById(leadId: string) {
   return leads.find((lead) => lead.id === leadId);
 }
 
-export function demoOwnerId() {
-  return fakeUserId;
+
+export async function getCurrentUserId() {
+  if (!hasDb) throw new Error("DATABASE_URL is required to resolve current user.");
+  const user = await prisma.user.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
+  if (!user) throw new Error("No user found. Create a user record before claiming leads.");
+  return user.id;
 }

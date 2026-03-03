@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { claimLeads, demoOwnerId } from "@/lib/store";
+import { claimLeads, getCurrentUserId } from "@/lib/store";
 
 export async function POST(request: Request) {
   try {
@@ -10,9 +10,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "leadIds is required." }, { status: 400 });
     }
 
-    const claimed = await claimLeads(leadIds, demoOwnerId());
+    const ownerId = await getCurrentUserId();
+    const claimed = await claimLeads(leadIds, ownerId);
     return NextResponse.json({ claimed });
-  } catch {
-    return NextResponse.json({ error: "Failed to claim leads." }, { status: 500 });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to claim leads." }, { status: 500 });
   }
 }

@@ -34,13 +34,6 @@ type FetchStatus = "loading" | "ready" | "error";
 type OmniTab = "Notes" | "SMS" | "Email";
 type ScriptTab = "Scripts" | "Objections";
 
-const FALLBACK_LEAD: LeadRecord = {
-  id: "1",
-  businessName: "Eustis Garage Door Repair",
-  phone: "(352) 845-1524",
-  website: "MISSING",
-  status: "In Progress",
-};
 
 function createClientComponentClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -150,6 +143,7 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
 
   const [status, setStatus] = useState<FetchStatus>("loading");
   const [lead, setLead] = useState<LeadRecord | null>(null);
+  const [fetchError, setFetchError] = useState<string>("");
 
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
@@ -180,14 +174,15 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
 
     async function loadLead() {
       if (!leadId) {
-        setLead(FALLBACK_LEAD);
-        setStatus("ready");
+        setFetchError("Missing lead id.");
+        setStatus("error");
         return;
       }
 
       setStatus("loading");
+      setFetchError("");
       const supabase = createClientComponentClient();
-      const { data } = await supabase.from("leads").select("*").eq("id", leadId).single();
+      const { data, error } = await supabase.from("leads").select("*").eq("id", leadId).single();
 
       if (!alive) return;
 
@@ -197,8 +192,9 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
         return;
       }
 
-      setLead(FALLBACK_LEAD);
-      setStatus("ready");
+      setLead(null);
+      setFetchError(error?.message ?? "Failed to load lead.");
+      setStatus("error");
     }
 
     loadLead();
@@ -211,7 +207,7 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
   const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
-  const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "https://vercel.com/new";
+  const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
 
   async function runResearch() {
     setResearchLoading(true);
@@ -232,6 +228,10 @@ export default function LeadExecutionPage({ params }: LeadExecutionPageProps) {
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
 
   if (status === "loading") return <LeadWorkspaceSkeleton />;
+
+  if (status === "error" || !lead) {
+    return <div className="min-h-screen bg-zinc-950 p-6 text-rose-300">{fetchError || "Failed to load lead."}</div>;
+  }
 
   if (!lead) return <LeadWorkspaceSkeleton />;
 

@@ -5,7 +5,7 @@ Production-ready starter for a lead-gen CRM with scrape, instant site deployment
 ## Features
 - Onboarding modal on first load (niche, tone, calendar link) + tutorial cues.
 - Scrape tab (city + business type) with dedupe insert logic.
-- Lead cards with **Create Site** deployment flow (Vercel API + mock fallback).
+- Lead cards with **Create Site** deployment flow (Vercel API).
 - AI Sales Playbook (Scripts with upvotes, sorted by success signal).
 - Magic Bar for quick natural-language filtering/actions.
 - Dark/light mode toggle.

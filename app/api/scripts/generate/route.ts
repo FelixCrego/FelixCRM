@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getLeadById, getProfile, saveScript } from "@/lib/store";
 
 export async function POST(request: Request) {
+  try {
   const body = await request.json();
   const leadId = String(body.leadId ?? "");
   const type = (body.type ?? "EMAIL") as "EMAIL" | "SMS";
@@ -10,11 +11,9 @@ export async function POST(request: Request) {
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
   const profile = await getProfile();
-  const fallback = `Hi ${lead.businessName},\n\nI built a quick demo site for your business and would love to show it: ${lead.deployedUrl ?? "(link pending)"}.\n\nWould you like me to tailor this for your brand voice?\n\n- Felix CRM Rep`;
 
   if (!process.env.OPENAI_API_KEY) {
-    const script = await saveScript({ content: fallback, type, leadId });
-    return NextResponse.json({ script, mock: true });
+    return NextResponse.json({ error: "OPENAI_API_KEY is required to generate scripts." }, { status: 500 });
   }
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -30,7 +29,14 @@ export async function POST(request: Request) {
     temperature: 0.8,
   });
 
-  const content = completion.choices[0]?.message?.content ?? fallback;
+  const content = completion.choices[0]?.message?.content;
+  if (!content) {
+    return NextResponse.json({ error: "Script generation returned no content." }, { status: 502 });
+  }
   const script = await saveScript({ content, type, leadId });
   return NextResponse.json({ script });
+
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
+  }
 }

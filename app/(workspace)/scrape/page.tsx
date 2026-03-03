@@ -33,8 +33,8 @@ function websitePill(lead: Lead) {
 }
 
 export default function ScrapePage() {
-  const [city, setCity] = useState("Austin");
-  const [niche, setNiche] = useState("Garage Door Repair");
+  const [city, setCity] = useState("");
+  const [niche, setNiche] = useState("");
   const [minRating, setMinRating] = useState(0);
   const [includeNoWebsiteOnly, setIncludeNoWebsiteOnly] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
@@ -109,14 +109,6 @@ export default function ScrapePage() {
     }
   }
 
-  async function mockClaimLeads(newlyClaimedLeads: Lead[]) {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    const existing = JSON.parse(window.localStorage.getItem("claimedLeads") || "[]");
-    const updated = [...existing, ...newlyClaimedLeads];
-    window.localStorage.setItem("claimedLeads", JSON.stringify(updated));
-  }
-
   async function handleClaimLeads(leadIds: string[]) {
     if (!leadIds.length) return;
     setIsClaiming(true);
@@ -124,13 +116,18 @@ export default function ScrapePage() {
     setClaimSuccessMessage(null);
 
     try {
-      const claimed = (leads || []).filter((lead) => (leadIds || []).includes(lead?.id));
-      await mockClaimLeads(claimed);
+      const response = await fetch("/api/leads/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Claim failed.");
       setSelectedLeadIds([]);
-      setClaimSuccessMessage("Successfully claimed leads!");
+      setClaimSuccessMessage(`Successfully claimed ${Number(payload.claimed ?? 0)} lead${Number(payload.claimed ?? 0) === 1 ? "" : "s"}.`);
       router.push("/leads");
-    } catch {
-      setError("Claim failed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Claim failed.");
     } finally {
       setIsClaiming(false);
     }
