@@ -33,32 +33,56 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md items-center justify-center px-6">
-      <form className="w-full rounded-xl border border-slate-200 bg-white p-6 shadow" onSubmit={onSubmit}>
-        <h1 className="mb-3 text-xl font-semibold text-slate-900">Sign in</h1>
-        <p className="mb-4 text-sm text-slate-600">Use your username and password to access Felix CRM.</p>
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-6 py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.22),transparent_42%),radial-gradient(circle_at_85%_80%,_rgba(99,102,241,0.22),transparent_48%)]" />
+
+      <form
+        className="relative w-full max-w-md rounded-2xl border border-white/15 bg-zinc-900/80 p-7 shadow-2xl shadow-black/30 backdrop-blur"
+        onSubmit={onSubmit}
+      >
+        <p className="mb-2 inline-flex rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-200">
+          Secure login
+        </p>
+        <h1 className="mb-2 text-2xl font-semibold text-white">Sign in</h1>
+        <p className="mb-6 text-sm text-zinc-300">Use your username and password to access your Felix CRM workspace.</p>
+
+        <label className="mb-2 block text-sm font-medium text-zinc-200">Username or email</label>
         <input
-          className="mb-3 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          className="mb-4 w-full rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
-          placeholder="Username"
+          placeholder="felix"
+          autoComplete="username"
           required
         />
+
+        <label className="mb-2 block text-sm font-medium text-zinc-200">Password</label>
         <input
-          className="mb-3 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          className="mb-4 w-full rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           type="password"
           placeholder="Password"
+          autoComplete="current-password"
           minLength={8}
           required
         />
-        {error ? <p className="mb-3 text-sm text-rose-600">{error}</p> : null}
-        <button className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white" disabled={loading} type="submit">
+
+        {error ? <p className="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+
+        <button
+          className="w-full rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-900/40 transition hover:from-cyan-400 hover:to-indigo-400 disabled:cursor-not-allowed disabled:opacity-70"
+          disabled={loading}
+          type="submit"
+        >
           {loading ? "Signing in..." : "Sign in"}
         </button>
-        <p className="mt-4 text-center text-sm text-slate-600">
-          Don&apos;t have an account? <Link href="/signup" className="font-medium text-slate-900 underline">Sign up</Link>
+
+        <p className="mt-5 text-center text-sm text-zinc-300">
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="font-semibold text-white underline decoration-cyan-400/70 underline-offset-2">
+            Sign up
+          </Link>
         </p>
       </form>
     </main>

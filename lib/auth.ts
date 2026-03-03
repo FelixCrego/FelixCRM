@@ -17,6 +17,19 @@ type SupabaseAuthSession = {
   user: SupabaseUser;
 };
 
+type SupabaseSignUpResponse = {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  user?: SupabaseUser | null;
+  session?: {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    user?: SupabaseUser | null;
+  } | null;
+};
+
 function requireSupabaseAuthConfig() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("Supabase auth requires NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
@@ -66,22 +79,27 @@ export async function signUpWithUsernamePassword(username: string, password: str
     throw new Error("Username and password (min 8 chars) are required.");
   }
 
-  const payload = await supabaseAuthRequest<SupabaseAuthSession | { user: SupabaseUser }>('/signup', {
+  const payload = await supabaseAuthRequest<SupabaseSignUpResponse>("/signup", {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
 
-  if ('access_token' in payload) {
+  const sessionAccessToken = payload.session?.access_token ?? payload.access_token ?? null;
+  const sessionRefreshToken = payload.session?.refresh_token ?? payload.refresh_token ?? null;
+  const sessionExpiresIn = payload.session?.expires_in ?? payload.expires_in ?? 0;
+  const userId = payload.session?.user?.id ?? payload.user?.id ?? null;
+
+  if (sessionAccessToken && sessionRefreshToken && userId) {
     return {
-      userId: payload.user.id,
-      accessToken: payload.access_token,
-      refreshToken: payload.refresh_token,
-      expiresIn: payload.expires_in,
+      userId,
+      accessToken: sessionAccessToken,
+      refreshToken: sessionRefreshToken,
+      expiresIn: sessionExpiresIn,
     };
   }
 
   return {
-    userId: payload.user.id,
+    userId,
     accessToken: null,
     refreshToken: null,
     expiresIn: 0,
