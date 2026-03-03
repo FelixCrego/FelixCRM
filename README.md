@@ -92,3 +92,17 @@ Run migrations:
 ```bash
 npx prisma migrate deploy
 ```
+
+### Direct Supabase SQL setup for leads
+
+If you need a native `public.leads` table (for Supabase REST/RPC clients), run:
+
+```sql
+-- file: supabase/sql/leads_storage_and_queries.sql
+```
+
+This script creates:
+- `public.leads` table with indexes and dedupe key.
+- Row-level security policies.
+- `public.get_leads(...)` for filtered/paginated querying.
+- `public.upsert_lead(...)` for scraper-safe insert/update.
