@@ -24,16 +24,16 @@ const vercelStatusMap = {
   FAILED: "Failed",
 } as const;
 
-const CLAIMED_LEADS_STORAGE_KEY = "felixcrm.claimedLeads";
+const CLAIMED_LEADS_STORAGE_KEY = "claimedLeads";
 
 const MOCK_LEADS: Lead[] = [
   {
     id: "mock-lead-1",
-    businessName: "Summit Roofing Co.",
+    businessName: "Apex Roofing",
     city: "Austin",
     businessType: "Roofing",
     phone: "(512) 555-0191",
-    email: "hello@summitroofing.example",
+    email: "hello@apexroofing.example",
     websiteUrl: null,
     websiteStatus: "MISSING",
     status: "IN_PROGRESS",
@@ -43,12 +43,12 @@ const MOCK_LEADS: Lead[] = [
   },
   {
     id: "mock-lead-2",
-    businessName: "ATX Pro Painters",
-    city: "Austin",
-    businessType: "Painting",
-    phone: "(737) 555-0114",
-    email: null,
-    websiteUrl: "https://atxpropainters.example",
+    businessName: "Texas Plumbing",
+    city: "Dallas",
+    businessType: "Plumbing",
+    phone: "(214) 555-0114",
+    email: "service@texasplumbing.example",
+    websiteUrl: "https://texasplumbing.example",
     websiteStatus: "LIVE",
     status: "CONTACTED",
     siteStatus: "LIVE",
@@ -222,7 +222,7 @@ export function LeadsListView({ leads }: LeadsListViewProps) {
               <tr
                 key={lead?.id}
                 onClick={() => router.push(`/leads/${lead?.id}`)}
-                className="cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-800/60"
+                className="cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-900/50"
               >
                 <td className="px-4 py-3 font-medium">{lead?.businessName ?? "Unknown business"}</td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td>

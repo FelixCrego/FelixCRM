@@ -109,8 +109,12 @@ export default function ScrapePage() {
     }
   }
 
-  async function mockClaimLeads() {
+  async function mockClaimLeads(newlyClaimedLeads: Lead[]) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    const existing = JSON.parse(window.localStorage.getItem("claimedLeads") || "[]");
+    const updated = [...existing, ...newlyClaimedLeads];
+    window.localStorage.setItem("claimedLeads", JSON.stringify(updated));
   }
 
   async function handleClaimLeads(leadIds: string[]) {
@@ -120,9 +124,8 @@ export default function ScrapePage() {
     setClaimSuccessMessage(null);
 
     try {
-      await mockClaimLeads();
       const claimed = (leads || []).filter((lead) => (leadIds || []).includes(lead?.id));
-      window.localStorage.setItem("felixcrm.claimedLeads", JSON.stringify(claimed || []));
+      await mockClaimLeads(claimed);
       setSelectedLeadIds([]);
       setClaimSuccessMessage("Successfully claimed leads!");
       router.push("/leads");
