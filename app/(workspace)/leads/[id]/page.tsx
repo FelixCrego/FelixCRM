@@ -157,6 +157,7 @@ export default function LeadExecutionPage() {
   const [meetingTime, setMeetingTime] = useState("");
   const [meetingLoading, setMeetingLoading] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   useEffect(() => {
     if (!callActive) return;
@@ -218,10 +219,24 @@ export default function LeadExecutionPage() {
 
   async function generateMeetingLink() {
     setMeetingLoading(true);
+    setInviteCopied(false);
     setMeetingLink("");
-    await new Promise((resolve) => setTimeout(resolve, 1400));
-    setMeetingLink("https://meet.google.com/abc-defg");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    setMeetingLink("meet.google.com/abc-defg-hij");
     setMeetingLoading(false);
+  }
+
+  async function copyInviteText() {
+    if (!meetingLink) return;
+    const inviteText = `Demo booked for ${leadName} on ${meetingDate} at ${meetingTime}. Join here: ${meetingLink}`;
+
+    try {
+      await navigator.clipboard.writeText(inviteText);
+      setInviteCopied(true);
+      window.setTimeout(() => setInviteCopied(false), 1800);
+    } catch {
+      setInviteCopied(false);
+    }
   }
 
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
@@ -386,11 +401,31 @@ export default function LeadExecutionPage() {
             <button
               onClick={generateMeetingLink}
               disabled={meetingLoading || !meetingDate || !meetingTime}
-              className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+              className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold transition disabled:opacity-50 ${
+                meetingLink ? "bg-emerald-600 text-white" : "bg-indigo-500 text-white"
+              }`}
             >
-              {meetingLoading ? "Generating..." : "Book & Generate Meet Link"}
+              {meetingLoading ? (
+                <>
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/50 border-t-white" />
+                  Booking...
+                </>
+              ) : meetingLink ? (
+                `Demo Booked! • ${meetingLink}`
+              ) : (
+                "Book & Generate Meet Link"
+              )}
             </button>
-            {meetingLink ? <p className="mt-3 text-sm text-emerald-300">{meetingLink}</p> : null}
+            {meetingLink ? (
+              <div className="mt-3">
+                <button
+                  onClick={copyInviteText}
+                  className="rounded-lg border border-zinc-700 bg-transparent px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                >
+                  {inviteCopied ? "Invite Copied" : "Copy Invite Text"}
+                </button>
+              </div>
+            ) : null}
           </div>
         </section>
 

@@ -21,6 +21,7 @@ import {
   Trophy,
   Map,
   Gauge,
+  CalendarDays,
 } from "lucide-react";
 import { useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -45,6 +46,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/leads", label: "My Leads", icon: Users },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
+    { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
     { href: "/commissions", label: "Commissions", icon: Wallet },
   ],
   TEAM_LEAD: [
@@ -52,6 +54,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/leads", label: "My Leads", icon: Users },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
+    { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/team-overview", label: "Team Overview", icon: Trophy },
   ],
