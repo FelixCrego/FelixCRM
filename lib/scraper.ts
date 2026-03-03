@@ -163,7 +163,22 @@ export async function runLeadResearch(input: { name: string; phone?: string | nu
   return researchLeadWithGemini(input.name, input.phone ?? "N/A", input.address ?? "N/A", geminiApiKey);
 }
 
-export async function scrapeLeads(city: string, businessType: string, minRating = 0, includeNoWebsiteOnly = false): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
+export type ScrapeDiagnostics = {
+  queriesAttempted: number;
+  textSearchOkCount: number;
+  textSearchErrorCount: number;
+  detailsOkCount: number;
+  detailsErrorCount: number;
+  skippedByRating: number;
+  skippedByDedupe: number;
+};
+
+export async function scrapeLeads(
+  city: string,
+  businessType: string,
+  minRating = 0,
+  includeNoWebsiteOnly = false,
+): Promise<{ leads: Omit<Lead, "id" | "updatedAt" | "status">[]; diagnostics: ScrapeDiagnostics }> {
   const mapsApiKey = process.env.MAPS_API_KEY;
   if (!mapsApiKey) {
     throw new Error("MAPS_API_KEY is required to scrape leads with Google Places API.");
@@ -188,17 +203,30 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
   const seenNames = new Set<string>();
   const seenPhones = new Set<string>();
   const leads: Omit<Lead, "id" | "updatedAt" | "status">[] = [];
+  const diagnostics: ScrapeDiagnostics = {
+    queriesAttempted: 0,
+    textSearchOkCount: 0,
+    textSearchErrorCount: 0,
+    detailsOkCount: 0,
+    detailsErrorCount: 0,
+    skippedByRating: 0,
+    skippedByDedupe: 0,
+  };
 
   const querySeed = `${businessType} in ${city}`;
   const queries = await generateMicroQueries(querySeed, geminiApiKey);
 
   for (const query of queries) {
+    diagnostics.queriesAttempted += 1;
     let params = new URLSearchParams({ query, key: mapsApiKey });
     let pageCount = 0;
 
     while (pageCount < MAX_RESULTS_PAGES_PER_QUERY) {
       const searchJson = await fetchSearchPage(params);
-      if (!searchJson) break;
+      if (!searchJson) {
+        diagnostics.textSearchErrorCount += 1;
+        break;
+      }
 
       const status = searchJson.status ?? "";
       if (status === "INVALID_REQUEST" && params.has("pagetoken")) {
@@ -206,14 +234,22 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         continue;
       }
 
-      if (status !== "OK" && status !== "ZERO_RESULTS") break;
+      if (status !== "OK" && status !== "ZERO_RESULTS") {
+        diagnostics.textSearchErrorCount += 1;
+        break;
+      }
+
+      diagnostics.textSearchOkCount += 1;
 
       pageCount += 1;
       const results = searchJson.results ?? [];
       if (!results.length) break;
 
       for (const place of results) {
-        if (!place.place_id || seenPlaceIds.has(place.place_id)) continue;
+        if (!place.place_id || seenPlaceIds.has(place.place_id)) {
+          diagnostics.skippedByDedupe += 1;
+          continue;
+        }
         seenPlaceIds.add(place.place_id);
 
         const detailsParams = new URLSearchParams({
@@ -224,7 +260,11 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
 
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?${detailsParams.toString()}`;
         const detailsJson = await fetchJsonWithTimeout<GooglePlaceDetailsResponse>(detailsUrl, 12000);
-        if (!detailsJson || detailsJson.status !== "OK" || !detailsJson.result) continue;
+        if (!detailsJson || detailsJson.status !== "OK" || !detailsJson.result) {
+          diagnostics.detailsErrorCount += 1;
+          continue;
+        }
+        diagnostics.detailsOkCount += 1;
 
         const details = detailsJson.result;
         const website = (details.website ?? "").toLowerCase();
@@ -237,14 +277,23 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         const normalizedName = name.toLowerCase();
         const normalizedPhone = cleanPhoneNumber(phone);
 
-        if (seenNames.has(normalizedName)) continue;
-        if (normalizedPhone && seenPhones.has(normalizedPhone)) continue;
+        if (seenNames.has(normalizedName)) {
+          diagnostics.skippedByDedupe += 1;
+          continue;
+        }
+        if (normalizedPhone && seenPhones.has(normalizedPhone)) {
+          diagnostics.skippedByDedupe += 1;
+          continue;
+        }
 
         seenNames.add(normalizedName);
         if (normalizedPhone) seenPhones.add(normalizedPhone);
 
         const rating = details.rating ?? 0;
-        if (rating < minRating) continue;
+        if (rating < minRating) {
+          diagnostics.skippedByRating += 1;
+          continue;
+        }
 
         leads.push({
           businessName: name,
@@ -273,5 +322,5 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
     }
   }
 
-  return leads;
+  return { leads, diagnostics };
 }

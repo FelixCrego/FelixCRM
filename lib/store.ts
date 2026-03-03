@@ -101,10 +101,13 @@ function insertLeadsInMemory(leads: Omit<Lead, "id" | "updatedAt" | "status">[])
 
 export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
   if (!hasDb) {
-    return insertLeadsInMemory(leads);
+    const inserted = insertLeadsInMemory(leads);
+    console.info("[insertLeads] in-memory path used", { dbPathUsed: false, inserted, duplicatesSkipped: leads.length - inserted });
+    return inserted;
   }
 
   let inserted = 0;
+  let duplicatesSkipped = 0;
   for (const [index, lead] of leads.entries()) {
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
     const key = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
@@ -135,14 +138,20 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
       inserted++;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        duplicatesSkipped += 1;
         continue;
       }
       if (shouldUseMemoryFallback(error)) {
-        return inserted + insertLeadsInMemory(leads.slice(index));
+        const fallbackInserted = insertLeadsInMemory(leads.slice(index));
+        const totalInserted = inserted + fallbackInserted;
+        const totalDuplicatesSkipped = duplicatesSkipped + (leads.slice(index).length - fallbackInserted);
+        console.info("[insertLeads] db path fallback to in-memory", { dbPathUsed: false, inserted: totalInserted, duplicatesSkipped: totalDuplicatesSkipped });
+        return totalInserted;
       }
       throw error;
     }
   }
+  console.info("[insertLeads] db path used", { dbPathUsed: true, inserted, duplicatesSkipped });
   return inserted;
 }
 
