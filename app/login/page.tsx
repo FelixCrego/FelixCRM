@@ -46,12 +46,12 @@ export default function LoginPage() {
         <h1 className="mb-2 text-2xl font-semibold text-white">Sign in</h1>
         <p className="mb-6 text-sm text-zinc-300">Use your username and password to access your Felix CRM workspace.</p>
 
-        <label className="mb-2 block text-sm font-medium text-zinc-200">Username or email</label>
+        <label className="mb-2 block text-sm font-medium text-zinc-200">Email</label>
         <input
           className="mb-4 w-full rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
-          placeholder="felix"
+          placeholder="you@company.com"
           autoComplete="username"
           required
         />

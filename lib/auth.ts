@@ -38,8 +38,8 @@ function requireSupabaseAuthConfig() {
 
 function getNormalizedEmail(usernameOrEmail: string) {
   const normalized = usernameOrEmail.trim().toLowerCase();
-  if (!normalized) return "";
-  return normalized.includes("@") ? normalized : `${normalized}@felixcrm.local`;
+  if (!normalized || !normalized.includes("@")) return "";
+  return normalized;
 }
 
 async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -76,7 +76,7 @@ async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise
 export async function signUpWithUsernamePassword(username: string, password: string) {
   const email = getNormalizedEmail(username);
   if (!email || password.length < 8) {
-    throw new Error("Username and password (min 8 chars) are required.");
+    throw new Error("A valid email and password (min 8 chars) are required.");
   }
 
   const payload = await supabaseAuthRequest<SupabaseSignUpResponse>("/signup", {
@@ -109,7 +109,7 @@ export async function signUpWithUsernamePassword(username: string, password: str
 export async function signInWithUsernamePassword(username: string, password: string) {
   const email = getNormalizedEmail(username);
   if (!email || !password) {
-    throw new Error("Username and password are required.");
+    throw new Error("Email and password are required.");
   }
 
   const payload = await supabaseAuthRequest<SupabaseAuthSession>("/token?grant_type=password", {
