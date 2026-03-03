@@ -29,7 +29,9 @@ export async function POST(request: Request) {
   const password = String(body?.password ?? "");
 
   try {
-    const session = await signUpWithUsernamePassword(username, password);
+    const origin = request.headers.get("origin") ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
+    const emailRedirectTo = origin ? `${origin.replace(/\/$/, "")}/login?confirmed=1` : undefined;
+    const session = await signUpWithUsernamePassword(username, password, emailRedirectTo);
 
     const response = NextResponse.json({
       ok: true,
