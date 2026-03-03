@@ -55,24 +55,6 @@ function buildSearchQueries(city: string, businessType: string) {
   return Array.from(new Set(baseQueries.map((query) => query.trim()).filter(Boolean)));
 }
 
-function buildFallbackLeads(city: string, businessType: string): Omit<Lead, "id" | "updatedAt" | "status">[] {
-  return Array.from({ length: 8 }).map((_, idx) => ({
-    businessName: `${city} ${businessType} ${idx + 1}`,
-    city,
-    businessType,
-    phone: `+1-555-010${idx}`,
-    email: `hello${idx}@${businessType.toLowerCase().replace(/\s+/g, "")}${idx}.com`,
-    websiteUrl: idx % 2 === 0 ? `https://${businessType.toLowerCase().replace(/\s+/g, "")}${idx}.com` : null,
-    websiteStatus: idx % 2 === 0 ? "LIVE" : "MISSING",
-    socialLinks: ["https://facebook.com/example", "https://instagram.com/example"],
-    aiResearchSummary: null,
-    sourceQuery: `${businessType} ${city}`,
-    ownerId: null,
-    deployedUrl: null,
-    siteStatus: "UNBUILT",
-  }));
-}
-
 async function fetchJsonWithTimeout<T>(url: string, timeoutMs = SCRAPE_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -182,23 +164,9 @@ export async function runLeadResearch(input: { name: string; phone?: string | nu
 }
 
 export async function scrapeLeads(city: string, businessType: string, minRating = 0, includeNoWebsiteOnly = false): Promise<Omit<Lead, "id" | "updatedAt" | "status">[]> {
-  const provider = process.env.SCRAPING_API_URL;
-  if (provider && process.env.SCRAPING_API_KEY) {
-    const response = await fetch(provider, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.SCRAPING_API_KEY}`,
-      },
-      body: JSON.stringify({ city, businessType }),
-    });
-    if (!response.ok) throw new Error("Scraping provider failed");
-    return response.json();
-  }
-
   const mapsApiKey = process.env.MAPS_API_KEY;
   if (!mapsApiKey) {
-    return buildFallbackLeads(city, businessType);
+    throw new Error("MAPS_API_KEY is required to scrape leads with Google Places API.");
   }
 
   const geminiApiKey = process.env.GEMINI_API_KEY;
