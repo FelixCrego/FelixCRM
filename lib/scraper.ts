@@ -19,11 +19,41 @@ type GooglePlaceDetailsResponse = {
   };
 };
 
+const SCRAPE_FETCH_TIMEOUT_MS = 15000;
+const SCRAPE_RETRY_ATTEMPTS = 3;
+const MAX_AI_MICRO_QUERIES = 30;
+const MAX_RESULTS_PAGES_PER_QUERY = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function cleanPhoneNumber(phoneStr?: string | null) {
   if (!phoneStr) return "";
   return phoneStr.replace(/\D/g, "");
 }
 
+function buildSearchQueries(city: string, businessType: string) {
+  const cleanCity = city.trim();
+  const cleanBusinessType = businessType.trim();
+
+  const baseQueries = [
+    `${cleanBusinessType} ${cleanCity}`,
+    `${cleanBusinessType} in ${cleanCity}`,
+    `${cleanBusinessType} near ${cleanCity}`,
+    `best ${cleanBusinessType} ${cleanCity}`,
+    `${cleanBusinessType} services ${cleanCity}`,
+    `local ${cleanBusinessType} ${cleanCity}`,
+    `${cleanBusinessType} company ${cleanCity}`,
+    `${cleanBusinessType} contractor ${cleanCity}`,
+    `${cleanBusinessType} repair ${cleanCity}`,
+    `${cleanBusinessType} installation ${cleanCity}`,
+    `${cleanBusinessType} maintenance ${cleanCity}`,
+    `${cleanBusinessType} emergency ${cleanCity}`,
+  ];
+
+  return Array.from(new Set(baseQueries.map((query) => query.trim()).filter(Boolean)));
+}
 
 function buildFallbackLeads(city: string, businessType: string): Omit<Lead, "id" | "updatedAt" | "status">[] {
   return Array.from({ length: 8 }).map((_, idx) => ({
@@ -43,40 +73,93 @@ function buildFallbackLeads(city: string, businessType: string): Omit<Lead, "id"
   }));
 }
 
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs = SCRAPE_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function callGeminiText(prompt: string, geminiApiKey?: string): Promise<string> {
   if (!geminiApiKey) return "";
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
       }),
       cache: "no-store",
+      signal: controller.signal,
     });
     if (!response.ok) return "";
     const json = await response.json() as any;
     return json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   } catch {
     return "";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
 async function generateMicroQueries(userPrompt: string, geminiApiKey?: string) {
-  if (!geminiApiKey) return [userPrompt];
+  const fallback = buildSearchQueries(userPrompt.split(" in ").slice(1).join(" in ") || userPrompt, userPrompt.split(" in ")[0] || userPrompt);
+  if (!geminiApiKey) return fallback;
 
-  const prompt = `You are an elite local SEO expert building a broad set of Google Maps micro-queries.
-Generate 40 to 60 highly specific queries for: "${userPrompt}".
-Use multiple service keyword variations and combine with cities/zip/postal areas.
-Return ONLY a comma-separated list. No bullets or markdown.`;
+  const prompt = `You are an elite local SEO expert building Google Maps micro-queries.
+Generate 60 to 90 highly specific, local search queries for: "${userPrompt}".
+Use multiple keyword variations and include neighborhoods/zip/city variants.
+Return ONLY a comma-separated list. No bullets, no markdown, no explanation.`;
 
   const raw = await callGeminiText(prompt, geminiApiKey);
-  const queries = raw
+  const aiQueries = raw
     .split(",")
     .map((q: string) => q.trim())
     .filter(Boolean);
 
-  return queries.length ? queries : [userPrompt];
+  const merged = Array.from(new Set([...fallback, ...aiQueries]));
+  return merged.slice(0, MAX_AI_MICRO_QUERIES);
+}
+
+async function fetchSearchPage(params: URLSearchParams) {
+  const searchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
+
+  for (let attempt = 1; attempt <= SCRAPE_RETRY_ATTEMPTS; attempt += 1) {
+    const searchJson = await fetchJsonWithTimeout<GooglePlaceSearchResponse>(searchUrl);
+    if (!searchJson) {
+      if (attempt < SCRAPE_RETRY_ATTEMPTS) {
+        await sleep(1200 * attempt);
+        continue;
+      }
+      return null;
+    }
+
+    const status = searchJson.status ?? "";
+    if (status === "DEADLINE_EXCEEDED") {
+      if (attempt < SCRAPE_RETRY_ATTEMPTS) {
+        await sleep(1800 * attempt);
+        continue;
+      }
+      return null;
+    }
+
+    return searchJson;
+  }
+
+  return null;
 }
 
 async function researchLeadWithGemini(name: string, phone: string, address: string, geminiApiKey?: string) {
@@ -138,25 +221,26 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
   const seenPhones = new Set<string>();
   const leads: Omit<Lead, "id" | "updatedAt" | "status">[] = [];
 
-  const queries = await generateMicroQueries(`${businessType} in ${city}`, geminiApiKey);
-  const querySet = new Set<string>([...queries, `${businessType} ${city}`, `${businessType} near ${city}`, `${businessType} in ${city}`]);
+  const querySeed = `${businessType} in ${city}`;
+  const queries = await generateMicroQueries(querySeed, geminiApiKey);
 
-  for (const query of querySet) {
+  for (const query of queries) {
     let params = new URLSearchParams({ query, key: mapsApiKey });
+    let pageCount = 0;
 
-    while (true) {
-      const searchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?${params.toString()}`;
-      const searchResponse = await fetch(searchUrl, { cache: "no-store" });
-      if (!searchResponse.ok) break;
+    while (pageCount < MAX_RESULTS_PAGES_PER_QUERY) {
+      const searchJson = await fetchSearchPage(params);
+      if (!searchJson) break;
 
-      const searchJson = (await searchResponse.json()) as GooglePlaceSearchResponse;
       const status = searchJson.status ?? "";
       if (status === "INVALID_REQUEST" && params.has("pagetoken")) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await sleep(4000);
         continue;
       }
-      if (!["OK", "ZERO_RESULTS"].includes(status)) break;
 
+      if (status !== "OK" && status !== "ZERO_RESULTS") break;
+
+      pageCount += 1;
       const results = searchJson.results ?? [];
       if (!results.length) break;
 
@@ -171,16 +255,12 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         });
 
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?${detailsParams.toString()}`;
-        const detailsResponse = await fetch(detailsUrl, { cache: "no-store" });
-        if (!detailsResponse.ok) continue;
-
-        const detailsJson = (await detailsResponse.json()) as GooglePlaceDetailsResponse;
-        if (detailsJson.status !== "OK" || !detailsJson.result) continue;
+        const detailsJson = await fetchJsonWithTimeout<GooglePlaceDetailsResponse>(detailsUrl, 12000);
+        if (!detailsJson || detailsJson.status !== "OK" || !detailsJson.result) continue;
 
         const details = detailsJson.result;
         const website = (details.website ?? "").toLowerCase();
-        const hasRealWebsite =
-          Boolean(website) && !fakeWebsiteDomains.some((domain) => website.includes(domain));
+        const hasRealWebsite = Boolean(website) && !fakeWebsiteDomains.some((domain) => website.includes(domain));
 
         if (includeNoWebsiteOnly && hasRealWebsite) continue;
 
@@ -195,9 +275,9 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         seenNames.add(normalizedName);
         if (normalizedPhone) seenPhones.add(normalizedPhone);
 
-        const address = details.formatted_address ?? "N/A";
         const rating = details.rating ?? 0;
         if (rating < minRating) continue;
+
         leads.push({
           businessName: name,
           city,
@@ -215,10 +295,13 @@ export async function scrapeLeads(city: string, businessType: string, minRating 
         });
       }
 
-      const token = searchJson.next_page_token;
-      if (!token || results.length < 20) break;
-      await new Promise((resolve) => setTimeout(resolve, 4000));
-      params = new URLSearchParams({ pagetoken: token, key: mapsApiKey });
+      const nextPageToken = searchJson.next_page_token;
+      if (nextPageToken && results.length === 20) {
+        await sleep(4000);
+        params = new URLSearchParams({ pagetoken: nextPageToken, key: mapsApiKey });
+      } else {
+        break;
+      }
     }
   }
 
