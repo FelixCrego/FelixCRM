@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runLeadDeepResearch } from "@/lib/scraper";
+import { runLeadResearch } from "@/lib/scraper";
 import { getLeadById, setLeadResearchSummary } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }
 
-  const summary = await runLeadDeepResearch({
+  const summary = await runLeadResearch({
     name: lead.businessName,
     phone: lead.phone,
     address: lead.city,
