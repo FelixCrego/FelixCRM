@@ -3,7 +3,7 @@
 import { Mail, Phone, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
-type Stage = "New" | "Contacted" | "Vercel Deployed" | "Demo Booked" | "Closed Won";
+type Stage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 type VercelStatus = "Live" | "Deploying" | "Unbuilt";
 type PlaybookTab = "Scripts" | "Objections" | "Tips";
 
@@ -23,7 +23,7 @@ type Deal = {
   history: string[];
 };
 
-const stages: Stage[] = ["New", "Contacted", "Vercel Deployed", "Demo Booked", "Closed Won"];
+const stages: Stage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won"];
 
 const deals: Deal[] = [
   {
@@ -31,12 +31,12 @@ const deals: Deal[] = [
     businessName: "Aurora Dental",
     contactName: "Dr. Barnes",
     rep: "AM",
-    value: 4500,
+    value: 1200,
     stage: "New",
     vercelStatus: "Unbuilt",
     phone: "+1-415-555-0108",
     email: "hello@auroradental.com",
-    lastAction: "Added 2 hrs ago",
+    lastAction: "Inbound lead added 12 mins ago",
     leadSource: "Referral",
     websiteGoal: "Launch modern patient booking funnel",
     history: ["Lead imported • 8:10 AM", "Initial note added • 8:14 AM"],
@@ -47,44 +47,44 @@ const deals: Deal[] = [
     contactName: "Jordan Snow",
     rep: "JS",
     value: 7800,
-    stage: "Contacted",
+    stage: "Pitched",
     vercelStatus: "Deploying",
     phone: "+1-628-555-0172",
     email: "owner@pulsefitness.co",
-    lastAction: "Emailed yesterday",
+    lastAction: "One-call pitch delivered 22 mins ago",
     leadSource: "Outbound SDR",
     websiteGoal: "Promote 12-week challenge landing page",
     history: ["Intro email sent • Yesterday", "Phone call connected • 4:38 PM", "Proposal viewed • 6:21 PM"],
   },
   {
     id: "d3",
+    businessName: "Maple Med Spa",
+    contactName: "Sienna Cole",
+    rep: "SC",
+    value: 425,
+    stage: "Awaiting Approval",
+    vercelStatus: "Deploying",
+    phone: "+1-510-555-0150",
+    email: "owner@maplemedspa.com",
+    lastAction: "Manager approval requested 7 mins ago",
+    leadSource: "Website form",
+    websiteGoal: "Capture same-day consult bookings",
+    history: ["One-call close attempt • 10:08 AM", "Approval routed to manager • 11:42 AM"],
+  },
+  {
+    id: "d4",
     businessName: "Northline Roofing",
     contactName: "Tyler Reed",
     rep: "TR",
     value: 9200,
-    stage: "Vercel Deployed",
-    vercelStatus: "Live",
-    phone: "+1-510-555-0150",
-    email: "ops@northlineroof.com",
-    lastAction: "Site preview shared 4 hrs ago",
-    leadSource: "Website form",
-    websiteGoal: "Generate storm season estimate requests",
-    history: ["Site deployed • Today 10:08 AM", "Preview approved • 11:42 AM"],
-  },
-  {
-    id: "d4",
-    businessName: "Maverick Legal",
-    contactName: "Avery Mills",
-    rep: "AM",
-    value: 6900,
-    stage: "Demo Booked",
+    stage: "Payment Pending",
     vercelStatus: "Live",
     phone: "+1-312-555-0123",
-    email: "team@mavericklegal.com",
-    lastAction: "Demo confirmed today",
+    email: "ops@northlineroof.com",
+    lastAction: "Stripe link sent 5 mins ago",
     leadSource: "Partner",
-    websiteGoal: "Increase consult bookings from paid social",
-    history: ["Demo invite accepted • 9:22 AM", "Reminder SMS sent • 1:00 PM"],
+    websiteGoal: "Generate storm season estimate requests",
+    history: ["Checkout link generated • 9:22 AM", "Customer opened link • 1:00 PM"],
   },
   {
     id: "d5",
@@ -96,7 +96,7 @@ const deals: Deal[] = [
     vercelStatus: "Live",
     phone: "+1-202-555-0189",
     email: "care@bloompediatrics.com",
-    lastAction: "Won this morning",
+    lastAction: "Paid via Stripe this morning",
     leadSource: "Inbound",
     websiteGoal: "Convert new parent consultation calls",
     history: ["Final call completed • 9:00 AM", "Deal marked Closed Won • 9:34 AM"],
