@@ -15,6 +15,10 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 const hasDb = Boolean(process.env.DATABASE_URL);
 const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole };
 
+function isMissingUserTableError(error: unknown) {
+  return error instanceof Error && (error.message.includes("public.User") || error.message.includes("prisma.user.findFirst"));
+}
+
 async function getSafeFirstUser() {
   if (!hasDb) {
     return null;
@@ -23,8 +27,11 @@ async function getSafeFirstUser() {
   try {
     return await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
   } catch (error) {
-    console.warn("[store] Falling back to mock user because user table is unavailable.", error);
-    return null;
+    if (isMissingUserTableError(error)) {
+      console.warn("[store] Falling back to mock user because user table is unavailable.");
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -83,7 +90,11 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
       data: profile,
     });
   } catch (error) {
-    console.warn("[store] Skipping profile save because user table is unavailable.", error);
+    if (isMissingUserTableError(error)) {
+      console.warn("[store] Skipping profile save because user table is unavailable.");
+      return;
+    }
+    throw error;
   }
 }
 
@@ -152,12 +163,24 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
 
 export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
   if (!hasDb) throw new Error("DATABASE_URL is required to save scripts.");
+
+  let authorId = MOCK_USER.id;
+  try {
+    const user = await prisma.user.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
+    authorId = user?.id ?? MOCK_USER.id;
+  } catch (error) {
+    if (!isMissingUserTableError(error)) {
+      throw error;
+    }
+    console.warn("[store] Saving script with mock author because user table is unavailable.");
+  }
+
   const row = await prisma.script.create({
     data: {
       content: script.content,
       type: script.type,
       ...(script.leadId ? { lead: { connect: { id: script.leadId } } } : {}),
-      author: { connect: { id: (await prisma.user.findFirstOrThrow({ select: { id: true }, orderBy: { createdAt: "asc" } })).id } },
+      author: { connect: { id: authorId } },
       toneUsed: (await getProfile()).toneOfVoice,
       modelName: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       promptVersion: "v1",
@@ -231,7 +254,10 @@ export async function getCurrentUserId() {
     const user = await prisma.user.findFirst({ select: { id: true }, orderBy: { createdAt: "asc" } });
     return user?.id ?? MOCK_USER.id;
   } catch (error) {
-    console.warn("[store] Falling back to mock user id because user table is unavailable.", error);
-    return MOCK_USER.id;
+    if (isMissingUserTableError(error)) {
+      console.warn("[store] Falling back to mock user id because user table is unavailable.");
+      return MOCK_USER.id;
+    }
+    throw error;
   }
 }

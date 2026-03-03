@@ -77,6 +77,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { activeRole, setActiveRole } = useRole();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
   const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
     { title: "Cold Openers", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
@@ -162,7 +163,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                   className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                 />
               </div>
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-2.5 py-2">
+              <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-2.5 py-1.5">
+                <span className="hidden text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 xl:inline">Role</span>
                 <select
                   aria-label="Active role"
                   value={activeRole}
@@ -176,6 +178,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                   ))}
                 </select>
               </div>
+              <button
+                onClick={() => setIsLoggedIn((current) => !current)}
+                className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-700 hover:text-zinc-100"
+              >
+                {isLoggedIn ? "Logout" : "Login"}
+              </button>
               <button
                 onClick={() => setDrawerOpen(true)}
                 className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-200 transition hover:bg-blue-500/20"
