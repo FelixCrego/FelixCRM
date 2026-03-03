@@ -15,6 +15,14 @@ const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole
 
 type SupabaseError = { code?: string; message?: string };
 
+function parseJsonSafely<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
 function buildUrl(table: string, query?: Record<string, string>) {
   const url = new URL(`/rest/v1/${table}`, supabaseUrl);
   if (query) {
@@ -40,14 +48,23 @@ async function supabaseRequest<T>(table: string, init?: RequestInit, query?: Rec
   });
 
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    const error = new Error((payload as SupabaseError).message ?? `Supabase request failed: ${response.status}`) as Error & SupabaseError;
-    error.code = (payload as SupabaseError).code;
+    const payloadText = await response.text();
+    const payload = payloadText ? (parseJsonSafely<SupabaseError>(payloadText) ?? {}) : {};
+    const error = new Error(payload.message ?? `Supabase request failed: ${response.status}`) as Error & SupabaseError;
+    error.code = payload.code;
     throw error;
   }
 
   if (response.status === 204) return [] as T;
-  return response.json() as Promise<T>;
+
+  const payloadText = await response.text();
+  if (!payloadText.trim()) return undefined as T;
+
+  const payload = parseJsonSafely<T>(payloadText);
+  if (payload === null) {
+    throw new Error(`Supabase response returned non-JSON payload with status ${response.status}.`);
+  }
+  return payload;
 }
 
 function isMissingTableError(error: unknown) {
