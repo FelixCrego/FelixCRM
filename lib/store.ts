@@ -5,9 +5,11 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const hasDb = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
-const USERS_TABLE = "User";
-const LEADS_TABLE = "lead";
-const SCRIPTS_TABLE = "Script";
+const USERS_TABLE_CANDIDATES = ["User", "user"];
+const LEADS_TABLE_CANDIDATES = ["lead", "Lead"];
+const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
+
+const resolvedTableCache = new Map<string, string>();
 
 const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole };
 
@@ -48,21 +50,46 @@ async function supabaseRequest<T>(table: string, init?: RequestInit, query?: Rec
   return response.json() as Promise<T>;
 }
 
+function isMissingTableError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as SupabaseError).code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return code === "42P01" || code === "PGRST205" || (message.includes("Could not find the table") && message.includes("schema cache"));
+}
+
+async function withTableFallback<T>(cacheKey: string, candidates: string[], requester: (table: string) => Promise<T>): Promise<T> {
+  const cached = resolvedTableCache.get(cacheKey);
+  if (cached) return requester(cached);
+
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    try {
+      const result = await requester(candidate);
+      resolvedTableCache.set(cacheKey, candidate);
+      return result;
+    } catch (error) {
+      if (!isMissingTableError(error)) throw error;
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error(`Unable to resolve Supabase table for ${cacheKey}`);
+}
+
 function isMissingUserTableError(error: unknown) {
   const code = typeof error === "object" && error && "code" in error ? String((error as SupabaseError).code) : "";
   const message = error instanceof Error ? error.message : String(error);
-  return code === "42P01" || (message.includes("relation") && message.includes("User") && message.includes("does not exist"));
+  return isMissingTableError(error) || (message.includes("relation") && message.includes("User") && message.includes("does not exist"));
 }
 
 async function getSafeFirstUser() {
   if (!hasDb) return null;
 
   try {
-    const rows = await supabaseRequest<any[]>(USERS_TABLE, undefined, {
+    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, {
       select: "*",
       order: 'createdAt.asc',
       limit: "1",
-    });
+    }));
     return rows[0] ?? null;
   } catch (error) {
     if (isMissingUserTableError(error)) {
@@ -120,10 +147,10 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
   if (!hasDb) return;
 
   try {
-    const rows = await supabaseRequest<any[]>(USERS_TABLE, undefined, { select: "id", order: "createdAt.asc", limit: "1" });
+    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "id", order: "createdAt.asc", limit: "1" }));
     const user = rows[0];
     if (!user?.id) return;
-    await supabaseRequest(USERS_TABLE, { method: "PATCH", body: JSON.stringify(profile), headers: { Prefer: "return=minimal" } }, { id: `eq.${user.id}` });
+    await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest(table, { method: "PATCH", body: JSON.stringify(profile), headers: { Prefer: "return=minimal" } }, { id: `eq.${user.id}` }));
   } catch (error) {
     if (isMissingUserTableError(error)) {
       console.warn("[store] Skipping profile save because user table is unavailable.");
@@ -135,7 +162,7 @@ export async function saveProfile(profile: { niche: string; toneOfVoice: ToneOfV
 
 export async function listLeads() {
   if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
-  const leads = await supabaseRequest<any[]>(LEADS_TABLE, undefined, { select: "*", order: "updatedAt.desc" });
+  const leads = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "*", order: "updatedAt.desc" }));
   return leads.map(leadToMemory);
 }
 
@@ -149,7 +176,7 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
     const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
     const key = dedupeKey(lead.businessName, lead.city, lead.businessType, lead.phone ?? "", domain);
     try {
-      await supabaseRequest(LEADS_TABLE, {
+      await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
         method: "POST",
         headers: { Prefer: "return=minimal" },
         body: JSON.stringify({
@@ -173,7 +200,7 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
             sourceQuery: lead.sourceQuery ?? null,
           },
         }),
-      });
+      }));
       inserted++;
     } catch (error) {
       if (typeof error === "object" && error && "code" in error && (error as SupabaseError).code === "23505") {
@@ -190,7 +217,7 @@ export async function insertLeads(leads: Omit<Lead, "id" | "updatedAt" | "status
 
 export async function setLeadDeployment(leadId: string, deployment: { deployedUrl?: string; siteStatus: "BUILDING" | "LIVE" | "FAILED"; vercelDeploymentId?: string }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to update lead deployment.");
-  await supabaseRequest(LEADS_TABLE, {
+  await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({
@@ -198,7 +225,7 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
       siteStatus: deployment.siteStatus,
       vercelDeploymentId: deployment.vercelDeploymentId,
     }),
-  }, { id: `eq.${leadId}` });
+  }, { id: `eq.${leadId}` }));
 }
 
 export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
@@ -206,14 +233,15 @@ export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
 
   let authorId = MOCK_USER.id;
   try {
-    const rows = await supabaseRequest<any[]>(USERS_TABLE, undefined, { select: "id", order: "createdAt.asc", limit: "1" });
+    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "id", order: "createdAt.asc", limit: "1" }));
     authorId = rows[0]?.id ?? MOCK_USER.id;
   } catch (error) {
     if (!isMissingUserTableError(error)) throw error;
     console.warn("[store] Saving script with mock author because user table is unavailable.");
   }
 
-  const rows = await supabaseRequest<any[]>(SCRIPTS_TABLE, {
+  const profile = await getProfile();
+  const rows = await withTableFallback("scripts", SCRIPTS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, {
     method: "POST",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({
@@ -221,11 +249,11 @@ export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
       type: script.type,
       leadId: script.leadId ?? null,
       authorId,
-      toneUsed: (await getProfile()).toneOfVoice,
+      toneUsed: profile.toneOfVoice,
       modelName: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       promptVersion: "v1",
     }),
-  }, { select: "id,content,type,upvoteCount,leadId" });
+  }, { select: "id,content,type,upvoteCount,leadId" }));
 
   const row = rows[0];
   return { id: row.id, content: row.content, type: row.type as Script["type"], upvoteCount: row.upvoteCount, leadId: row.leadId ?? undefined };
@@ -233,31 +261,31 @@ export async function saveScript(script: Omit<Script, "id" | "upvoteCount">) {
 
 export async function listScripts() {
   if (!hasDb) throw new Error("Supabase environment variables are required to list scripts.");
-  const rows = await supabaseRequest<any[]>(SCRIPTS_TABLE, undefined, {
+  const rows = await withTableFallback("scripts", SCRIPTS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, {
     select: "id,content,type,upvoteCount,leadId",
     isShared: "eq.true",
     order: "upvoteCount.desc,createdAt.desc",
-  });
+  }));
   return rows.map((row) => ({ id: row.id, content: row.content, type: row.type as Script["type"], upvoteCount: row.upvoteCount, leadId: row.leadId ?? undefined }));
 }
 
 export async function upvoteScript(scriptId: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to upvote scripts.");
 
-  const rows = await supabaseRequest<any[]>(SCRIPTS_TABLE, undefined, { select: "upvoteCount", id: `eq.${scriptId}`, limit: "1" });
+  const rows = await withTableFallback("scripts", SCRIPTS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "upvoteCount", id: `eq.${scriptId}`, limit: "1" }));
   const currentCount = rows[0]?.upvoteCount ?? 0;
 
-  await supabaseRequest(SCRIPTS_TABLE, {
+  await withTableFallback("scripts", SCRIPTS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ upvoteCount: currentCount + 1 }),
-  }, { id: `eq.${scriptId}` });
+  }, { id: `eq.${scriptId}` }));
 }
 
 export async function releaseStaleLeads() {
   if (!hasDb) throw new Error("Supabase environment variables are required to release stale leads.");
 
-  await supabaseRequest(LEADS_TABLE, {
+  await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ ownerId: null }),
@@ -265,17 +293,17 @@ export async function releaseStaleLeads() {
     ownerId: "not.is.null",
     status: "not.in.(IN_PROGRESS,CLOSED)",
     updatedAt: `lt.${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}`,
-  });
+  }));
 }
 
 export async function setLeadResearchSummary(leadId: string, summary: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save lead research.");
 
-  const rows = await supabaseRequest<any[]>(LEADS_TABLE, undefined, { select: "sourcePayload", id: `eq.${leadId}`, limit: "1" });
+  const rows = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "sourcePayload", id: `eq.${leadId}`, limit: "1" }));
   const existing = rows[0];
   const payload = existing?.sourcePayload && typeof existing.sourcePayload === "object" ? existing.sourcePayload as Record<string, unknown> : {};
 
-  await supabaseRequest(LEADS_TABLE, {
+  await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest(table, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({
@@ -284,7 +312,7 @@ export async function setLeadResearchSummary(leadId: string, summary: string) {
         aiResearchSummary: summary,
       },
     }),
-  }, { id: `eq.${leadId}` });
+  }, { id: `eq.${leadId}` }));
 }
 
 export async function claimLeads(leadIds: string[], ownerId: string) {
@@ -292,11 +320,11 @@ export async function claimLeads(leadIds: string[], ownerId: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to claim leads.");
 
   const idFilter = `in.(${leadIds.join(",")})`;
-  const rows = await supabaseRequest<any[]>(LEADS_TABLE, {
+  const rows = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ownerId, status: "IN_PROGRESS" }),
-  }, { id: idFilter, select: "id" });
+  }, { id: idFilter, select: "id" }));
 
   return rows.length;
 }
@@ -310,7 +338,7 @@ export async function getCurrentUserId() {
   if (!hasDb) return MOCK_USER.id;
 
   try {
-    const rows = await supabaseRequest<any[]>(USERS_TABLE, undefined, { select: "id", order: "createdAt.asc", limit: "1" });
+    const rows = await withTableFallback("users", USERS_TABLE_CANDIDATES, (table) => supabaseRequest<any[]>(table, undefined, { select: "id", order: "createdAt.asc", limit: "1" }));
     return rows[0]?.id ?? MOCK_USER.id;
   } catch (error) {
     if (isMissingUserTableError(error)) {
