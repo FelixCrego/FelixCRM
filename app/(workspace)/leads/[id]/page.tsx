@@ -10,7 +10,7 @@ export default async function LeadExecutionPage({ params }: { params: { id: stri
     if (!fallback) {
       return (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 text-zinc-300">
-          No leads found. Return to <Link className="text-indigo-300 underline" href="/scrape">Scrape Leads</Link> to claim one.
+          No leads found. Return to <Link className="text-indigo-300 underline" href="/leads">My Leads</Link> to claim one.
         </div>
       );
     }
