@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Check, Copy, Link2 } from "lucide-react";
+import { Check, Copy, Globe, Link2 } from "lucide-react";
 
 type LeadRecord = {
   id: string;
@@ -165,8 +165,8 @@ export default function LeadExecutionPage() {
   const [callActive, setCallActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
 
-  const [meetingDate, setMeetingDate] = useState("");
-  const [meetingTime, setMeetingTime] = useState("");
+  const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
+  const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
   const [meetingLoading, setMeetingLoading] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -265,7 +265,8 @@ export default function LeadExecutionPage() {
 
   async function copyInviteText() {
     if (!meetingLink) return;
-    const inviteText = `Demo booked for ${leadName} on ${meetingDate} at ${meetingTime}. Join here: ${meetingLink}`;
+    const dayLabel = leadDayOptions.find((day) => day.value === selectedMeetingDay)?.label || selectedMeetingDay;
+    const inviteText = `Demo booked for ${leadName} on ${dayLabel} at ${selectedMeetingTime} (${leadTimeZone}). Join here: ${meetingLink}`;
 
     try {
       await navigator.clipboard.writeText(inviteText);
@@ -309,6 +310,58 @@ export default function LeadExecutionPage() {
   }
 
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
+
+  const leadTimeZone = "America/Los_Angeles";
+  const repTimeZone = "America/New_York";
+
+  const leadDayOptions = useMemo(() => {
+    const now = new Date();
+
+    return [0, 1, 2, 3].map((offset) => {
+      const date = new Date(now);
+      date.setDate(now.getDate() + offset);
+
+      const shortLabel = date.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+
+      const fullLabel =
+        offset === 0 ? `Today, ${shortLabel}` : offset === 1 ? `Tomorrow, ${shortLabel}` : shortLabel;
+
+      return {
+        value: date.toISOString().slice(0, 10),
+        label: fullLabel,
+      };
+    });
+  }, []);
+
+  const leadTimeSlots = ["09:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "05:00 PM", "06:30 PM"];
+
+  const leadLocalTimeText = useMemo(
+    () =>
+      new Date().toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: leadTimeZone,
+        timeZoneName: "short",
+      }),
+    [],
+  );
+
+  const repLocalTimeText = useMemo(
+    () =>
+      new Date().toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: repTimeZone,
+        timeZoneName: "short",
+      }),
+    [],
+  );
 
   if (status === "loading") return <LeadWorkspaceSkeleton />;
 
@@ -451,24 +504,70 @@ export default function LeadExecutionPage() {
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <h2 className="text-sm font-semibold">Calendar Booking Widget</h2>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <input
-                type="date"
-                value={meetingDate}
-                onChange={(event) => setMeetingDate(event.target.value)}
-                className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-              />
-              <input
-                type="time"
-                value={meetingTime}
-                onChange={(event) => setMeetingTime(event.target.value)}
-                className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-              />
+            <h2 className="text-sm font-semibold">Smart Scheduling Hub</h2>
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-full border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              <Globe className="h-3.5 w-3.5 text-zinc-500" />
+              <span>Lead Local Time: {leadLocalTimeText} • Los Angeles, CA</span>
+              <span className="text-zinc-500">(Your Time: {repLocalTimeText})</span>
             </div>
+
+            <div className="mt-4">
+              <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Select Day</p>
+              <div className="flex flex-wrap gap-2">
+                {leadDayOptions.map((day) => {
+                  const isActive = selectedMeetingDay === day.value;
+
+                  return (
+                    <button
+                      key={day.value}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMeetingDay(day.value);
+                        setMeetingLink("");
+                      }}
+                      className={`rounded-full border px-3 py-2 text-xs font-medium transition ${
+                        isActive
+                          ? "border-zinc-600 bg-zinc-700 text-white"
+                          : "border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-zinc-500 hover:bg-zinc-900"
+                      }`}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Available Times ({leadTimeZone})</p>
+              <div className="grid grid-cols-3 gap-2">
+                {leadTimeSlots.map((slot) => {
+                  const isActive = selectedMeetingTime === slot;
+
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      onClick={() => {
+                        setSelectedMeetingTime(slot);
+                        setMeetingLink("");
+                      }}
+                      className={`rounded-lg border px-2 py-2 text-xs font-medium transition ${
+                        isActive
+                          ? "border-indigo-500 bg-indigo-600/20 text-indigo-400"
+                          : "border-zinc-700 bg-zinc-950 text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      {slot}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <button
               onClick={generateMeetingLink}
-              disabled={meetingLoading || !meetingDate || !meetingTime}
+              disabled={meetingLoading || !selectedMeetingDay || !selectedMeetingTime}
               className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold transition disabled:opacity-50 ${
                 meetingLink ? "bg-emerald-600 text-white" : "bg-indigo-500 text-white"
               }`}
