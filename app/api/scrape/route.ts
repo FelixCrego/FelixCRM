@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { scrapeLeads } from "@/lib/scraper";
 import { insertLeads } from "@/lib/store";
+import { getAuthenticatedUserId } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
+    const userId = getAuthenticatedUserId();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const rawBody = await request.text();
     let body: Record<string, unknown> = {};
 
@@ -25,7 +29,7 @@ export async function POST(request: Request) {
     const minRating = Number(body.minRating ?? 0);
     const includeNoWebsiteOnly = Boolean(body.includeNoWebsiteOnly ?? false);
     const { leads, diagnostics } = await scrapeLeads(city, businessType, Number.isFinite(minRating) ? minRating : 0, includeNoWebsiteOnly);
-    const inserted = await insertLeads(leads);
+    const inserted = await insertLeads(userId, leads);
 
     return NextResponse.json({ inserted, fetched: leads.length, diagnostics });
   } catch (error) {
