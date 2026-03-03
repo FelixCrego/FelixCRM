@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Command, Flame, LayoutDashboard, Search, Wallet, Briefcase, Bell, Sparkles, X } from "lucide-react";
+import { Bot, Command, Flame, LayoutDashboard, Search, Wallet, Briefcase, Bell, Sparkles, X, Inbox } from "lucide-react";
 import { useState } from "react";
 
 type PlaybookCard = {
@@ -16,6 +16,7 @@ const navSections = [
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/scrape", label: "Scrape Leads", icon: Search },
+      { href: "/leads", label: "My Leads", icon: Inbox },
       { href: "/pipeline", label: "Pipeline", icon: Flame },
     ],
   },
@@ -82,7 +83,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const Icon = item.icon;
-                  const active = pathname === item.href;
+                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
                     <Link
                       key={item.href}
