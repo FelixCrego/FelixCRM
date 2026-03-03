@@ -5,7 +5,7 @@ import { getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET() {
   try {
-    const userId = getAuthenticatedUserId();
+    const userId = await getAuthenticatedUserId();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await releaseStaleLeads();
     const leads = await listLeads(userId);

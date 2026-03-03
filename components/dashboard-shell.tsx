@@ -77,7 +77,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { activeRole, setActiveRole } = useRole();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(true);
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
   const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
     { title: "Cold Openers", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
@@ -179,10 +178,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 </select>
               </div>
               <button
-                onClick={() => setIsLoggedIn((current) => !current)}
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  window.location.href = "/login";
+                }}
                 className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-700 hover:text-zinc-100"
               >
-                {isLoggedIn ? "Logout" : "Login"}
+                Logout
               </button>
               <button
                 onClick={() => setDrawerOpen(true)}

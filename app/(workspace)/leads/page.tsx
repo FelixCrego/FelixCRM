@@ -4,7 +4,7 @@ import { getAuthenticatedUserId } from "@/lib/auth";
 
 export default async function LeadsPage() {
   try {
-    const userId = getAuthenticatedUserId();
+    const userId = await getAuthenticatedUserId();
     if (!userId) {
       return <LeadsListView leads={[]} errorMessage="Unauthorized" />;
     }

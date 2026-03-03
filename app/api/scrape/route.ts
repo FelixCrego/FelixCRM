@@ -5,7 +5,7 @@ import { getAuthenticatedUserId } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
-    const userId = getAuthenticatedUserId();
+    const userId = await getAuthenticatedUserId();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const rawBody = await request.text();

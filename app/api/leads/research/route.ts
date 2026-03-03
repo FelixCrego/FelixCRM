@@ -6,7 +6,7 @@ import { getAuthenticatedUserId } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const ownerId = getAuthenticatedUserId();
+  const ownerId = await getAuthenticatedUserId();
   if (!ownerId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();

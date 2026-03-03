@@ -1,23 +1,76 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { AUTH_COOKIE_NAME } from "@/lib/auth";
+import {
+  AUTH_ACCESS_TOKEN_COOKIE,
+  AUTH_REFRESH_TOKEN_COOKIE,
+  AUTH_USER_HEADER,
+  getSupabaseUserByAccessToken,
+  refreshSupabaseSession,
+} from "@/lib/auth";
 
-export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const isLoginRoute = pathname === "/login" || pathname.startsWith("/api/auth/login");
+const PUBLIC_PATHS = ["/login", "/signup", "/api/auth/login", "/api/auth/signup"];
 
-  if (isLoginRoute) return NextResponse.next();
+function isPublicPath(pathname: string) {
+  return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
 
-  const userId = request.cookies.get(AUTH_COOKIE_NAME)?.value?.trim();
-  if (userId) return NextResponse.next();
-
-  if (pathname.startsWith("/api/")) {
+function unauthorizedResponse(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("next", pathname);
+  loginUrl.searchParams.set("next", request.nextUrl.pathname);
   return NextResponse.redirect(loginUrl);
+}
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  if (isPublicPath(pathname)) return NextResponse.next();
+
+  const accessToken = request.cookies.get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
+  const refreshToken = request.cookies.get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? "";
+
+  if (!accessToken && !refreshToken) {
+    return unauthorizedResponse(request);
+  }
+
+  const user = accessToken ? await getSupabaseUserByAccessToken(accessToken) : null;
+
+  if (user?.id) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set(AUTH_USER_HEADER, user.id);
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
+  if (!refreshToken) {
+    return unauthorizedResponse(request);
+  }
+
+  try {
+    const refreshed = await refreshSupabaseSession(refreshToken);
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set(AUTH_USER_HEADER, refreshed.userId);
+
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, refreshed.accessToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: refreshed.expiresIn,
+    });
+    response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, refreshed.refreshToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    });
+    return response;
+  } catch {
+    return unauthorizedResponse(request);
+  }
 }
 
 export const config = {

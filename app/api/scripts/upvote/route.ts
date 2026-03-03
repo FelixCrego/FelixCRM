@@ -3,7 +3,7 @@ import { upvoteScript } from "@/lib/store";
 import { getAuthenticatedUserId } from "@/lib/auth";
 
 export async function POST(request: Request) {
-  const userId = getAuthenticatedUserId();
+  const userId = await getAuthenticatedUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
