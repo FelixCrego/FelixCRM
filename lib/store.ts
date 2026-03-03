@@ -258,6 +258,28 @@ export async function setLeadResearchSummary(leadId: string, summary: string) {
   }
 }
 
+export async function claimLeads(leadIds: string[], ownerId: string = fakeUserId) {
+  if (!leadIds.length) return 0;
+
+  if (!hasDb) {
+    const idSet = new Set(leadIds);
+    let claimed = 0;
+    memory.leads = memory.leads.map((lead) => {
+      if (!idSet.has(lead.id)) return lead;
+      if (lead.ownerId === ownerId) return lead;
+      claimed += 1;
+      return { ...lead, ownerId, status: "IN_PROGRESS", updatedAt: new Date().toISOString() };
+    });
+    return claimed;
+  }
+
+  const result = await prisma.lead.updateMany({
+    where: { id: { in: leadIds } },
+    data: { ownerId, status: "IN_PROGRESS" },
+  });
+  return result.count;
+}
+
 export async function getLeadById(leadId: string) {
   const leads = await listLeads();
   return leads.find((lead) => lead.id === leadId);
