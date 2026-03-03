@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { Check, Copy, Link2 } from "lucide-react";
 
 type LeadRecord = {
   id: string;
@@ -28,6 +29,7 @@ type SupabaseResult<T> = {
 type FetchStatus = "loading" | "ready" | "error";
 type OmniTab = "Notes" | "SMS" | "Email";
 type ScriptTab = "Scripts" | "Objections";
+type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
 
 function createClientComponentClient() {
@@ -159,6 +161,13 @@ export default function LeadExecutionPage() {
   const [meetingLink, setMeetingLink] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
 
+  const [leadExecutionStatus, setLeadExecutionStatus] = useState<ExecutionLeadStatus>("New");
+  const [checkoutAmount, setCheckoutAmount] = useState(500);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutLink, setCheckoutLink] = useState("");
+  const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
+  const [approvalPending, setApprovalPending] = useState(false);
+
   useEffect(() => {
     if (!callActive) return;
 
@@ -188,6 +197,16 @@ export default function LeadExecutionPage() {
 
       if (data) {
         setLead(data);
+        const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
+        if (
+          resolvedStatus === "New" ||
+          resolvedStatus === "Pitched" ||
+          resolvedStatus === "Awaiting Approval" ||
+          resolvedStatus === "Payment Pending" ||
+          resolvedStatus === "Closed Won"
+        ) {
+          setLeadExecutionStatus(resolvedStatus);
+        }
         setStatus("ready");
         return;
       }
@@ -239,6 +258,38 @@ export default function LeadExecutionPage() {
     }
   }
 
+  async function handleCheckoutAction() {
+    setCheckoutLoading(true);
+    setCheckoutLinkCopied(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    if (checkoutAmount >= 500) {
+      setApprovalPending(false);
+      setCheckoutLink("buy.stripe.com/test_123");
+      setLeadExecutionStatus("Payment Pending");
+      setCheckoutLoading(false);
+      return;
+    }
+
+    setCheckoutLink("");
+    setApprovalPending(true);
+    setLeadExecutionStatus("Awaiting Approval");
+    setCheckoutLoading(false);
+  }
+
+  async function copyCheckoutLink() {
+    if (!checkoutLink) return;
+
+    try {
+      await navigator.clipboard.writeText(checkoutLink);
+      setCheckoutLinkCopied(true);
+      window.setTimeout(() => setCheckoutLinkCopied(false), 1400);
+    } catch {
+      setCheckoutLinkCopied(false);
+    }
+  }
+
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
 
   if (status === "loading") return <LeadWorkspaceSkeleton />;
@@ -260,6 +311,9 @@ export default function LeadExecutionPage() {
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Lead Context</p>
             <h1 className="mt-2 text-2xl font-semibold leading-tight text-zinc-100">{leadName}</h1>
             <p className="mt-2 text-xs uppercase tracking-[0.14em] text-zinc-500">Execution target: {leadWebsite}</p>
+            <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
+              {leadExecutionStatus}
+            </span>
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -424,6 +478,74 @@ export default function LeadExecutionPage() {
                 >
                   {inviteCopied ? "Invite Copied" : "Copy Invite Text"}
                 </button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <h2 className="text-sm font-semibold">Checkout &amp; Payments</h2>
+            <p className="mt-1 text-xs text-zinc-500">Generate a Stripe checkout link instantly, or route sub-$500 deals for manager approval.</p>
+
+            <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-950 p-3">
+              <label className="text-xs uppercase tracking-wide text-zinc-500">Deal Price</label>
+              <div className="mt-2 flex items-center rounded-lg border border-zinc-700 bg-zinc-900 px-3 focus-within:border-zinc-500">
+                <span className="text-sm text-zinc-400">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  disabled={approvalPending}
+                  value={checkoutAmount}
+                  onChange={(event) => {
+                    const amount = Number(event.target.value);
+                    setCheckoutAmount(Number.isFinite(amount) ? amount : 0);
+                    setCheckoutLink("");
+                    setApprovalPending(false);
+                  }}
+                  className="h-10 w-full bg-transparent px-2 text-sm text-zinc-100 outline-none disabled:cursor-not-allowed disabled:text-zinc-500"
+                  placeholder="500"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={handleCheckoutAction}
+              disabled={checkoutLoading || approvalPending}
+              className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-60 ${
+                checkoutAmount >= 500 ? "bg-indigo-600 hover:bg-indigo-500" : "bg-amber-600 hover:bg-amber-500"
+              }`}
+            >
+              {checkoutLoading ? (
+                <>
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/50 border-t-white" />
+                  Processing...
+                </>
+              ) : checkoutAmount >= 500 ? (
+                "Generate Stripe Link"
+              ) : (
+                "Request Manager Approval"
+              )}
+            </button>
+
+            {checkoutLink ? (
+              <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                <div className="flex items-center gap-2 truncate">
+                  <Check className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{checkoutLink}</span>
+                </div>
+                <button
+                  onClick={copyCheckoutLink}
+                  className="inline-flex items-center gap-1 rounded-md border border-emerald-300/30 px-2 py-1 text-[11px] font-semibold hover:bg-emerald-500/20"
+                >
+                  {checkoutLinkCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {checkoutLinkCopied ? "Copied" : "Copy Link"}
+                </button>
+              </div>
+            ) : null}
+
+            {approvalPending ? (
+              <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-200">
+                <Link2 className="h-3.5 w-3.5" />
+                Approval pending from Manager...
               </div>
             ) : null}
           </div>
