@@ -14,10 +14,10 @@ export async function POST(request: Request) {
 
     const minRating = Number(body.minRating ?? 0);
     const includeNoWebsiteOnly = Boolean(body.includeNoWebsiteOnly ?? false);
-    const scraped = await scrapeLeads(city, businessType, Number.isFinite(minRating) ? minRating : 0, includeNoWebsiteOnly);
-    const inserted = await insertLeads(scraped);
+    const { leads, diagnostics } = await scrapeLeads(city, businessType, Number.isFinite(minRating) ? minRating : 0, includeNoWebsiteOnly);
+    const inserted = await insertLeads(leads);
 
-    return NextResponse.json({ inserted, fetched: scraped.length });
+    return NextResponse.json({ inserted, fetched: leads.length, diagnostics });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to scrape leads.";
     return NextResponse.json({ error: message }, { status: 500 });
