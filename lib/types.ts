@@ -17,6 +17,7 @@ export type Lead = {
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
   ownerId?: string | null;
+  transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
   updatedAt: string;
 };
 
