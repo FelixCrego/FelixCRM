@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Check, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
+import { createClientComponentClient } from "@/lib/supabase-client";
 
 type LeadRecord = {
   id: string;
@@ -22,9 +23,12 @@ type LeadRecord = {
   deployedUrl?: string | null;
 };
 
-type SupabaseResult<T> = {
-  data: T | null;
-  error: { message: string; code?: string } | null;
+type LeadNoteRecord = {
+  id: string;
+  lead_id: string;
+  content: string;
+  channel: string;
+  created_at: string;
 };
 
 type FetchStatus = "loading" | "ready" | "error";
@@ -42,84 +46,6 @@ const FALLBACK_LEAD: LeadRecord = {
   email: "No email on file",
   deployed_url: "",
 };
-
-
-function createClientComponentClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  return {
-    from(table: string) {
-      return {
-        select(_columns: string) {
-          return {
-            eq(column: string, value: string) {
-              return {
-                async single(): Promise<SupabaseResult<LeadRecord>> {
-                  if (!url || !key) {
-                    return {
-                      data: null,
-                      error: { message: "Missing Supabase environment variables.", code: "ENV_MISSING" },
-                    };
-                  }
-
-                  const query = new URL(`${url}/rest/v1/${table}`);
-                  query.searchParams.set(column, `eq.${value}`);
-                  query.searchParams.set("select", "*");
-                  query.searchParams.set("limit", "1");
-
-                  try {
-                    const response = await fetch(query.toString(), {
-                      headers: {
-                        apikey: key,
-                        Authorization: `Bearer ${key}`,
-                        Accept: "application/json",
-                      },
-                    });
-
-                    const payload = await response.json().catch(() => null);
-
-                    if (!response.ok) {
-                      const message =
-                        (payload && typeof payload.message === "string" && payload.message) ||
-                        (payload && typeof payload.error === "string" && payload.error) ||
-                        `Supabase request failed (${response.status}).`;
-
-                      return {
-                        data: null,
-                        error: {
-                          message,
-                          code: payload && typeof payload.code === "string" ? payload.code : `${response.status}`,
-                        },
-                      };
-                    }
-
-                    if (!Array.isArray(payload) || payload.length === 0) {
-                      return {
-                        data: null,
-                        error: { message: "No lead found for this ID.", code: "PGRST116" },
-                      };
-                    }
-
-                    return {
-                      data: payload[0] as LeadRecord,
-                      error: null,
-                    };
-                  } catch {
-                    return {
-                      data: null,
-                      error: { message: "Network error while contacting Supabase.", code: "NETWORK_ERROR" },
-                    };
-                  }
-                },
-              };
-            },
-          };
-        },
-      };
-    },
-  };
-}
 
 function LeadWorkspaceSkeleton() {
   return (
@@ -162,6 +88,10 @@ export default function LeadExecutionPage() {
 
   const [omniTab, setOmniTab] = useState<OmniTab>("Notes");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
+  const [showDisposition, setShowDisposition] = useState(false);
+  const [selectedDisposition, setSelectedDisposition] = useState("");
+  const [dispositionSummary, setDispositionSummary] = useState("");
+  const [savingDisposition, setSavingDisposition] = useState(false);
 
   const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
@@ -178,6 +108,26 @@ export default function LeadExecutionPage() {
   const [checkoutLink, setCheckoutLink] = useState("");
   const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
+  const supabase = useMemo(() => createClientComponentClient(), []);
+
+  useEffect(() => {
+    type ConnectWindow = Window & {
+      connect?: {
+        contact?: (callback: (contact: { onEnded?: (callback: () => void) => void }) => void) => void;
+      };
+    };
+
+    const windowWithConnect = window as ConnectWindow;
+    windowWithConnect.connect?.contact?.((contact) => {
+      contact.onEnded?.(() => {
+        setShowDisposition(true);
+      });
+    });
+  }, []);
 
 
   useEffect(() => {
@@ -194,8 +144,7 @@ export default function LeadExecutionPage() {
           return;
         }
 
-        const supabase = createClientComponentClient();
-        const { data } = await supabase.from("leads").select("*").eq("id", leadId).single();
+        const { data } = await supabase.from<LeadRecord>("leads").select("*").eq("id", leadId).single();
 
         if (!alive) return;
 
@@ -231,7 +180,45 @@ export default function LeadExecutionPage() {
     return () => {
       alive = false;
     };
-  }, [leadId]);
+  }, [leadId, supabase]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadNotes() {
+      if (!leadId) {
+        setNotes([]);
+        return;
+      }
+
+      setNotesLoading(true);
+      setNotesError("");
+      const { data, error } = await supabase
+        .from<LeadNoteRecord>("lead_notes")
+        .select("id,lead_id,content,channel,created_at")
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false })
+        .limit(10)
+        .maybeMany();
+
+      if (!alive) return;
+
+      if (error) {
+        setNotes([]);
+        setNotesError(error.message);
+        setNotesLoading(false);
+        return;
+      }
+
+      setNotes(data || []);
+      setNotesLoading(false);
+    }
+
+    loadNotes();
+    return () => {
+      alive = false;
+    };
+  }, [leadId, supabase]);
 
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
@@ -303,6 +290,59 @@ export default function LeadExecutionPage() {
     } catch {
       setCheckoutLinkCopied(false);
     }
+  }
+
+  async function saveOmniNote(channel: OmniTab) {
+    const content = notesDraft.trim();
+    if (!content || !leadId) return;
+
+    setNotesLoading(true);
+    setNotesError("");
+    const { data, error } = await supabase.from<LeadNoteRecord>("lead_notes").insert([
+      {
+        lead_id: leadId,
+        content,
+        channel: channel.toLowerCase(),
+        created_at: new Date().toISOString(),
+      } as Partial<LeadNoteRecord>,
+    ]);
+
+    if (error) {
+      setNotesError(error.message);
+      setNotesLoading(false);
+      return;
+    }
+
+    setNotesDraft("");
+    if (data?.[0]) {
+      setNotes((previous) => [data[0], ...previous].slice(0, 10));
+    }
+    setNotesLoading(false);
+  }
+
+  async function submitDisposition() {
+    if (!selectedDisposition || !leadId) return;
+
+    setSavingDisposition(true);
+    const summary = dispositionSummary.trim();
+    const content = summary || `Disposition recorded: ${selectedDisposition}`;
+    const { data, error } = await supabase.from<LeadNoteRecord>("lead_notes").insert([
+      {
+        lead_id: leadId,
+        content,
+        channel: `disposition:${selectedDisposition.toLowerCase().replace(/\s+/g, "_")}`,
+        created_at: new Date().toISOString(),
+      } as Partial<LeadNoteRecord>,
+    ]);
+
+    if (!error && data?.[0]) {
+      setNotes((previous) => [data[0], ...previous].slice(0, 10));
+      setShowDisposition(false);
+      setSelectedDisposition("");
+      setDispositionSummary("");
+    }
+
+    setSavingDisposition(false);
   }
 
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
@@ -422,6 +462,53 @@ export default function LeadExecutionPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
+      {showDisposition ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/90 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <p className="text-xs uppercase tracking-[0.18em] text-amber-300">After Call Work Required</p>
+            <h2 className="mt-2 text-xl font-semibold text-zinc-100">Log call disposition before continuing</h2>
+            <p className="mt-1 text-sm text-zinc-400">Select an outcome and leave a short summary to close the call workflow.</p>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {[
+                "Interested",
+                "Not Interested",
+                "No Answer",
+                "Call Back",
+                "Wrong Number",
+                "Booked Demo",
+              ].map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setSelectedDisposition(option)}
+                  className={`rounded-lg border px-3 py-2 text-sm transition ${
+                    selectedDisposition === option
+                      ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                      : "border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-zinc-500"
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={dispositionSummary}
+              onChange={(event) => setDispositionSummary(event.target.value)}
+              className="mt-4 h-24 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-3 text-sm text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+              placeholder="Summarize what happened on the call..."
+            />
+
+            <button
+              onClick={submitDisposition}
+              disabled={savingDisposition || !selectedDisposition}
+              className="mt-4 w-full rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300"
+            >
+              {savingDisposition ? "Saving disposition..." : "Complete ACW"}
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="grid grid-cols-12 gap-4">
         <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3">
           <div>
@@ -552,23 +639,36 @@ export default function LeadExecutionPage() {
             </div>
 
             <div className="space-y-2">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Today • 09:41</p>
-                <p className="mt-1">Owner asked to prioritize speed and mobile booking flow before launch.</p>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Today • 10:12</p>
-                <p className="mt-1">Confirmed follow-up after previewing the live Vercel draft.</p>
-              </div>
+              {notes.map((note) => (
+                <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">
+                    {new Date(note.created_at).toLocaleString()} • {note.channel}
+                  </p>
+                  <p className="mt-1">{note.content}</p>
+                </div>
+              ))}
+              {!notesLoading && notes.length === 0 ? (
+                <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No notes yet for this lead.</div>
+              ) : null}
+              {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
+              {notesError ? <div className="text-xs text-rose-300">{notesError}</div> : null}
             </div>
 
             <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
               <button className="rounded-md border border-zinc-600 bg-zinc-900 px-3 py-2 text-xs text-zinc-300">AI draft</button>
               <input
+                value={notesDraft}
+                onChange={(event) => setNotesDraft(event.target.value)}
                 className="h-9 flex-1 bg-transparent px-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
                 placeholder={`Draft ${omniTab} content for ${leadName}...`}
               />
-              <button className="rounded-md bg-indigo-500 px-4 py-2 text-xs font-semibold text-white">Send</button>
+              <button
+                onClick={() => saveOmniNote(omniTab)}
+                disabled={notesLoading || !notesDraft.trim()}
+                className="rounded-md bg-indigo-500 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-700"
+              >
+                Send
+              </button>
             </div>
           </div>
 
