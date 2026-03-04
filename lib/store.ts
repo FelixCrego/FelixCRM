@@ -19,6 +19,7 @@ type SupabaseError = { code?: string; message?: string };
 export type LeadNote = {
   id: string;
   leadId: string;
+  contactId?: string | null;
   content: string;
   channel: string;
   createdAt: string;
@@ -540,6 +541,7 @@ function normalizeLeadNote(row: any): LeadNote {
     leadId: String(row.lead_id ?? row.leadId ?? ""),
     content: String(row.content ?? row.note ?? ""),
     channel: String(row.channel ?? "notes"),
+    contactId: row.contact_id ?? row.contactId ?? null,
     createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
   };
 }
@@ -579,6 +581,7 @@ async function appendLeadNoteToPayload(leadId: string, note: Omit<LeadNote, "id"
     leadId,
     content: note.content,
     channel: note.channel,
+    contactId: note.contactId ?? null,
     createdAt: new Date().toISOString(),
   };
 
@@ -630,7 +633,7 @@ export async function listLeadNotes(leadId: string): Promise<LeadNote[]> {
   }
 }
 
-export async function createLeadNote(leadId: string, content: string, channel: string): Promise<LeadNote> {
+export async function createLeadNote(leadId: string, content: string, channel: string, contactId: string | null = null): Promise<LeadNote> {
   if (!hasDb) throw new Error("Supabase environment variables are required to save lead notes.");
 
   const cleanContent = content.trim();
@@ -646,6 +649,7 @@ export async function createLeadNote(leadId: string, content: string, channel: s
             lead_id: leadId,
             content: cleanContent,
             channel,
+            contact_id: contactId,
             created_at: new Date().toISOString(),
           },
         ]),
@@ -669,6 +673,7 @@ export async function createLeadNote(leadId: string, content: string, channel: s
                 leadId,
                 content: cleanContent,
                 channel,
+                contactId,
                 createdAt: new Date().toISOString(),
               },
             ]),
@@ -676,12 +681,12 @@ export async function createLeadNote(leadId: string, content: string, channel: s
         );
         if (rows[0]) return normalizeLeadNote(rows[0]);
       } catch {
-        return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel });
+        return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
       }
-      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel });
+      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
     }
     if (isMissingTableError(error)) {
-      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel });
+      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
     }
     throw error;
   }
