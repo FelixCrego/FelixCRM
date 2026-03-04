@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type MouseEvent, useMemo, useState } from "react";
 import {
   Bot,
   CalendarDays,
@@ -92,6 +92,7 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [isBookingLoading, setIsBookingLoading] = useState(false);
   const [meetLink, setMeetLink] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [isDrafting, setIsDrafting] = useState(false);
   const activeTab = commsTab;
 
   const siteUrl = useMemo(
@@ -124,6 +125,37 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const handleSendNote = () => {
     if (!noteText.trim()) return;
     setNoteText("");
+  };
+
+  const handleAIDraft = async (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    setIsDrafting(true);
+    setNoteText("Drafting with Gemini...");
+
+    try {
+      const response = await fetch("/api/generate-copy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadName: lead.businessName || "this business",
+          activeTab,
+          researchContext: analysisResult || `Website: ${lead.websiteUrl || "Unknown"}`,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.draft) {
+        setNoteText(data.draft);
+      } else {
+        setNoteText("Error: Could not generate draft.");
+      }
+    } catch (error) {
+      console.error("Drafting failed", error);
+      setNoteText("Error connecting to Gemini AI.");
+    } finally {
+      setIsDrafting(false);
+    }
   };
 
   return (
@@ -270,17 +302,11 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
           <div className="border-t border-zinc-800 bg-zinc-900/70 p-3">
             <div className="mt-4 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg p-1">
               <button 
-                onClick={(e) => {
-                  e.preventDefault();
-                  setNoteText(
-                    activeTab === 'SMS' 
-                    ? `Hey ${lead.businessName} team, noticed your mobile booking flow is a bit slow. We can route calls directly to a fast-loading booking page today. Open to a quick chat?`
-                    : `Drafting highly-converting NLP ${activeTab} copy for ${lead.businessName}...`
-                  );
-                }}
+                onClick={handleAIDraft}
+                disabled={isDrafting}
                 className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-medium rounded-md transition-colors"
               >
-                AI draft
+                {isDrafting ? "Drafting..." : "AI draft"}
               </button>
               
               <input
