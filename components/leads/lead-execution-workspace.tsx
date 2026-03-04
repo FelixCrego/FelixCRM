@@ -11,8 +11,6 @@ import {
   MessageSquare,
   Phone,
   Rocket,
-  Send,
-  Sparkles,
   UserCircle2,
 } from "lucide-react";
 
@@ -93,7 +91,8 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [selectedSlot, setSelectedSlot] = useState("11:30 AM");
   const [isBookingLoading, setIsBookingLoading] = useState(false);
   const [meetLink, setMeetLink] = useState<string | null>(null);
-  const [draftText, setDraftText] = useState("");
+  const [noteText, setNoteText] = useState("");
+  const activeTab = commsTab;
 
   const siteUrl = useMemo(
     () => lead.deployedUrl ?? `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`,
@@ -122,17 +121,9 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
     }, 1400);
   };
 
-  const handleAIDraft = () => {
-    const draft =
-      commsTab === "EMAIL"
-        ? `Subject: Quick preview for ${lead.businessName}
-
-Hey ${lead.businessName}, sharing a quick look at your updated site funnel and a rollout timeline. Are you free for a 10-minute walkthrough this week?`
-        : commsTab === "SMS"
-          ? `Hey ${lead.businessName} — I can ship mobile booking + reminders fast. Want me to send a preview today?`
-          : `Left a ${commsTab.toLowerCase()} update for ${lead.businessName}: focused on mobile booking speed and faster lead response.`;
-
-    setDraftText(draft);
+  const handleSendNote = () => {
+    if (!noteText.trim()) return;
+    setNoteText("");
   };
 
   return (
@@ -277,22 +268,38 @@ Hey ${lead.businessName}, sharing a quick look at your updated site funnel and a
           </div>
 
           <div className="border-t border-zinc-800 bg-zinc-900/70 p-3">
-            <div className="rounded-lg border border-zinc-700 bg-zinc-950/90 p-2">
-              <textarea
-                rows={2}
-                value={draftText}
-                onChange={(event) => setDraftText(event.target.value)}
-                placeholder={`Write ${commsTab === "EMAIL" ? "email" : commsTab === "SMS" ? "SMS" : "note"} update...`}
-                className="w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
+            <div className="mt-4 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg p-1">
+              <button 
+                onClick={(e) => {
+                  e.preventDefault();
+                  setNoteText(
+                    activeTab === 'SMS' 
+                    ? `Hey ${lead.businessName} team, noticed your mobile booking flow is a bit slow. We can route calls directly to a fast-loading booking page today. Open to a quick chat?`
+                    : `Drafting highly-converting NLP ${activeTab} copy for ${lead.businessName}...`
+                  );
+                }}
+                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-medium rounded-md transition-colors"
+              >
+                AI draft
+              </button>
+              
+              <input
+                type="text"
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder={`Draft ${activeTab} content for ${lead.businessName}...`}
+                className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-zinc-200 px-2 text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSendNote();
+                }}
               />
-              <div className="mt-2 flex items-center justify-between">
-                <button onClick={handleAIDraft} className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
-                  <Sparkles className="h-3.5 w-3.5" /> AI draft
-                </button>
-                <button className="inline-flex items-center gap-2 rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-400">
-                  <Send className="h-3.5 w-3.5" /> Send
-                </button>
-              </div>
+              
+              <button 
+                onClick={handleSendNote}
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-md transition-colors shadow-sm"
+              >
+                Send
+              </button>
             </div>
           </div>
         </div>
