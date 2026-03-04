@@ -28,11 +28,13 @@ type LeadNoteRecord = {
   leadId: string;
   content: string;
   channel: string;
+  activity_type?: string;
+  activityType?: string;
   createdAt: string;
 };
 
 type FetchStatus = "loading" | "ready" | "error";
-type OmniTab = "Notes" | "SMS" | "Email";
+type ActivityTab = "NOTES" | "SMS" | "EMAIL";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
@@ -86,7 +88,7 @@ export default function LeadExecutionPage() {
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
 
-  const [omniTab, setOmniTab] = useState<OmniTab>("Notes");
+  const [activeTab, setActiveTab] = useState<ActivityTab>("NOTES");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
   const [selectedDisposition, setSelectedDisposition] = useState("");
@@ -111,6 +113,7 @@ export default function LeadExecutionPage() {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
+  const [isDrafting, setIsDrafting] = useState(false);
   const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
   const supabase = useMemo(() => createClientComponentClient(), []);
 
@@ -291,35 +294,55 @@ export default function LeadExecutionPage() {
     }
   }
 
-  async function saveOmniNote(channel: OmniTab) {
+  async function saveOmniNote() {
     const content = notesDraft.trim();
     if (!content || !leadId) return;
 
     setNotesLoading(true);
     setNotesError("");
-    const response = await fetch("/api/lead-notes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        leadId,
-        content,
-        channel: channel.toLowerCase(),
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+    const { data, error } = await supabase
+      .from("lead_notes")
+      .insert([
+        {
+          lead_id: leadId,
+          content,
+          channel: activeTab.toLowerCase(),
+          activity_type: activeTab.toUpperCase(),
+        },
+      ])
+      .select("*")
+      .single();
 
-    if (!response.ok) {
-      setNotesError(payload?.error || "Unable to save note.");
+    if (error || !data) {
+      setNotesError(error?.message || "Unable to save note.");
       setNotesLoading(false);
       return;
     }
 
     setNotesDraft("");
-    if (payload?.note) {
-      setNotes((previous) => [payload.note as LeadNoteRecord, ...previous].slice(0, 20));
-    }
+    setNotes((previous) => [data as LeadNoteRecord, ...previous].slice(0, 20));
     setNotesLoading(false);
   }
+
+  const handleAIDraft = async () => {
+    setIsDrafting(true);
+    const aiPrompt = `Write a casual, highly-converting NLP sales ${activeTab} for ${leadName}. Focus on speed to lead and mobile booking gaps. Keep it under 3 sentences. No corporate jargon.`;
+    console.info("AI draft prompt", aiPrompt);
+
+    // TODO: Replace with actual fetch to /api/generate-copy
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => {
+        const simulatedAIResponse =
+          activeTab === "SMS"
+            ? `Hey ${leadName} team, noticed your mobile booking flow is a bit slow. We can route calls directly to a fast-loading booking page today. Open to a quick chat?`
+            : `Drafted ${activeTab} context...`;
+
+        setNotesDraft(simulatedAIResponse);
+        setIsDrafting(false);
+        resolve();
+      }, 1500);
+    });
+  };
 
   async function submitDisposition() {
     if (!selectedDisposition || !leadId) return;
@@ -457,6 +480,12 @@ export default function LeadExecutionPage() {
       }),
     [],
   );
+
+
+  const filteredNotes = notes.filter((note) => {
+    const noteActivity = (note.activity_type || note.activityType || note.channel || "").toUpperCase();
+    return noteActivity === activeTab.toUpperCase();
+  });
 
   if (status === "loading") return <LeadWorkspaceSkeleton />;
 
@@ -631,44 +660,50 @@ export default function LeadExecutionPage() {
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="mb-3 flex gap-4 border-b border-zinc-800 pb-2">
-              {(["Notes", "SMS", "Email"] as OmniTab[]).map((tab) => (
+              {(["NOTES", "SMS", "EMAIL"] as ActivityTab[]).map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => setOmniTab(tab)}
-                  className={`relative px-1 pb-1 text-xs font-medium transition ${omniTab === tab ? "text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+                  onClick={() => setActiveTab(tab)}
+                  className={`relative px-1 pb-1 text-xs font-medium transition ${activeTab === tab ? "text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
                 >
-                  {tab}
-                  {omniTab === tab ? <span className="absolute inset-x-0 -bottom-[9px] h-0.5 rounded bg-blue-500" /> : null}
+                  {tab === "NOTES" ? "Notes" : tab === "EMAIL" ? "Email" : tab}
+                  {activeTab === tab ? <span className="absolute inset-x-0 -bottom-[9px] h-0.5 rounded bg-blue-500" /> : null}
                 </button>
               ))}
             </div>
 
             <div className="space-y-2">
-              {notes.map((note) => (
+              {filteredNotes.map((note) => (
                 <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
                     <p className="text-xs uppercase tracking-wide text-zinc-500">
-                    {new Date(note.createdAt).toLocaleString()} • {note.channel}
+                    {new Date(note.createdAt).toLocaleString()} • {(note.activity_type || note.activityType || note.channel).toUpperCase()}
                   </p>
                   <p className="mt-1">{note.content}</p>
                 </div>
               ))}
-              {!notesLoading && notes.length === 0 ? (
-                <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No notes yet for this lead.</div>
+              {!notesLoading && filteredNotes.length === 0 ? (
+                <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No {activeTab.toLowerCase()} activity yet for this lead.</div>
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
               {notesError ? <div className="text-xs text-rose-300">{notesError}</div> : null}
             </div>
 
             <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
-              <button className="rounded-md border border-zinc-600 bg-zinc-900 px-3 py-2 text-xs text-zinc-300">AI draft</button>
+              <button
+                onClick={handleAIDraft}
+                disabled={isDrafting}
+                className="rounded-md border border-zinc-600 bg-zinc-900 px-3 py-2 text-xs text-zinc-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDrafting ? "Drafting..." : "AI draft"}
+              </button>
               <input
                 value={notesDraft}
                 onChange={(event) => setNotesDraft(event.target.value)}
                 className="h-9 flex-1 bg-transparent px-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
-                placeholder={`Draft ${omniTab} content for ${leadName}...`}
+                placeholder={`Draft ${activeTab === "NOTES" ? "note" : activeTab === "EMAIL" ? "email" : "SMS"} content for ${leadName}...`}
               />
               <button
-                onClick={() => saveOmniNote(omniTab)}
+                onClick={saveOmniNote}
                 disabled={notesLoading || !notesDraft.trim()}
                 className="rounded-md bg-indigo-500 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-700"
               >
