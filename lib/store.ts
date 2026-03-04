@@ -8,12 +8,21 @@ const hasDb = Boolean(supabaseUrl && supabaseServiceRoleKey);
 const USERS_TABLE_CANDIDATES = ["User", "user"];
 const LEADS_TABLE_CANDIDATES = ["leads", "lead", "Lead"];
 const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
+const LEAD_NOTES_TABLE_CANDIDATES = ["lead_notes", "leadNotes", "LeadNotes"];
 
 const resolvedTableCache = new Map<string, string>();
 
 const MOCK_USER = { id: "test-uuid-1", name: "Alex Rep", role: "REP" as UserRole };
 
 type SupabaseError = { code?: string; message?: string };
+
+export type LeadNote = {
+  id: string;
+  leadId: string;
+  content: string;
+  channel: string;
+  createdAt: string;
+};
 
 function parseJsonSafely<T>(value: string): T | null {
   try {
@@ -523,4 +532,157 @@ export async function requestLeadOwnershipTransfer(leadId: string, requesterId: 
 export async function getLeadById(leadId: string, ownerId: string) {
   const leads = await listLeads(ownerId);
   return leads.find((lead) => lead.id === leadId);
+}
+
+function normalizeLeadNote(row: any): LeadNote {
+  return {
+    id: String(row.id ?? crypto.randomUUID()),
+    leadId: String(row.lead_id ?? row.leadId ?? ""),
+    content: String(row.content ?? row.note ?? ""),
+    channel: String(row.channel ?? "notes"),
+    createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
+  };
+}
+
+async function listLeadNotesFromPayload(leadId: string): Promise<LeadNote[]> {
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) return [];
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const notes = Array.isArray(payload.notes) ? payload.notes : [];
+  return notes
+    .filter((item) => item && typeof item === "object")
+    .map((item) => normalizeLeadNote(item))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+async function appendLeadNoteToPayload(leadId: string, note: Omit<LeadNote, "id" | "createdAt">): Promise<LeadNote> {
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const existingNotes = Array.isArray(payload.notes) ? payload.notes : [];
+  const created: LeadNote = {
+    id: crypto.randomUUID(),
+    leadId,
+    content: note.content,
+    channel: note.channel,
+    createdAt: new Date().toISOString(),
+  };
+
+  const nextNotes = [created, ...existingNotes].slice(0, 50);
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? { source_payload: { ...payload, notes: nextNotes } }
+      : { sourcePayload: { ...payload, notes: nextNotes } }),
+  }, { id: `eq.${leadId}` }));
+
+  return created;
+}
+
+export async function listLeadNotes(leadId: string): Promise<LeadNote[]> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load lead notes.");
+
+  try {
+    const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: "*",
+        lead_id: `eq.${leadId}`,
+        order: "created_at.desc",
+        limit: "20",
+      }),
+    );
+    return rows.map(normalizeLeadNote);
+  } catch (error) {
+    if (isSchemaCacheColumnError(error)) {
+      try {
+        const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
+          supabaseRequest<any[]>(table, undefined, {
+            select: "*",
+            leadId: `eq.${leadId}`,
+            order: "createdAt.desc",
+            limit: "20",
+          }),
+        );
+        return rows.map(normalizeLeadNote);
+      } catch {
+        return listLeadNotesFromPayload(leadId);
+      }
+    }
+    if (isMissingTableError(error)) {
+      return listLeadNotesFromPayload(leadId);
+    }
+    throw error;
+  }
+}
+
+export async function createLeadNote(leadId: string, content: string, channel: string): Promise<LeadNote> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save lead notes.");
+
+  const cleanContent = content.trim();
+  if (!cleanContent) throw new Error("Note content is required.");
+
+  try {
+    const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<any[]>(table, {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify([
+          {
+            lead_id: leadId,
+            content: cleanContent,
+            channel,
+            created_at: new Date().toISOString(),
+          },
+        ]),
+      }),
+    );
+
+    if (!rows[0]) {
+      throw new Error("Failed to create note.");
+    }
+
+    return normalizeLeadNote(rows[0]);
+  } catch (error) {
+    if (isSchemaCacheColumnError(error)) {
+      try {
+        const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
+          supabaseRequest<any[]>(table, {
+            method: "POST",
+            headers: { Prefer: "return=representation" },
+            body: JSON.stringify([
+              {
+                leadId,
+                content: cleanContent,
+                channel,
+                createdAt: new Date().toISOString(),
+              },
+            ]),
+          }),
+        );
+        if (rows[0]) return normalizeLeadNote(rows[0]);
+      } catch {
+        return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel });
+      }
+      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel });
+    }
+    if (isMissingTableError(error)) {
+      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel });
+    }
+    throw error;
+  }
 }
