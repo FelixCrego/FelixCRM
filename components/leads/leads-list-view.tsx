@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Search, SlidersHorizontal } from "lucide-react";
 import type { Lead } from "@/lib/types";
+import { AddLeadModal } from "@/components/leads/add-lead-modal";
 
 type LeadsListViewProps = {
   leads?: Lead[] | null;
@@ -98,10 +99,15 @@ function safelyBucketLastContact(updatedAt?: string | null) {
 
 export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
   const router = useRouter();
+  const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newLead, setNewLead] = useState({ businessName: "", phone: "", website: "" });
+  const [addLeadError, setAddLeadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
+  const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
 
   const normalizedServerLeads = useMemo(() => ((leads || []).map(normalizeLead).filter((lead): lead is Lead => Boolean(lead))), [leads]);
 
@@ -121,10 +127,47 @@ export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
   }, []);
 
   const displayLeads = useMemo(() => {
+    if (createdLeads.length > 0) return [...createdLeads, ...normalizedServerLeads];
     if (normalizedServerLeads.length > 0) return normalizedServerLeads;
     if (storageLeads.length > 0) return storageLeads;
     return [];
-  }, [normalizedServerLeads, storageLeads]);
+  }, [createdLeads, normalizedServerLeads, storageLeads]);
+
+  async function handleAddLead() {
+    setAddLeadError(null);
+    if (!newLead.businessName.trim()) {
+      setAddLeadError("Business name is required.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessName: newLead.businessName.trim(),
+          phone: newLead.phone.trim() || null,
+          websiteUrl: newLead.website.trim() || null,
+        }),
+      });
+
+      const payload = (await response.json()) as { lead?: Lead; error?: string };
+
+      if (!response.ok || !payload.lead) {
+        throw new Error(payload.error || "Unable to add lead.");
+      }
+
+      setCreatedLeads((prev) => [payload.lead as Lead, ...prev.filter((lead) => lead.id !== payload.lead?.id)]);
+      setNewLead({ businessName: "", phone: "", website: "" });
+      setIsAddLeadOpen(false);
+      router.refresh();
+    } catch (error) {
+      setAddLeadError(error instanceof Error ? error.message : "Unable to add lead.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
 
   const filteredLeads = useMemo(() => {
     return (displayLeads || []).filter((lead) => {
@@ -139,9 +182,36 @@ export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
   return (
     <div className="space-y-4">
       <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-        <h1 className="text-2xl font-semibold text-zinc-100">My Leads</h1>
-        <p className="mt-1 text-sm text-zinc-400">Claimed territory ready for live outreach and rapid deployment closes.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-zinc-100">My Leads</h1>
+            <p className="mt-1 text-sm text-zinc-400">Claimed territory ready for live outreach and rapid deployment closes.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setAddLeadError(null);
+              setIsAddLeadOpen(true);
+            }}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:border-zinc-500"
+          >
+            + Add Lead
+          </button>
+        </div>
       </header>
+
+      <AddLeadModal
+        isOpen={isAddLeadOpen}
+        isSubmitting={isSubmitting}
+        formData={newLead}
+        errorMessage={addLeadError}
+        onChange={(field, value) => setNewLead((prev) => ({ ...prev, [field]: value }))}
+        onClose={() => {
+          if (isSubmitting) return;
+          setIsAddLeadOpen(false);
+        }}
+        onSubmit={handleAddLead}
+      />
 
 
       {errorMessage && (

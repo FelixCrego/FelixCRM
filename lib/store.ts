@@ -245,6 +245,59 @@ export async function listClaimableLeads(limit = 100) {
   return leads.map(leadToMemory);
 }
 
+export async function createLead(ownerId: string, lead: { businessName: string; phone?: string | null; websiteUrl?: string | null }) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
+
+  const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
+  const payload = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? {
+          business_name: lead.businessName,
+          city: "Unknown",
+          business_type: "Manual",
+          phone: lead.phone ?? null,
+          website_url: lead.websiteUrl ?? null,
+          normalized_name: lead.businessName.toLowerCase(),
+          normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
+          normalized_domain: domain.toLowerCase(),
+          dedupe_key: dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain),
+          status: "NEW",
+          site_status: "UNBUILT",
+          owner_id: ownerId,
+          source_payload: {
+            socialLinks: [],
+            aiResearchSummary: null,
+            sourceQuery: "manual_entry",
+          },
+        }
+      : {
+          businessName: lead.businessName,
+          city: "Unknown",
+          businessType: "Manual",
+          phone: lead.phone ?? null,
+          websiteUrl: lead.websiteUrl ?? null,
+          normalizedName: lead.businessName.toLowerCase(),
+          normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
+          normalizedDomain: domain.toLowerCase(),
+          dedupeKey: dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain),
+          status: "NEW",
+          siteStatus: "UNBUILT",
+          ownerId,
+          sourcePayload: {
+            socialLinks: [],
+            aiResearchSummary: null,
+            sourceQuery: "manual_entry",
+          },
+        }),
+  }));
+
+  const created = payload[0];
+  if (!created) throw new Error("Lead was not returned after insert.");
+  return leadToMemory(created);
+}
+
 export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
