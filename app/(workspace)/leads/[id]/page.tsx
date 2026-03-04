@@ -163,7 +163,7 @@ export default function LeadExecutionPage() {
   const [omniTab, setOmniTab] = useState<OmniTab>("Notes");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
 
-  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, startOutboundCall, endActiveCall } = useAmazonConnect();
+  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
 
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
@@ -307,12 +307,27 @@ export default function LeadExecutionPage() {
 
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
 
-  const endpoint = useMemo(
-    () => ({
-      createContact: ({ endpoint: nextNumber }: { endpoint: string }) => startOutboundCall(nextNumber),
-    }),
-    [startOutboundCall],
-  );
+  const handleCall = () => {
+    if (typeof window === "undefined" || !("connect" in window) || !window.connect) return;
+
+    const sourceNumber = dialNumber || leadPhone;
+    const digitsOnly = sourceNumber.replace(/\D/g, "");
+    if (!digitsOnly) return;
+
+    const formattedNumber = digitsOnly.startsWith("1") ? `+${digitsOnly}` : `+1${digitsOnly}`;
+
+    window.connect.agent(function (agent) {
+      const endpoint = window.connect.Endpoint.byPhoneNumber(formattedNumber);
+      agent.connect(endpoint, {
+        success: function () {
+          console.log("Call initiated successfully to", formattedNumber);
+        },
+        failure: function (err: unknown) {
+          console.error("Call failed to initiate:", err);
+        },
+      });
+    });
+  };
 
   const softphoneStatusLabel =
     connectionStatus === "loading"
@@ -488,7 +503,7 @@ export default function LeadExecutionPage() {
                 </button>
               ) : (
                 <button
-                  onClick={() => endpoint.createContact({ endpoint: dialNumber || leadPhone })}
+                  onClick={handleCall}
                   disabled={!canStartCall}
                   className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300"
                 >
