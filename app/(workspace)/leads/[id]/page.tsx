@@ -524,6 +524,15 @@ export default function LeadExecutionPage() {
 
   const leadEmail = lead?.email || "No email on file";
   const leadLocation = lead?.city || "Unknown location";
+  const filteredNotes = notes.filter((note) => {
+    const type = (note.activity_type || "NOTE").toUpperCase();
+    if (activeTab.toUpperCase() === "NOTES") {
+      return type === "NOTE" || type === "CALL";
+    }
+    return type === activeTab.toUpperCase();
+  });
+
+  const getNoteCreatedAt = (note: LeadNoteRecord) => note.created_at || note.createdAt || new Date().toISOString();
 
   return (
     <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
@@ -704,77 +713,78 @@ export default function LeadExecutionPage() {
             </div>
 
             <div className="space-y-2">
-              {notes
-                .filter((note) => {
-                  const noteType = (note.activity_type || note.activityType || "NOTE").toUpperCase();
-                  const hasAwsContactId = Boolean(note.aws_contact_id || note.contact_id || note.contactId);
+              {filteredNotes.map((note) => {
+                const isCall = note.activity_type === "CALL" || note.aws_contact_id;
+                const createdAt = getNoteCreatedAt(note);
 
-                  if (activeTab === "NOTES") {
-                    return noteType === "NOTES" || noteType === "CALL" || hasAwsContactId;
-                  }
-
-                  return noteType === activeTab.toUpperCase();
-                })
-                .map((note) => {
-                  const awsContactId = note.aws_contact_id || note.contact_id || note.contactId;
-                  const noteType = (note.activity_type || note.activityType || "NOTE").toUpperCase();
-                  const isCall = noteType === "CALL" || Boolean(awsContactId);
-                  const createdAt = note.createdAt || note.created_at || new Date().toISOString();
-
-                  if (isCall) {
-                    return (
-                      <div key={note.id} className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-sm">
-                        <div className="mb-2 flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="rounded-md bg-indigo-500/10 px-2 py-1 text-xs font-bold text-indigo-400">OUTBOUND CALL</span>
-                            <span className="text-xs text-zinc-500">{new Date(createdAt).toLocaleString()}</span>
-                          </div>
-                          {awsContactId ? (
-                            <span className="max-w-[120px] truncate font-mono text-xs text-zinc-500" title={awsContactId}>
-                              ID: {awsContactId.substring(0, 8)}...
-                            </span>
-                          ) : null}
+                if (isCall) {
+                  return (
+                    <div key={note.id} className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900 p-4 shadow-md">
+                      <div className="mb-3 flex items-center justify-between border-b border-zinc-800/80 pb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="rounded bg-indigo-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo-400">Outbound Call</span>
+                          <span className="text-xs text-zinc-500">{new Date(createdAt).toLocaleString()}</span>
                         </div>
-
-                        <p className="mb-3 text-sm text-zinc-300">
-                          <span className="font-semibold text-zinc-400">Rep Note:</span> {note.content}
-                        </p>
-
-                        {awsContactId ? (
-                          <div className="mt-2 flex h-10 w-full items-center gap-3 rounded border border-zinc-800 bg-zinc-950 px-3">
-                            <button className="text-sm font-medium text-zinc-400 transition-colors hover:text-white">▶ Play</button>
-                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                              <div className="h-full w-0 bg-indigo-500" />
-                            </div>
-                            <span className="truncate text-xs text-zinc-500">AI Processing...</span>
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-xs italic text-amber-500/80">No audio linked to this call.</p>
+                        {note.aws_contact_id && (
+                          <span className="text-[10px] font-mono text-zinc-600" title={note.aws_contact_id}>
+                            ID: {note.aws_contact_id.substring(0, 8)}...
+                          </span>
                         )}
                       </div>
-                    );
-                  }
 
-                  return (
-                    <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
-                      <p className="text-xs uppercase tracking-wide text-zinc-500">
-                        {new Date(createdAt).toLocaleString()} • {(note.activity_type || note.activityType || note.channel).toUpperCase()}
+                      <p className="mb-4 text-sm leading-relaxed text-zinc-300">
+                        <span className="mr-2 font-semibold text-zinc-500">Disposition:</span>
+                        {note.content}
                       </p>
-                      <p className="mt-1">{note.content}</p>
+
+                      {note.aws_contact_id ? (
+                        <div className="space-y-4 rounded-lg border border-zinc-800/50 bg-zinc-950/80 p-4">
+                          <div className="flex h-10 w-full items-center gap-3 rounded border border-zinc-700/50 bg-zinc-900 px-3">
+                            <button className="flex items-center gap-1 text-xs font-semibold text-zinc-400 transition-colors hover:text-indigo-400">
+                              ▶ Play
+                            </button>
+                            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
+                              <div className="h-full w-0 bg-indigo-500" />
+                            </div>
+                            <span className="text-[10px] text-zinc-500">Processing...</span>
+                          </div>
+
+                          <div>
+                            <h4 className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">AI Call Summary</h4>
+                            <p className="border-l-2 border-indigo-500/30 pl-2.5 text-xs italic leading-relaxed text-zinc-400">
+                              AWS Contact Lens is analyzing this recording. Summary and sentiment will appear here shortly...
+                            </p>
+                          </div>
+
+                          <div>
+                            <h4 className="mb-1.5 mt-4 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Transcript snippet</h4>
+                            <div className="space-y-1.5 rounded border border-zinc-800/30 bg-zinc-900/50 p-2.5 text-xs text-zinc-500">
+                              <p>
+                                <span className="font-medium text-indigo-400">Rep:</span> [Audio processing...]
+                              </p>
+                              <p>
+                                <span className="font-medium text-emerald-500">Lead:</span> [Audio processing...]
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs italic text-amber-500/80">No AWS audio linked to this call.</p>
+                      )}
                     </div>
                   );
-                })}
-              {!notesLoading &&
-              notes.filter((note) => {
-                const noteType = (note.activity_type || note.activityType || "NOTE").toUpperCase();
-                const hasAwsContactId = Boolean(note.aws_contact_id || note.contact_id || note.contactId);
-
-                if (activeTab === "NOTES") {
-                  return noteType === "NOTES" || noteType === "CALL" || hasAwsContactId;
                 }
 
-                return noteType === activeTab.toUpperCase();
-              }).length === 0 ? (
+                return (
+                  <div key={note.id} className="mb-4 rounded-lg border border-zinc-800/50 bg-zinc-900/40 p-3">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                      {note.activity_type || "NOTE"} • {new Date(createdAt).toLocaleString()}
+                    </div>
+                    <p className="text-sm text-zinc-300">{note.content}</p>
+                  </div>
+                );
+              })}
+              {!notesLoading && filteredNotes.length === 0 ? (
                 <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No {activeTab.toLowerCase()} activity yet for this lead.</div>
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
