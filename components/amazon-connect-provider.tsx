@@ -57,7 +57,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   const router = useRouter();
   const pathname = usePathname();
   const ccpContainerRef = useRef<HTMLDivElement | null>(null);
-  const initializedRef = useRef(false);
+  const isInitialized = useRef(false);
   const activeContactRef = useRef<ConnectContact | null>(null);
   const [agent, setAgent] = useState<ConnectAgent | null>(null);
   const [callActive, setCallActive] = useState(false);
@@ -123,18 +123,24 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   }, [incomingCall.active, incomingCall.number, pathname]);
 
   const initializeStreams = useCallback(() => {
+    if (isInitialized.current) return;
+
     const windowWithConnect = window as AmazonConnectWindow;
     const ccpContainer = ccpContainerRef.current;
     if (!windowWithConnect.connect?.core?.initCCP || !ccpContainer) return;
 
     try {
+      isInitialized.current = true;
       setConnectionStatus("initializing");
       windowWithConnect.connect.core.initCCP(ccpContainer, {
         ccpUrl: CCP_URL,
         loginPopup: true,
-        softphone: { allowFramedSoftphone: true },
+        loginPopupAutoClose: true,
+        region: "us-west-2",
+        softphone: { allowFramedSoftphone: true, disableRingtone: false },
       });
     } catch {
+      isInitialized.current = false;
       setConnectionStatus("error");
       return;
     }
@@ -168,8 +174,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   }, []);
 
   useEffect(() => {
-    if (!scriptReady || initializedRef.current) return;
-    initializedRef.current = true;
+    if (!scriptReady) return;
     initializeStreams();
   }, [initializeStreams, scriptReady]);
 
