@@ -163,7 +163,7 @@ export default function LeadExecutionPage() {
   const [omniTab, setOmniTab] = useState<OmniTab>("Notes");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
 
-  const { callActive, callSeconds, startOutboundCall, endActiveCall } = useAmazonConnect();
+  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, startOutboundCall, endActiveCall } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
 
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
@@ -314,6 +314,28 @@ export default function LeadExecutionPage() {
     [startOutboundCall],
   );
 
+  const softphoneStatusLabel =
+    connectionStatus === "loading"
+      ? "Loading AWS Streams…"
+      : connectionStatus === "initializing"
+        ? "Initializing CCP…"
+        : connectionStatus === "error"
+          ? "CCP initialization failed"
+          : callStatus === "connecting"
+            ? "Connecting call…"
+            : callStatus === "connected"
+              ? `Live ${formattedTimer}`
+              : "Softphone ready";
+
+  const softphoneStatusTone =
+    connectionStatus === "error"
+      ? "text-rose-300"
+      : connectionStatus === "ready"
+        ? "text-emerald-300"
+        : "text-amber-300";
+
+  const canStartCall = ccpReady && connectionStatus === "ready" && callStatus !== "connecting";
+
   const leadTimeZone = "America/Los_Angeles";
   const repTimeZone = "America/New_York";
 
@@ -437,11 +459,11 @@ export default function LeadExecutionPage() {
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Amazon Connect • Softphone</h2>
-              <span className="text-xs text-zinc-400">{callActive ? `Live ${formattedTimer}` : "Ready"}</span>
+              <span className={`text-xs ${softphoneStatusTone}`}>{softphoneStatusLabel}</span>
             </div>
             <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
               <div className="flex items-center gap-2 text-sm text-zinc-300">
-                <span>Softphone connected •</span>
+                <span>{ccpReady ? "Softphone connected •" : "Softphone offline •"}</span>
                 <input
                   type="tel"
                   value={dialNumber}
@@ -467,24 +489,25 @@ export default function LeadExecutionPage() {
               ) : (
                 <button
                   onClick={() => endpoint.createContact({ endpoint: dialNumber || leadPhone })}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400"
+                  disabled={!canStartCall}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300"
                 >
-                  <Phone className="h-4 w-4" /> Call
+                  <Phone className="h-4 w-4" /> {callStatus === "connecting" ? "Connecting…" : "Call"}
                 </button>
               )}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Queue</p>
-                <p className="mt-1 font-semibold text-zinc-100">00:09</p>
+                <p className="mt-1 font-semibold text-zinc-100">{callStatus === "connecting" ? "Dialing…" : "—"}</p>
               </div>
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Call Timer</p>
-                <p className="mt-1 font-semibold text-zinc-100">02:14</p>
+                <p className="mt-1 font-semibold text-zinc-100">{callActive ? formattedTimer : "00:00"}</p>
               </div>
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Rep</p>
-                <p className="mt-1 font-semibold text-emerald-300">Online</p>
+                <p className={`mt-1 font-semibold ${ccpReady ? "text-emerald-300" : "text-zinc-400"}`}>{ccpReady ? "Online" : "Offline"}</p>
               </div>
             </div>
           </div>

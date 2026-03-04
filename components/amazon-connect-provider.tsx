@@ -38,6 +38,8 @@ type AmazonConnectContextValue = {
   callActive: boolean;
   callSeconds: number;
   ccpReady: boolean;
+  connectionStatus: "loading" | "initializing" | "ready" | "error";
+  callStatus: "idle" | "connecting" | "connected";
   startOutboundCall: (dialNumber: string) => void;
   endActiveCall: () => void;
 };
@@ -61,6 +63,8 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   const [callActive, setCallActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
   const [ccpReady, setCcpReady] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<"loading" | "initializing" | "ready" | "error">("loading");
+  const [callStatus, setCallStatus] = useState<"idle" | "connecting" | "connected">("idle");
   const [incomingCall, setIncomingCall] = useState<IncomingCall>({ active: false, number: "", contactObj: null });
   const [scriptReady, setScriptReady] = useState(false);
 
@@ -79,10 +83,12 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     contact.onConnected?.(() => {
       setCallActive(true);
       setCallSeconds(0);
+      setCallStatus("connected");
     });
     contact.onEnded?.(() => {
       setCallActive(false);
       setCallSeconds(0);
+      setCallStatus("idle");
       activeContactRef.current = null;
     });
   }, []);
@@ -121,20 +127,28 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     const ccpContainer = ccpContainerRef.current;
     if (!windowWithConnect.connect?.core?.initCCP || !ccpContainer) return;
 
-    windowWithConnect.connect.core.initCCP(ccpContainer, {
-      ccpUrl: CCP_URL,
-      loginPopup: true,
-      softphone: { allowFramedSoftphone: true },
-    });
+    try {
+      setConnectionStatus("initializing");
+      windowWithConnect.connect.core.initCCP(ccpContainer, {
+        ccpUrl: CCP_URL,
+        loginPopup: true,
+        softphone: { allowFramedSoftphone: true },
+      });
+    } catch {
+      setConnectionStatus("error");
+      return;
+    }
 
     windowWithConnect.connect.agent?.((nextAgent) => {
       setAgent(nextAgent);
       setCcpReady(true);
+      setConnectionStatus("ready");
     });
 
     windowWithConnect.connect.contact?.((contact) => {
       attachContactListeners(contact);
       if (contact.isInbound?.()) {
+        setCallStatus("connecting");
         const incomingNumber = contact.getConnections?.()[0]?.getEndpoint?.().phoneNumber || "Unknown number";
         setIncomingCall({ active: true, number: incomingNumber, contactObj: contact });
         handleScreenPop(incomingNumber);
@@ -167,12 +181,14 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
 
       if (!endpoint) return;
 
+      setCallStatus("connecting");
       agent.connect?.(endpoint, {
         success: (contact) => {
           attachContactListeners(contact);
           setCallActive(true);
           setCallSeconds(0);
         },
+        failure: () => setCallStatus("idle"),
       });
     },
     [agent, attachContactListeners],
@@ -181,6 +197,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   const endActiveCall = useCallback(() => {
     activeContactRef.current?.getInitialConnection?.()?.destroy?.();
     setCallActive(false);
+    setCallStatus("idle");
   }, []);
 
   const acceptIncomingCall = useCallback(() => {
@@ -197,16 +214,23 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       callActive,
       callSeconds,
       ccpReady,
+      connectionStatus,
+      callStatus,
       startOutboundCall,
       endActiveCall,
     }),
-    [callActive, callSeconds, ccpReady, endActiveCall, startOutboundCall],
+    [callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, startOutboundCall],
   );
 
   return (
     <AmazonConnectContext.Provider value={contextValue}>
       <Script src={STREAMS_SCRIPT} strategy="lazyOnload" onLoad={handleScriptLoad} />
-      <div ref={ccpContainerRef} style={{ display: "none" }} aria-hidden="true" />
+      <div
+        id="ccp-container"
+        ref={ccpContainerRef}
+        style={{ position: "absolute", width: "1px", height: "1px", top: "-9999px", left: "-9999px" }}
+        aria-hidden="true"
+      />
       {incomingCall.active ? (
         <div className="fixed inset-x-0 top-4 z-[80] mx-auto w-[min(560px,calc(100%-2rem))] rounded-2xl border border-emerald-400/30 bg-zinc-900/95 p-4 shadow-2xl shadow-emerald-950/40 backdrop-blur">
           <p className="text-xs uppercase tracking-[0.18em] text-emerald-300">Incoming Call</p>
