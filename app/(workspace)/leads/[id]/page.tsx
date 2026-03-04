@@ -332,22 +332,31 @@ export default function LeadExecutionPage() {
 
   const handleAIDraft = async () => {
     setIsDrafting(true);
-    const aiPrompt = `Write a casual, highly-converting NLP sales ${activeTab} for ${leadName}. Focus on speed to lead and mobile booking gaps. Keep it under 3 sentences. No corporate jargon.`;
-    console.info("AI draft prompt", aiPrompt);
+    setNotesDraft("Drafting with Gemini...");
 
-    // TODO: Replace with actual fetch to /api/generate-copy
-    await new Promise<void>((resolve) => {
-      window.setTimeout(() => {
-        const simulatedAIResponse =
-          activeTab === "SMS"
-            ? `Hey ${leadName} team, noticed your mobile booking flow is a bit slow. We can route calls directly to a fast-loading booking page today. Open to a quick chat?`
-            : `Drafted ${activeTab} context...`;
+    try {
+      const response = await fetch("/api/generate-copy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadName,
+          activeTab,
+          researchContext: researchInsight || `Website: ${leadWebsite}`,
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as { draft?: string } | null;
 
-        setNotesDraft(simulatedAIResponse);
-        setIsDrafting(false);
-        resolve();
-      }, 1500);
-    });
+      if (response.ok && data?.draft) {
+        setNotesDraft(data.draft);
+      } else {
+        setNotesDraft("Error: Could not generate draft.");
+      }
+    } catch (error) {
+      console.error("Drafting failed", error);
+      setNotesDraft("Error connecting to Gemini AI.");
+    } finally {
+      setIsDrafting(false);
+    }
   };
 
   async function submitDisposition() {
