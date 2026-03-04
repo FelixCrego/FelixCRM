@@ -25,10 +25,10 @@ type LeadRecord = {
 
 type LeadNoteRecord = {
   id: string;
-  lead_id: string;
+  leadId: string;
   content: string;
   channel: string;
-  created_at: string;
+  createdAt: string;
 };
 
 type FetchStatus = "loading" | "ready" | "error";
@@ -193,24 +193,23 @@ export default function LeadExecutionPage() {
 
       setNotesLoading(true);
       setNotesError("");
-      const { data, error } = await supabase
-        .from<LeadNoteRecord>("lead_notes")
-        .select("id,lead_id,content,channel,created_at")
-        .eq("lead_id", leadId)
-        .order("created_at", { ascending: false })
-        .limit(10)
-        .maybeMany();
+      const response = await fetch(`/api/lead-notes?leadId=${encodeURIComponent(leadId)}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as { notes?: LeadNoteRecord[]; error?: string } | null;
 
       if (!alive) return;
 
-      if (error) {
+      if (!response.ok) {
         setNotes([]);
-        setNotesError(error.message);
+        setNotesError(payload?.error || "Unable to load notes.");
         setNotesLoading(false);
         return;
       }
 
-      setNotes(data || []);
+      setNotes(Array.isArray(payload?.notes) ? payload.notes : []);
       setNotesLoading(false);
     }
 
@@ -218,7 +217,7 @@ export default function LeadExecutionPage() {
     return () => {
       alive = false;
     };
-  }, [leadId, supabase]);
+  }, [leadId]);
 
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
@@ -298,24 +297,26 @@ export default function LeadExecutionPage() {
 
     setNotesLoading(true);
     setNotesError("");
-    const { data, error } = await supabase.from<LeadNoteRecord>("lead_notes").insert([
-      {
-        lead_id: leadId,
+    const response = await fetch("/api/lead-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
         content,
         channel: channel.toLowerCase(),
-        created_at: new Date().toISOString(),
-      } as Partial<LeadNoteRecord>,
-    ]);
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
 
-    if (error) {
-      setNotesError(error.message);
+    if (!response.ok) {
+      setNotesError(payload?.error || "Unable to save note.");
       setNotesLoading(false);
       return;
     }
 
     setNotesDraft("");
-    if (data?.[0]) {
-      setNotes((previous) => [data[0], ...previous].slice(0, 10));
+    if (payload?.note) {
+      setNotes((previous) => [payload.note as LeadNoteRecord, ...previous].slice(0, 20));
     }
     setNotesLoading(false);
   }
@@ -326,20 +327,24 @@ export default function LeadExecutionPage() {
     setSavingDisposition(true);
     const summary = dispositionSummary.trim();
     const content = summary || `Disposition recorded: ${selectedDisposition}`;
-    const { data, error } = await supabase.from<LeadNoteRecord>("lead_notes").insert([
-      {
-        lead_id: leadId,
+    const response = await fetch("/api/lead-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
         content,
         channel: `disposition:${selectedDisposition.toLowerCase().replace(/\s+/g, "_")}`,
-        created_at: new Date().toISOString(),
-      } as Partial<LeadNoteRecord>,
-    ]);
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
 
-    if (!error && data?.[0]) {
-      setNotes((previous) => [data[0], ...previous].slice(0, 10));
+    if (response.ok && payload?.note) {
+      setNotes((previous) => [payload.note as LeadNoteRecord, ...previous].slice(0, 20));
       setShowDisposition(false);
       setSelectedDisposition("");
       setDispositionSummary("");
+    } else {
+      setNotesError(payload?.error || "Unable to save disposition.");
     }
 
     setSavingDisposition(false);
@@ -641,8 +646,8 @@ export default function LeadExecutionPage() {
             <div className="space-y-2">
               {notes.map((note) => (
                 <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
-                  <p className="text-xs uppercase tracking-wide text-zinc-500">
-                    {new Date(note.created_at).toLocaleString()} • {note.channel}
+                    <p className="text-xs uppercase tracking-wide text-zinc-500">
+                    {new Date(note.createdAt).toLocaleString()} • {note.channel}
                   </p>
                   <p className="mt-1">{note.content}</p>
                 </div>
