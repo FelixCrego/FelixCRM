@@ -27,6 +27,7 @@ type LeadNoteRecord = {
   id: string;
   leadId: string;
   lead_id?: string;
+  aws_contact_id?: string | null;
   contactId?: string | null;
   contact_id?: string | null;
   content: string;
@@ -95,6 +96,7 @@ export default function LeadExecutionPage() {
   const [activeTab, setActiveTab] = useState<ActivityTab>("NOTES");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
+  const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
   const [currentContactId, setCurrentContactId] = useState<string | null>(null);
   const [selectedDisposition, setSelectedDisposition] = useState("");
   const [dispositionSummary, setDispositionSummary] = useState("");
@@ -392,6 +394,7 @@ export default function LeadExecutionPage() {
       setShowDisposition(false);
       setSelectedDisposition("");
       setDispositionSummary("");
+      setCcpStatus("READY");
     } else {
       setNotesError(payload?.error || "Unable to save disposition.");
     }
@@ -402,6 +405,7 @@ export default function LeadExecutionPage() {
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
 
   const handleCall = () => {
+    setCcpStatus("READY");
     type ConnectWindow = Window & {
       connect?: {
         agent?: (callback: (agent: { connect?: (endpoint: { phoneNumber: string }, callbacks?: { success?: () => void; failure?: (error: unknown) => void }) => void }) => void) => void;
@@ -433,8 +437,16 @@ export default function LeadExecutionPage() {
     });
   };
 
+  const handleEndCall = () => {
+    endActiveCall();
+    setCcpStatus("ACW");
+    setShowDisposition(true);
+  };
+
   const softphoneStatusLabel =
-    connectionStatus === "loading"
+    ccpStatus === "ACW"
+      ? "After Call Work"
+      : connectionStatus === "loading"
       ? "Loading AWS Streams…"
       : connectionStatus === "initializing"
         ? "Initializing CCP…"
@@ -646,7 +658,7 @@ export default function LeadExecutionPage() {
               </div>
               {callActive ? (
                 <button
-                  onClick={endActiveCall}
+                  onClick={handleEndCall}
                   className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-rose-950 hover:bg-rose-400"
                 >
                   <Phone className="h-4 w-4" /> End Call
@@ -693,16 +705,76 @@ export default function LeadExecutionPage() {
 
             <div className="space-y-2">
               {notes
-                .filter((note) => (note.activity_type || "NOTE") === activeTab.toUpperCase())
-                .map((note) => (
-                <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
-                    <p className="text-xs uppercase tracking-wide text-zinc-500">
-                    {new Date(note.createdAt).toLocaleString()} • {(note.activity_type || note.activityType || note.channel).toUpperCase()}
-                  </p>
-                  <p className="mt-1">{note.content}</p>
-                </div>
-              ))}
-              {!notesLoading && notes.filter((note) => (note.activity_type || "NOTE") === activeTab.toUpperCase()).length === 0 ? (
+                .filter((note) => {
+                  const noteType = (note.activity_type || note.activityType || "NOTE").toUpperCase();
+                  const hasAwsContactId = Boolean(note.aws_contact_id || note.contact_id || note.contactId);
+
+                  if (activeTab === "NOTES") {
+                    return noteType === "NOTES" || noteType === "CALL" || hasAwsContactId;
+                  }
+
+                  return noteType === activeTab.toUpperCase();
+                })
+                .map((note) => {
+                  const awsContactId = note.aws_contact_id || note.contact_id || note.contactId;
+                  const noteType = (note.activity_type || note.activityType || "NOTE").toUpperCase();
+                  const isCall = noteType === "CALL" || Boolean(awsContactId);
+                  const createdAt = note.createdAt || note.created_at || new Date().toISOString();
+
+                  if (isCall) {
+                    return (
+                      <div key={note.id} className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-sm">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-md bg-indigo-500/10 px-2 py-1 text-xs font-bold text-indigo-400">OUTBOUND CALL</span>
+                            <span className="text-xs text-zinc-500">{new Date(createdAt).toLocaleString()}</span>
+                          </div>
+                          {awsContactId ? (
+                            <span className="max-w-[120px] truncate font-mono text-xs text-zinc-500" title={awsContactId}>
+                              ID: {awsContactId.substring(0, 8)}...
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <p className="mb-3 text-sm text-zinc-300">
+                          <span className="font-semibold text-zinc-400">Rep Note:</span> {note.content}
+                        </p>
+
+                        {awsContactId ? (
+                          <div className="mt-2 flex h-10 w-full items-center gap-3 rounded border border-zinc-800 bg-zinc-950 px-3">
+                            <button className="text-sm font-medium text-zinc-400 transition-colors hover:text-white">▶ Play</button>
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-zinc-800">
+                              <div className="h-full w-0 bg-indigo-500" />
+                            </div>
+                            <span className="truncate text-xs text-zinc-500">AI Processing...</span>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs italic text-amber-500/80">No audio linked to this call.</p>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
+                      <p className="text-xs uppercase tracking-wide text-zinc-500">
+                        {new Date(createdAt).toLocaleString()} • {(note.activity_type || note.activityType || note.channel).toUpperCase()}
+                      </p>
+                      <p className="mt-1">{note.content}</p>
+                    </div>
+                  );
+                })}
+              {!notesLoading &&
+              notes.filter((note) => {
+                const noteType = (note.activity_type || note.activityType || "NOTE").toUpperCase();
+                const hasAwsContactId = Boolean(note.aws_contact_id || note.contact_id || note.contactId);
+
+                if (activeTab === "NOTES") {
+                  return noteType === "NOTES" || noteType === "CALL" || hasAwsContactId;
+                }
+
+                return noteType === activeTab.toUpperCase();
+              }).length === 0 ? (
                 <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No {activeTab.toLowerCase()} activity yet for this lead.</div>
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
