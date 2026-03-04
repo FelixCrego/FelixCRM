@@ -42,16 +42,16 @@ const statusLabelMap: Record<(typeof statusOptions)[number], string> = {
 };
 
 const notesFeed = [
-  { from: "You", body: "Owner asked to prioritize speed and mobile-first booking UX.", at: "Today · 09:41" },
-  { from: "You", body: "Agreed to review sample Vercel preview after lunch.", at: "Today · 10:03" },
+  { from: "You", body: "Owner asked to prioritize speed and mobile-first booking UX.", at: "Today · 09:41", activity_type: "NOTES" },
+  { from: "You", body: "Agreed to review sample Vercel preview after lunch.", at: "Today · 10:03", activity_type: "NOTES" },
 ];
 
 const smsFeed = [
-  { from: "Lead", body: "Can you include online booking with reminders?", at: "Today · 10:17" },
-  { from: "You", body: "Absolutely. I can wire booking + confirmations in this sprint.", at: "Today · 10:19" },
+  { from: "Lead", body: "Can you include online booking with reminders?", at: "Today · 10:17", activity_type: "SMS" },
+  { from: "You", body: "Absolutely. I can wire booking + confirmations in this sprint.", at: "Today · 10:19", activity_type: "SMS" },
 ];
 
-const emailFeed = [{ from: "Lead", body: "Send me a preview and implementation timeline.", at: "Today · 10:31" }];
+const emailFeed = [{ from: "Lead", body: "Send me a preview and implementation timeline.", at: "Today · 10:31", activity_type: "EMAIL" }];
 
 const mockAnalysis =
   "Analyzed 14 Google Reviews and local SEO. Weakness: No mobile booking. Competitors rank higher for 'emergency repair'.";
@@ -93,13 +93,14 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [selectedSlot, setSelectedSlot] = useState("11:30 AM");
   const [isBookingLoading, setIsBookingLoading] = useState(false);
   const [meetLink, setMeetLink] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
 
   const siteUrl = useMemo(
     () => lead.deployedUrl ?? `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`,
     [lead.businessName, lead.deployedUrl],
   );
 
-  const commsFeed = commsTab === "SMS" ? smsFeed : commsTab === "EMAIL" ? emailFeed : notesFeed;
+  const commsFeed = [...notesFeed, ...smsFeed, ...emailFeed];
 
   const personalizedScript = `Hey ${lead.businessName}, I noticed from your Google Reviews that customers love your speed, but your current site makes it hard to book on mobile. I actually just built a faster, mobile-optimized site for you here: ${siteUrl}. Do you have 5 mins to check it out?`;
 
@@ -119,6 +120,19 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
       setMeetLink("https://meet.google.com/abc-defg-hij");
       setIsBookingLoading(false);
     }, 1400);
+  };
+
+  const handleAIDraft = () => {
+    const draft =
+      commsTab === "EMAIL"
+        ? `Subject: Quick preview for ${lead.businessName}
+
+Hey ${lead.businessName}, sharing a quick look at your updated site funnel and a rollout timeline. Are you free for a 10-minute walkthrough this week?`
+        : commsTab === "SMS"
+          ? `Hey ${lead.businessName} — I can ship mobile booking + reminders fast. Want me to send a preview today?`
+          : `Left a ${commsTab.toLowerCase()} update for ${lead.businessName}: focused on mobile booking speed and faster lead response.`;
+
+    setDraftText(draft);
   };
 
   return (
@@ -245,7 +259,9 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
           </div>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-            {commsFeed.map((message) => (
+            {commsFeed
+              .filter((message) => (message.activity_type || "NOTES") === commsTab.toUpperCase())
+              .map((message) => (
               <div
                 key={message.at + message.body}
                 className={`max-w-[90%] rounded-2xl border p-3 text-sm ${
@@ -264,11 +280,13 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
             <div className="rounded-lg border border-zinc-700 bg-zinc-950/90 p-2">
               <textarea
                 rows={2}
+                value={draftText}
+                onChange={(event) => setDraftText(event.target.value)}
                 placeholder={`Write ${commsTab === "EMAIL" ? "email" : commsTab === "SMS" ? "SMS" : "note"} update...`}
                 className="w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
               />
               <div className="mt-2 flex items-center justify-between">
-                <button className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
+                <button onClick={handleAIDraft} className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
                   <Sparkles className="h-3.5 w-3.5" /> AI draft
                 </button>
                 <button className="inline-flex items-center gap-2 rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-400">

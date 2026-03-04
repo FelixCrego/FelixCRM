@@ -486,13 +486,6 @@ export default function LeadExecutionPage() {
       }),
     [],
   );
-
-
-  const filteredNotes = notes.filter((note) => {
-    const noteActivity = (note.activity_type || note.activityType || note.channel || "").toUpperCase();
-    return noteActivity === activeTab.toUpperCase();
-  });
-
   if (status === "loading") return <LeadWorkspaceSkeleton />;
 
   if (!lead) return <LeadWorkspaceSkeleton />;
@@ -679,7 +672,9 @@ export default function LeadExecutionPage() {
             </div>
 
             <div className="space-y-2">
-              {filteredNotes.map((note) => (
+              {notes
+                .filter((note) => (note.activity_type || "NOTE") === activeTab.toUpperCase())
+                .map((note) => (
                 <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-300">
                     <p className="text-xs uppercase tracking-wide text-zinc-500">
                     {new Date(note.createdAt).toLocaleString()} • {(note.activity_type || note.activityType || note.channel).toUpperCase()}
@@ -687,7 +682,7 @@ export default function LeadExecutionPage() {
                   <p className="mt-1">{note.content}</p>
                 </div>
               ))}
-              {!notesLoading && filteredNotes.length === 0 ? (
+              {!notesLoading && notes.filter((note) => (note.activity_type || "NOTE") === activeTab.toUpperCase()).length === 0 ? (
                 <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No {activeTab.toLowerCase()} activity yet for this lead.</div>
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
