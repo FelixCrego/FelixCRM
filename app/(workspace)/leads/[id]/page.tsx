@@ -27,6 +27,8 @@ type LeadNoteRecord = {
   id: string;
   leadId: string;
   lead_id?: string;
+  contactId?: string | null;
+  contact_id?: string | null;
   content: string;
   channel: string;
   activity_type?: string;
@@ -93,6 +95,7 @@ export default function LeadExecutionPage() {
   const [activeTab, setActiveTab] = useState<ActivityTab>("NOTES");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
+  const [currentContactId, setCurrentContactId] = useState<string | null>(null);
   const [selectedDisposition, setSelectedDisposition] = useState("");
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
@@ -122,12 +125,18 @@ export default function LeadExecutionPage() {
   useEffect(() => {
     type ConnectWindow = Window & {
       connect?: {
-        contact?: (callback: (contact: { onEnded?: (callback: () => void) => void }) => void) => void;
+        contact?: (callback: (contact: { onConnected?: (callback: () => void) => void; onEnded?: (callback: () => void) => void; getContactId?: () => string }) => void) => void;
       };
     };
 
     const windowWithConnect = window as ConnectWindow;
     windowWithConnect.connect?.contact?.((contact) => {
+      contact.onConnected?.(() => {
+        const contactId = contact.getContactId?.() ?? null;
+        console.log("AWS Call Connected. Contact ID:", contactId);
+        setCurrentContactId(contactId);
+      });
+
       contact.onEnded?.(() => {
         setShowDisposition(true);
       });
@@ -308,6 +317,7 @@ export default function LeadExecutionPage() {
         content,
         channel: activeTab.toLowerCase(),
         activity_type: activeTab.toUpperCase(),
+        contact_id: currentContactId,
       },
     ]);
 
@@ -372,6 +382,7 @@ export default function LeadExecutionPage() {
         leadId,
         content,
         channel: `disposition:${selectedDisposition.toLowerCase().replace(/\s+/g, "_")}`,
+        contactId: currentContactId,
       }),
     });
     const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
