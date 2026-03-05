@@ -43,6 +43,80 @@ type ActivityTab = "NOTES" | "SMS" | "EMAIL";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
+const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
+  "206": { timeZone: "America/Los_Angeles", location: "Seattle, WA" },
+  "213": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
+  "305": { timeZone: "America/New_York", location: "Miami, FL" },
+  "312": { timeZone: "America/Chicago", location: "Chicago, IL" },
+  "323": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
+  "347": { timeZone: "America/New_York", location: "New York, NY" },
+  "404": { timeZone: "America/New_York", location: "Atlanta, GA" },
+  "415": { timeZone: "America/Los_Angeles", location: "San Francisco, CA" },
+  "469": { timeZone: "America/Chicago", location: "Dallas, TX" },
+  "512": { timeZone: "America/Chicago", location: "Austin, TX" },
+  "602": { timeZone: "America/Phoenix", location: "Phoenix, AZ" },
+  "646": { timeZone: "America/New_York", location: "New York, NY" },
+  "702": { timeZone: "America/Los_Angeles", location: "Las Vegas, NV" },
+  "713": { timeZone: "America/Chicago", location: "Houston, TX" },
+  "786": { timeZone: "America/New_York", location: "Miami, FL" },
+  "818": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
+  "917": { timeZone: "America/New_York", location: "New York, NY" },
+};
+
+const CITY_TIMEZONE_HINTS: Array<{ match: string; timeZone: string }> = [
+  { match: "new york", timeZone: "America/New_York" },
+  { match: "miami", timeZone: "America/New_York" },
+  { match: "atlanta", timeZone: "America/New_York" },
+  { match: "chicago", timeZone: "America/Chicago" },
+  { match: "dallas", timeZone: "America/Chicago" },
+  { match: "houston", timeZone: "America/Chicago" },
+  { match: "denver", timeZone: "America/Denver" },
+  { match: "phoenix", timeZone: "America/Phoenix" },
+  { match: "los angeles", timeZone: "America/Los_Angeles" },
+  { match: "san francisco", timeZone: "America/Los_Angeles" },
+  { match: "seattle", timeZone: "America/Los_Angeles" },
+];
+
+function inferLeadTimeZone(lead: LeadRecord | null): { timeZone: string; location: string; source: string } {
+  const phone = lead?.phone ?? "";
+  const digits = phone.replace(/\D/g, "");
+  const normalized = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  const areaCode = normalized.length >= 10 ? normalized.slice(0, 3) : "";
+
+  if (areaCode && PHONE_AREA_CODE_TIMEZONES[areaCode]) {
+    const areaMatch = PHONE_AREA_CODE_TIMEZONES[areaCode];
+    return { timeZone: areaMatch.timeZone, location: areaMatch.location, source: `phone area code (${areaCode})` };
+  }
+
+  const sourceWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "";
+  const lowerWebsite = sourceWebsite.toLowerCase();
+  if (lowerWebsite.endsWith(".co.uk") || lowerWebsite.includes(".co.uk/")) {
+    return { timeZone: "Europe/London", location: "United Kingdom", source: "website scrape domain" };
+  }
+
+  const city = (lead?.city || "").toLowerCase();
+  const cityMatch = CITY_TIMEZONE_HINTS.find((candidate) => city.includes(candidate.match));
+  if (cityMatch) {
+    return { timeZone: cityMatch.timeZone, location: lead?.city || "Lead city", source: "lead city" };
+  }
+
+  return { timeZone: "America/Los_Angeles", location: lead?.city || "Unknown location", source: "fallback" };
+}
+
+function toTwelveHourLabel(timeValue: string): string {
+  const [hoursRaw, minutesRaw] = timeValue.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return timeValue;
+  }
+
+  const period = hours >= 12 ? "PM" : "AM";
+  const normalizedHour = hours % 12 || 12;
+  return `${String(normalizedHour).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${period}`;
+}
+
 const FALLBACK_LEAD: LeadRecord = {
   id: "fallback-lead",
   business_name: "Demo Business",
@@ -107,6 +181,8 @@ export default function LeadExecutionPage() {
 
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
   const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
+  const [isCustomScheduling, setIsCustomScheduling] = useState(false);
+  const [customMeetingDateTime, setCustomMeetingDateTime] = useState("");
   const [meetingLoading, setMeetingLoading] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -263,7 +339,13 @@ export default function LeadExecutionPage() {
 
   async function copyInviteText() {
     if (!meetingLink) return;
-    const dayLabel = leadDayOptions.find((day) => day.value === selectedMeetingDay)?.label || selectedMeetingDay;
+    const dayLabel =
+      leadDayOptions.find((day) => day.value === selectedMeetingDay)?.label ||
+      new Date(`${selectedMeetingDay}T00:00:00`).toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+      });
     const inviteText = `Demo booked for ${leadName} on ${dayLabel} at ${selectedMeetingTime} (${leadTimeZone}). Join here: ${meetingLink}`;
 
     try {
@@ -470,8 +552,9 @@ export default function LeadExecutionPage() {
 
   const canStartCall = ccpReady && connectionStatus === "ready" && callStatus !== "connecting";
 
-  const leadTimeZone = "America/Los_Angeles";
-  const repTimeZone = "America/New_York";
+  const leadTimeMeta = useMemo(() => inferLeadTimeZone(lead), [lead]);
+  const leadTimeZone = leadTimeMeta.timeZone;
+  const repTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
 
   const leadDayOptions = useMemo(() => {
     const now = new Date();
@@ -507,7 +590,7 @@ export default function LeadExecutionPage() {
         timeZone: leadTimeZone,
         timeZoneName: "short",
       }),
-    [],
+    [leadTimeZone],
   );
 
   const repLocalTimeText = useMemo(
@@ -519,8 +602,34 @@ export default function LeadExecutionPage() {
         timeZone: repTimeZone,
         timeZoneName: "short",
       }),
-    [],
+    [repTimeZone],
   );
+
+  const selectedCustomLabel = useMemo(() => {
+    if (!customMeetingDateTime) return "";
+    const [dayValue, timeValue] = customMeetingDateTime.split("T");
+    if (!dayValue || !timeValue) return "";
+
+    const customDate = new Date(`${dayValue}T00:00:00`);
+    const dateLabel = customDate.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+
+    return `${dateLabel} • ${toTwelveHourLabel(timeValue)}`;
+  }, [customMeetingDateTime]);
+
+  const applyCustomSchedule = () => {
+    if (!customMeetingDateTime) return;
+    const [dayValue, timeValue] = customMeetingDateTime.split("T");
+    if (!dayValue || !timeValue) return;
+
+    setSelectedMeetingDay(dayValue);
+    setSelectedMeetingTime(toTwelveHourLabel(timeValue));
+    setMeetingLink("");
+    setIsCustomScheduling(false);
+  };
   if (status === "loading") return <LeadWorkspaceSkeleton />;
 
   if (!lead) return <LeadWorkspaceSkeleton />;
@@ -825,12 +934,45 @@ export default function LeadExecutionPage() {
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <h2 className="text-sm font-semibold">Smart Scheduling Hub</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">Smart Scheduling Hub</h2>
+              <button
+                type="button"
+                onClick={() => setIsCustomScheduling((previous) => !previous)}
+                className="rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:border-zinc-500"
+              >
+                {isCustomScheduling ? "Close Edit" : "Edit Date & Time"}
+              </button>
+            </div>
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-full border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
               <Globe className="h-3.5 w-3.5 text-zinc-500" />
-              <span>Lead Local Time: {leadLocalTimeText} • Los Angeles, CA</span>
+              <span>Lead Local Time: {leadLocalTimeText} • {leadTimeMeta.location}</span>
               <span className="text-zinc-500">(Your Time: {repLocalTimeText})</span>
             </div>
+            <p className="mt-2 text-[11px] text-zinc-500">Timezone auto-detected from {leadTimeMeta.source}.</p>
+
+            {isCustomScheduling ? (
+              <div className="mt-4 rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">Manual date &amp; time</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    value={customMeetingDateTime}
+                    onChange={(event) => setCustomMeetingDateTime(event.target.value)}
+                    className="h-9 rounded-md border border-indigo-400/30 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyCustomSchedule}
+                    disabled={!customMeetingDateTime}
+                    className="rounded-md bg-indigo-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    Apply
+                  </button>
+                </div>
+                {selectedCustomLabel ? <p className="mt-2 text-xs text-indigo-100">Selected: {selectedCustomLabel}</p> : null}
+              </div>
+            ) : null}
 
             <div className="mt-4">
               <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Select Day</p>
@@ -856,6 +998,11 @@ export default function LeadExecutionPage() {
                     </button>
                   );
                 })}
+                {selectedMeetingDay && !leadDayOptions.some((day) => day.value === selectedMeetingDay) ? (
+                  <span className="rounded-full border border-indigo-400/40 bg-indigo-500/15 px-3 py-2 text-xs font-medium text-indigo-200">
+                    Custom Day: {selectedMeetingDay}
+                  </span>
+                ) : null}
               </div>
             </div>
 
