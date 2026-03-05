@@ -21,6 +21,12 @@ type LeadRecord = {
   email?: string | null;
   deployed_url?: string | null;
   deployedUrl?: string | null;
+  source_payload?: {
+    aiResearchSummary?: string | null;
+  } | null;
+  sourcePayload?: {
+    aiResearchSummary?: string | null;
+  } | null;
 };
 
 type LeadNoteRecord = {
@@ -245,6 +251,8 @@ export default function LeadExecutionPage() {
 
         if (data) {
           setLead(data);
+          const existingResearch = data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? "";
+          setResearchInsight(existingResearch);
           const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
           if (
             resolvedStatus === "New" ||
@@ -326,11 +334,23 @@ export default function LeadExecutionPage() {
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
 
   async function runResearch() {
+    if (!leadId) return;
     setResearchLoading(true);
-    setResearchInsight("");
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    setResearchInsight("Analyzed 14 Google Reviews. Weakness: No mobile booking.");
-    setResearchLoading(false);
+    try {
+      const response = await fetch("/api/leads/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { summary?: string; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error || "Research failed.");
+      setResearchInsight(payload?.summary || "Research generated, but no summary text was returned.");
+    } catch {
+      setResearchInsight("Unable to run AI analysis right now. Please try again.");
+    } finally {
+      setResearchLoading(false);
+    }
   }
 
   async function generateMeetingLink() {
