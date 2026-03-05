@@ -112,6 +112,11 @@ export async function POST(req: Request) {
     } catch {
       payload = {};
     }
+  }
+
+  return null;
+}
+
 
     leadName = (typeof payload.leadName === "string" && payload.leadName.trim()) ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
