@@ -21,8 +21,9 @@ type GooglePlaceDetailsResponse = {
 
 const SCRAPE_FETCH_TIMEOUT_MS = 15000;
 const SCRAPE_RETRY_ATTEMPTS = 3;
-const MAX_AI_MICRO_QUERIES = 30;
-const MAX_RESULTS_PAGES_PER_QUERY = 3;
+const MAX_AI_MICRO_QUERIES = 12;
+const MAX_RESULTS_PAGES_PER_QUERY = 2;
+const MAX_PLACE_DETAILS_LOOKUPS_PER_RUN = 120;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -169,6 +170,8 @@ export type ScrapeDiagnostics = {
   textSearchErrorCount: number;
   detailsOkCount: number;
   detailsErrorCount: number;
+  detailsLookupCount: number;
+  stoppedEarly: boolean;
   skippedByRating: number;
   skippedByDedupe: number;
 };
@@ -209,6 +212,8 @@ export async function scrapeLeads(
     textSearchErrorCount: 0,
     detailsOkCount: 0,
     detailsErrorCount: 0,
+    detailsLookupCount: 0,
+    stoppedEarly: false,
     skippedByRating: 0,
     skippedByDedupe: 0,
   };
@@ -246,11 +251,17 @@ export async function scrapeLeads(
       if (!results.length) break;
 
       for (const place of results) {
+        if (diagnostics.detailsLookupCount >= MAX_PLACE_DETAILS_LOOKUPS_PER_RUN) {
+          diagnostics.stoppedEarly = true;
+          break;
+        }
+
         if (!place.place_id || seenPlaceIds.has(place.place_id)) {
           diagnostics.skippedByDedupe += 1;
           continue;
         }
         seenPlaceIds.add(place.place_id);
+        diagnostics.detailsLookupCount += 1;
 
         const detailsParams = new URLSearchParams({
           place_id: place.place_id,
@@ -313,6 +324,7 @@ export async function scrapeLeads(
       }
 
       const nextPageToken = searchJson.next_page_token;
+      if (diagnostics.stoppedEarly) break;
       if (nextPageToken && results.length === 20) {
         await sleep(4000);
         params = new URLSearchParams({ pagetoken: nextPageToken, key: mapsApiKey });
@@ -320,6 +332,8 @@ export async function scrapeLeads(
         break;
       }
     }
+
+    if (diagnostics.stoppedEarly) break;
   }
 
   return { leads, diagnostics };

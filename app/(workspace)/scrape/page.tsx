@@ -100,8 +100,20 @@ export default function ScrapePage() {
         body: JSON.stringify({ city, businessType: niche, minRating, includeNoWebsiteOnly }),
       });
 
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Scrape failed.");
+      const responseText = await response.text();
+      let payload: Record<string, unknown> = {};
+      if (responseText) {
+        try {
+          payload = JSON.parse(responseText) as Record<string, unknown>;
+        } catch {
+          payload = {};
+        }
+      }
+
+      if (!response.ok) {
+        const errorMessage = typeof payload.error === "string" ? payload.error : `Scrape failed with status ${response.status}.`;
+        throw new Error(errorMessage);
+      }
 
       setStats({ fetched: Number(payload.fetched ?? 0), inserted: Number(payload.inserted ?? 0) });
       await refreshLeads();
