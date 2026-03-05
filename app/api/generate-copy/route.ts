@@ -2,7 +2,13 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
 const apiKey = process.env.GEMINI_API_KEY;
-const GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"] as const;
+
+const GEMINI_MODELS = [
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+] as const;
 
 type PlaybookPayload = {
   scripts: string[];
@@ -114,7 +120,13 @@ function buildFallbackPlaybook(leadName: string, researchContext?: string): Play
 async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt: string) {
   const errors: string[] = [];
 
-  for (const modelName of GEMINI_MODELS) {
+  const configuredModels = process.env.GEMINI_MODELS
+    ?.split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  const modelsToTry = configuredModels?.length ? configuredModels : [...GEMINI_MODELS];
+
+  for (const modelName of modelsToTry) {
     try {
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
