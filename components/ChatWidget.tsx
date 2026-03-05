@@ -34,16 +34,20 @@ export default function ChatWidget() {
   const [activeUserId, setActiveUserId] = useState<string>("");
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messageRequestIdRef = useRef(0);
 
   const loadMessages = useCallback(async (peerId?: string | null) => {
+    const requestId = ++messageRequestIdRef.current;
     const params = new URLSearchParams();
     if (peerId) params.set("peerId", peerId);
 
     const endpoint = params.toString() ? `/api/chat/messages?${params.toString()}` : "/api/chat/messages";
     const response = await fetch(endpoint, { cache: "no-store" });
-    if (!response.ok) return;
+    if (!response.ok || requestId !== messageRequestIdRef.current) return;
 
     const payload = (await response.json()) as { messages?: ChatMessage[]; userId?: string };
+    if (requestId !== messageRequestIdRef.current) return;
+
     setMessages(payload.messages ?? []);
     if (payload.userId) setActiveUserId(payload.userId);
   }, []);
@@ -90,12 +94,13 @@ export default function ChatWidget() {
     e.preventDefault();
     if (!inputValue.trim() || isSending) return;
 
+    const sendPeerId = selectedPeerId;
     const optimisticId = `temp-${Date.now()}`;
     const optimisticMessage: ChatMessage = {
       id: optimisticId,
       senderId: activeUserId,
       senderName: "Me",
-      recipientId: selectedPeerId,
+      recipientId: sendPeerId,
       content: inputValue,
       createdAt: new Date().toISOString(),
     };
@@ -108,7 +113,7 @@ export default function ChatWidget() {
     const response = await fetch("/api/chat/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: outboundContent, recipientId: selectedPeerId }),
+      body: JSON.stringify({ content: outboundContent, recipientId: sendPeerId }),
     });
 
     setIsSending(false);
@@ -118,7 +123,7 @@ export default function ChatWidget() {
       return;
     }
 
-    await loadMessages(selectedPeerId);
+    await loadMessages(sendPeerId);
   };
 
   const selectedPeer = users.find((user) => user.id === selectedPeerId) ?? null;
