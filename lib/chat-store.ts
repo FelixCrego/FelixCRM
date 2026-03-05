@@ -251,26 +251,32 @@ function isMessageVisibleToUser(message: ChatMessage, userId: string, peerId?: s
 }
 
 export async function listChatMessages(userId: string, limit?: number, peerId?: string | null): Promise<ChatMessage[]> {
-  if (!hasDb) {
+  const getMemoryMessages = () => {
     const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
     if (!limit || limit <= 0) return filtered;
     return filtered.slice(-limit);
+  };
+
+  if (!hasDb) return getMemoryMessages();
+
+  try {
+    const rows = await withTableFallback<StoredMessage[]>("chat-messages", CHAT_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<StoredMessage[]>(table, undefined, {
+        select: "*",
+      }),
+    );
+
+    const normalized = rows
+      .map(mapStoredMessage)
+      .filter((message): message is ChatMessage => Boolean(message))
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const filtered = normalized.filter((message) => isMessageVisibleToUser(message, userId, peerId));
+    if (!limit || limit <= 0) return filtered;
+    return filtered.slice(-limit);
+  } catch {
+    return getMemoryMessages();
   }
-
-  const rows = await withTableFallback<StoredMessage[]>("chat-messages", CHAT_TABLE_CANDIDATES, (table) =>
-    supabaseRequest<StoredMessage[]>(table, undefined, {
-      select: "*",
-    }),
-  );
-
-  const normalized = rows
-    .map(mapStoredMessage)
-    .filter((message): message is ChatMessage => Boolean(message))
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-  const filtered = normalized.filter((message) => isMessageVisibleToUser(message, userId, peerId));
-  if (!limit || limit <= 0) return filtered;
-  return filtered.slice(-limit);
 }
 
 export async function createChatMessage(userId: string, content: string, recipientId?: string | null) {
