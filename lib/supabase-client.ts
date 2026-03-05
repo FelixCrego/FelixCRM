@@ -19,7 +19,7 @@ class SupabaseQueryBuilder<TRecord> {
     private readonly columns: string,
     private readonly request: <TPayload>(
       table: string,
-      method: "GET" | "POST",
+      method: "GET" | "POST" | "PATCH",
       query: URLSearchParams,
       body?: unknown,
     ) => Promise<SupabaseResponse<TPayload>>,
@@ -77,7 +77,7 @@ class SupabaseClient {
 
   private async request<TPayload>(
     table: string,
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH",
     query: URLSearchParams,
     body?: unknown,
   ): Promise<SupabaseResponse<TPayload>> {
@@ -99,7 +99,7 @@ class SupabaseClient {
           Authorization: `Bearer ${this.key}`,
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...(method === "POST" ? { Prefer: "return=representation" } : {}),
+          ...((method === "POST" || method == "PATCH") ? { Prefer: "return=representation" } : {}),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
@@ -137,6 +137,14 @@ class SupabaseClient {
         query.set("select", "*");
         return this.request<TRecord[]>(table, "POST", query, records);
       },
+      update: (record: Partial<TRecord>) => ({
+        eq: async (column: string, value: string) => {
+          const query = new URLSearchParams();
+          query.set("select", "*");
+          query.set(column, `eq.${value}`);
+          return this.request<TRecord[]>(table, "PATCH", query, record);
+        },
+      }),
     };
   }
 }
