@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Check, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { createClientComponentClient } from "@/lib/supabase-client";
 
@@ -236,6 +236,7 @@ export default function LeadExecutionPage() {
 
   const [status, setStatus] = useState<FetchStatus>("loading");
   const [lead, setLead] = useState<LeadRecord | null>(null);
+  const [orderedLeadIds, setOrderedLeadIds] = useState<string[]>([]);
 
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
@@ -336,7 +337,9 @@ export default function LeadExecutionPage() {
           throw new Error(payload?.error || "Unable to load lead.");
         }
 
-        const data = Array.isArray(payload?.leads) ? payload.leads.find((candidate) => candidate?.id === leadId) ?? null : null;
+        const leadList = Array.isArray(payload?.leads) ? payload.leads : [];
+        setOrderedLeadIds(leadList.map((candidate) => candidate.id).filter(Boolean));
+        const data = leadList.find((candidate) => candidate?.id === leadId) ?? null;
 
         if (!alive) return;
 
@@ -1174,6 +1177,14 @@ export default function LeadExecutionPage() {
   });
 
   const getNoteCreatedAt = (note: LeadNoteRecord) => note.created_at || note.createdAt || new Date().toISOString();
+  const currentLeadIndex = orderedLeadIds.findIndex((id) => id === leadId);
+  const previousLeadId = currentLeadIndex > 0 ? orderedLeadIds[currentLeadIndex - 1] : "";
+  const nextLeadId = currentLeadIndex >= 0 && currentLeadIndex < orderedLeadIds.length - 1 ? orderedLeadIds[currentLeadIndex + 1] : "";
+
+  function goToAdjacentLead(targetLeadId: string) {
+    if (!targetLeadId) return;
+    router.push(`/leads/${targetLeadId}`);
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
@@ -1250,6 +1261,29 @@ export default function LeadExecutionPage() {
             >
               {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
             </button>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => goToAdjacentLead(previousLeadId)}
+                disabled={!previousLeadId}
+                className="inline-flex items-center justify-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => goToAdjacentLead(nextLeadId)}
+                disabled={!nextLeadId}
+                className="inline-flex items-center justify-center gap-1 rounded-lg border border-indigo-400/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-100 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] text-zinc-500">
+              {currentLeadIndex >= 0 ? `Lead ${currentLeadIndex + 1} of ${orderedLeadIds.length}` : "Lead order unavailable"}
+            </p>
             {closeDealError ? <p className="mt-2 text-xs text-rose-300">{closeDealError}</p> : null}
           </div>
 
