@@ -101,14 +101,28 @@ export async function POST(req: Request) {
   let leadName = "this business";
   let activeTab = "";
   let researchContext = "";
+  let rawBody = "";
 
   try {
-    const payload = await req.json();
-    leadName = payload?.leadName || "this business";
-    activeTab = payload?.activeTab || "";
-    researchContext = payload?.researchContext || "";
+    rawBody = await req.text();
 
-    if (!leadName || !activeTab) {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+    } catch {
+      payload = {};
+    }
+  }
+
+  return null;
+}
+
+
+    leadName = (typeof payload.leadName === "string" && payload.leadName.trim()) ? payload.leadName : "this business";
+    activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
+    researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
+
+    if (!activeTab) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
@@ -200,7 +214,7 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
   } catch (error) {
     console.error("Gemini Draft Error:", error);
 
-    if (activeTab === "PLAYBOOK") {
+    if (activeTab === "PLAYBOOK" || rawBody.toUpperCase().includes("PLAYBOOK")) {
       return NextResponse.json({
         playbook: buildFallbackPlaybook(leadName, researchContext),
         warning: "Unexpected AI error. Showing fallback playbook.",

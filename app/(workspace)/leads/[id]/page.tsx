@@ -443,98 +443,6 @@ export default function LeadExecutionPage() {
     setAiPlaybook(fallbackPlaybook);
   }, [fallbackPlaybook]);
 
-  async function persistContacts(nextContacts: LeadContactRecord[]) {
-    if (!leadId) {
-      setLeadContacts(nextContacts);
-      return true;
-    }
-
-    setSavingContacts(true);
-    setContactsError("");
-    try {
-      const existingPayload = (lead?.source_payload ?? lead?.sourcePayload ?? {}) as Record<string, unknown>;
-      const payload = { ...existingPayload, contacts: nextContacts };
-      const { error } = await supabase
-        .from("leads")
-        .update({ source_payload: payload })
-        .eq("id", leadId);
-
-      if (error) throw error;
-
-      setLeadContacts(nextContacts);
-      setLead((previous) => {
-        if (!previous) return previous;
-        return {
-          ...previous,
-          source_payload: {
-            ...(previous.source_payload ?? previous.sourcePayload ?? {}),
-            contacts: nextContacts,
-          },
-          sourcePayload: {
-            ...(previous.sourcePayload ?? previous.source_payload ?? {}),
-            contacts: nextContacts,
-          },
-        };
-      });
-      return true;
-    } catch {
-      setContactsError("Unable to save contact updates right now.");
-      return false;
-    } finally {
-      setSavingContacts(false);
-    }
-  }
-
-  const handleLeadContactAdd = async () => {
-    const name = newContactName.trim();
-    const role = newContactRole.trim();
-    const phone = newContactPhone.trim();
-    const email = newContactEmail.trim();
-
-    if (!name && !phone && !email) {
-      setContactsError("Add at least a name, phone, or email for the contact.");
-      return;
-    }
-
-    const created: LeadContactRecord = {
-      id: crypto.randomUUID(),
-      name: name || "Untitled Contact",
-      role,
-      phones: phone ? [phone] : [],
-      emails: email ? [email] : [],
-    };
-
-    const success = await persistContacts([...leadContacts, created]);
-    if (!success) return;
-
-    setNewContactName("");
-    setNewContactRole("");
-    setNewContactPhone("");
-    setNewContactEmail("");
-  };
-
-  const handleLeadContactAddPhone = async (contactId: string, phone: string) => {
-    const cleanPhone = phone.trim();
-    if (!cleanPhone) return;
-
-    const nextContacts = leadContacts.map((contact) =>
-      contact.id === contactId ? { ...contact, phones: contact.phones.includes(cleanPhone) ? contact.phones : [...contact.phones, cleanPhone] } : contact,
-    );
-
-    await persistContacts(nextContacts);
-  };
-
-  const handleLeadContactAddEmail = async (contactId: string, email: string) => {
-    const cleanEmail = email.trim();
-    if (!cleanEmail) return;
-
-    const nextContacts = leadContacts.map((contact) =>
-      contact.id === contactId ? { ...contact, emails: contact.emails.includes(cleanEmail) ? contact.emails : [...contact.emails, cleanEmail] } : contact,
-    );
-
-    await persistContacts(nextContacts);
-  };
-
   async function runResearch() {
     if (!leadId) {
       setResearchError("This lead is missing an id, so analysis cannot be run.");
@@ -832,7 +740,8 @@ export default function LeadExecutionPage() {
       const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string; warning?: string } | null;
 
       if (!data) {
-        setPlaybookError("Could not generate playbook with Gemini.");
+        setAiPlaybook(fallbackPlaybook);
+        setPlaybookError("Gemini returned an unreadable response. Showing fallback playbook.");
         return;
       }
 
@@ -845,7 +754,12 @@ export default function LeadExecutionPage() {
       }
 
       if (!response.ok) {
-        setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        setAiPlaybook(fallbackPlaybook);
+        if (data.error?.toLowerCase().includes("failed to generate draft")) {
+          setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
+        } else {
+          setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        }
         return;
       }
 
