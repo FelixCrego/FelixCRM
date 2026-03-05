@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getLeadById, setLeadDeployment } from "@/lib/store";
 import { getAuthenticatedUserId } from "@/lib/auth";
-import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION } from "@/lib/template-config";
+import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION, type TemplateConfig } from "@/lib/template-config";
 
 function normalizeRepoSlug(value: string | undefined): { owner: string; repo: string } | null {
   if (!value) return null;
@@ -15,6 +15,107 @@ function normalizeRepoSlug(value: string | undefined): { owner: string; repo: st
   const [owner, repo] = normalized.split("/").filter(Boolean);
   if (!owner || !repo) return null;
   return { owner, repo };
+}
+
+
+function normalizePhoneHref(phone: string): string {
+  const digits = phone.replace(/\D+/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("1") && digits.length === 11) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  return `+${digits}`;
+}
+
+function escapeForQuotedValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function normalizeSocialPlatform(label: string): "facebook" | "instagram" | "x" | "youtube" | "google" | "linkedin" {
+  const lower = label.toLowerCase();
+  if (lower.includes("facebook")) return "facebook";
+  if (lower.includes("instagram")) return "instagram";
+  if (lower.includes("youtube")) return "youtube";
+  if (lower.includes("google")) return "google";
+  if (lower.includes("linkedin")) return "linkedin";
+  return "x";
+}
+
+function applySiteConfigOverrides(source: string, config: TemplateConfig): string {
+  let updated = source;
+  const businessName = config.business.name;
+  const phoneDisplay = config.content.contact.phone;
+  const phoneHref = normalizePhoneHref(phoneDisplay);
+  const email = config.content.contact.email;
+
+  updated = updated.replace(/businessName:\s*"[^"]*"/, `businessName: "${escapeForQuotedValue(businessName)}"`);
+  updated = updated.replace(/text:\s*"[^"]*"/, `text: "${escapeForQuotedValue(businessName)}"`);
+  updated = updated.replace(/shortText:\s*"[^"]*"/, `shortText: "${escapeForQuotedValue(businessName)}"`);
+
+  if (phoneDisplay) {
+    updated = updated.replace(/phoneDisplay:\s*"[^"]*"/, `phoneDisplay: "${escapeForQuotedValue(phoneDisplay)}"`);
+  }
+  if (phoneHref) {
+    updated = updated.replace(/phoneHref:\s*"[^"]*"/, `phoneHref: "${escapeForQuotedValue(phoneHref)}"`);
+  }
+  if (email) {
+    updated = updated.replace(/email:\s*"[^"]*"/, `email: "${escapeForQuotedValue(email)}"`);
+  }
+
+  if (config.links.socials.length > 0) {
+    const firstSocial = config.links.socials[0];
+    const firstLabel = firstSocial.label || "Social";
+    const platform = normalizeSocialPlatform(firstSocial.label || firstSocial.url);
+    updated = updated.replace(
+      /\{\s*platform:\s*"[^"]+"\s*,\s*label:\s*"[^"]+"\s*,\s*url:\s*"[^"]+"\s*\}/,
+      `{ platform: "${platform}", label: "${escapeForQuotedValue(firstLabel)}", url: "${escapeForQuotedValue(firstSocial.url)}" }`,
+    );
+  }
+
+  return updated;
+}
+
+async function patchGeneratedRepoSiteConfig(params: {
+  githubHeaders: Record<string, string>;
+  repoFullName: string;
+  branch: string;
+  templateConfig: TemplateConfig;
+}) {
+  const candidatePaths = ["src/config/site.ts", "src/config/siteConfig.ts", "config/site.ts", "siteConfig.ts", "lib/siteConfig.ts"];
+
+  for (const path of candidatePaths) {
+    const getResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}?ref=${params.branch}`, {
+      headers: params.githubHeaders,
+    });
+
+    if (!getResponse.ok) continue;
+
+    const contentPayload = (await getResponse.json()) as { sha?: string; content?: string; encoding?: string };
+    const sha = contentPayload.sha;
+    const encodedContent = contentPayload.content;
+    if (!sha || !encodedContent || contentPayload.encoding !== "base64") continue;
+
+    const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
+    const updated = applySiteConfigOverrides(source, params.templateConfig);
+    if (updated === source) return;
+
+    const putResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}`, {
+      method: "PUT",
+      headers: params.githubHeaders,
+      body: JSON.stringify({
+        message: "chore: customize site config from lead data",
+        content: Buffer.from(updated, "utf8").toString("base64"),
+        sha,
+        branch: params.branch,
+      }),
+    });
+
+    if (!putResponse.ok) {
+      const errorText = await putResponse.text();
+      throw new Error(`Failed to customize ${path}: ${errorText || putResponse.statusText}`);
+    }
+
+    return;
+  }
 }
 
 function slugify(input: string, fallback: string): string {
@@ -137,6 +238,13 @@ export async function POST(request: Request) {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
       return NextResponse.json({ error: "GitHub repository creation succeeded but did not return repository metadata (name/id)." }, { status: 500 });
     }
+
+    await patchGeneratedRepoSiteConfig({
+      githubHeaders,
+      repoFullName: clonedRepoFullName,
+      branch: repoDefaultBranch,
+      templateConfig,
+    });
 
     const deploymentEnv = {
       TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
