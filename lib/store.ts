@@ -170,6 +170,17 @@ async function getSafeFirstUser(userId: string) {
 
 function leadToMemory(lead: any): Lead {
   const sourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
+  const contacts = Array.isArray(sourcePayload.contacts)
+    ? sourcePayload.contacts
+        .filter((contact: unknown) => contact && typeof contact === "object")
+        .map((contact: any) => ({
+          id: typeof contact.id === "string" && contact.id ? contact.id : crypto.randomUUID(),
+          name: typeof contact.name === "string" && contact.name.trim() ? contact.name.trim() : "Untitled Contact",
+          role: typeof contact.role === "string" ? contact.role.trim() : "",
+          phones: Array.isArray(contact.phones) ? contact.phones.map((value: unknown) => String(value).trim()).filter(Boolean) : [],
+          emails: Array.isArray(contact.emails) ? contact.emails.map((value: unknown) => String(value).trim()).filter(Boolean) : [],
+        }))
+    : [];
   const closedDealValueFromPayload =
     typeof sourcePayload.closedDealValue === "number"
       ? sourcePayload.closedDealValue
@@ -206,6 +217,7 @@ function leadToMemory(lead: any): Lead {
     socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
     aiResearchSummary: typeof sourcePayload.aiResearchSummary === "string" ? sourcePayload.aiResearchSummary : null,
     sourceQuery: typeof sourcePayload.sourceQuery === "string" ? sourcePayload.sourceQuery : null,
+    contacts,
     closedDealValue:
       (typeof lead.closedDealValue === "number" ? lead.closedDealValue : null) ??
       (typeof lead.closed_deal_value === "number" ? lead.closed_deal_value : null) ??

@@ -29,6 +29,7 @@ type LeadRecord = {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
   } | null;
+  contacts?: LeadContactRecord[];
 };
 
 type LeadContactRecord = {
@@ -153,7 +154,7 @@ const FALLBACK_LEAD: LeadRecord = {
 };
 
 function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord[] {
-  const payloadContacts = leadRecord?.source_payload?.contacts ?? leadRecord?.sourcePayload?.contacts;
+  const payloadContacts = leadRecord?.source_payload?.contacts ?? leadRecord?.sourcePayload?.contacts ?? leadRecord?.contacts;
 
   if (Array.isArray(payloadContacts)) {
     const sanitized = payloadContacts
@@ -319,7 +320,19 @@ export default function LeadExecutionPage() {
           return;
         }
 
-        const { data } = await supabase.from<LeadRecord>("leads").select("*").eq("id", leadId).single();
+        const response = await fetch("/api/leads", {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+
+        const payload = (await response.json().catch(() => null)) as { leads?: LeadRecord[]; error?: string } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error || "Unable to load lead.");
+        }
+
+        const data = Array.isArray(payload?.leads) ? payload.leads.find((candidate) => candidate?.id === leadId) ?? null : null;
 
         if (!alive) return;
 
@@ -360,7 +373,7 @@ export default function LeadExecutionPage() {
     return () => {
       alive = false;
     };
-  }, [leadId, supabase]);
+  }, [leadId]);
 
   useEffect(() => {
     let alive = true;
