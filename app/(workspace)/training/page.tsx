@@ -19,7 +19,7 @@ export default function TrainingCenter() {
       ],
     },
     {
-      questionText: "What is your daily target for Booked Demos?",
+      questionText: "What is your non-negotiable daily target for booked demos?",
       answerOptions: [
         { answerText: "1 demo per day", isCorrect: false },
         { answerText: "2 demos per day", isCorrect: true },
@@ -27,30 +27,67 @@ export default function TrainingCenter() {
       ],
     },
     {
-      questionText: "How many CLOSED sales are you expected to generate per week?",
+      questionText: "How many closed deals are reps expected to generate per week?",
       answerOptions: [
-        { answerText: "1 per week", isCorrect: false },
-        { answerText: "2 per week", isCorrect: true },
-        { answerText: "4 per week", isCorrect: false },
+        { answerText: "1 closed deal", isCorrect: false },
+        { answerText: "2 closed deals", isCorrect: true },
+        { answerText: "4 closed deals", isCorrect: false },
       ],
     },
     {
-      questionText: "Why MUST we use the in-CRM dialer instead of our cell phones?",
+      questionText: "Why must calls happen inside the CRM dialer instead of a personal cell phone?",
       answerOptions: [
-        { answerText: "So the CRM looks cool.", isCorrect: false },
-        {
-          answerText: "To capture the AWS Contact ID so AI transcripts and audio save to the lead.",
-          isCorrect: true,
-        },
-        { answerText: "To save money on phone bills.", isCorrect: false },
+        { answerText: "It makes the dashboard look busier", isCorrect: false },
+        { answerText: "It captures AWS Contact IDs so call recordings and AI transcripts attach to the lead", isCorrect: true },
+        { answerText: "It automatically closes deals", isCorrect: false },
       ],
     },
     {
-      questionText: 'A prospect says: "My door is dead, the heavy spring up top snapped." What broke?',
+      questionText: 'A homeowner says: "The heavy spring over the door snapped and now the door is dead." What failed?',
       answerOptions: [
-        { answerText: "The Extension Spring", isCorrect: false },
-        { answerText: "The Torsion Spring (High-Ticket Repair)", isCorrect: true },
-        { answerText: "The Photo Eyes", isCorrect: false },
+        { answerText: "Photo eyes", isCorrect: false },
+        { answerText: "Torsion spring", isCorrect: true },
+        { answerText: "Weather stripping", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "Which line best matches our opener script framework?",
+      answerOptions: [
+        { answerText: "Hey, I sell websites. Want one?", isCorrect: false },
+        { answerText: "I help garage door companies lock more installs without increasing ad spend. Got 27 seconds?", isCorrect: true },
+        { answerText: "Can you transfer me to the owner immediately?", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "Prospect says: 'Just send me an email.' What is the best response strategy?",
+      answerOptions: [
+        { answerText: "End the call and hope they reply", isCorrect: false },
+        { answerText: "Agree, then ask a micro-commitment question for a short teardown call", isCorrect: true },
+        { answerText: "Tell them email never works and push harder", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "What does a higher garage door R-Value indicate to a homeowner?",
+      answerOptions: [
+        { answerText: "Better insulation and energy efficiency", isCorrect: true },
+        { answerText: "Faster opener motor speed", isCorrect: false },
+        { answerText: "A stronger torsion shaft", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "A prospect says their door will not close and lights blink. A common culprit is:",
+      answerOptions: [
+        { answerText: "Broken cable drums", isCorrect: false },
+        { answerText: "Misaligned photo eyes", isCorrect: true },
+        { answerText: "Insulation panel rating", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "When handling 'too expensive,' what frame should you use?",
+      answerOptions: [
+        { answerText: "Discount immediately", isCorrect: false },
+        { answerText: "Compare cost to pipeline leakage and lost installs", isCorrect: true },
+        { answerText: "Argue that competitors are worse", isCorrect: false },
       ],
     },
   ];
