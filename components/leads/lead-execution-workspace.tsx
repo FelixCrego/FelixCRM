@@ -13,6 +13,15 @@ import {
   Rocket,
   UserCircle2,
 } from "lucide-react";
+import { createClientComponentClient } from "@/lib/supabase-client";
+
+type WorkspaceLeadContact = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
 
 type WorkspaceLeadContact = {
   id: string;
@@ -140,6 +149,7 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [newContactPhone, setNewContactPhone] = useState("");
   const [newContactEmail, setNewContactEmail] = useState("");
   const activeTab = commsTab;
+  const supabase = useMemo(() => createClientComponentClient(), []);
 
   const siteUrl = useMemo(
     () => lead.deployedUrl ?? `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`,
