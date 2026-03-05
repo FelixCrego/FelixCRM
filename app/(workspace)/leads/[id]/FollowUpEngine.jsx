@@ -1,54 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '@/lib/supabaseClient'; 
 
-type FollowUpTask = {
-  id: number;
-  lead_id: string;
-  lead_name: string;
-  rep_id: string;
-  title: string;
-  type: string;
-  due_date: string;
-  due_time: string;
-  status: 'pending' | 'completed';
-};
-
-type FollowUpEngineProps = {
-  leadId?: string;
-  leadName?: string;
-  currentRepId?: string;
-};
-
-export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_123' }: FollowUpEngineProps) {
+export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_123' }) {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskType, setTaskType] = useState('Call');
   const [taskDate, setTaskDate] = useState('');
   const [taskTime, setTaskTime] = useState('');
-  const [tasks, setTasks] = useState<FollowUpTask[]>([]);
+  const [tasks, setTasks] = useState([]);
 
   useEffect(() => {
     if (!leadId) return;
     const fetchLeadTasks = async () => {
-      const query: any = supabase.from('follow_ups').select('*');
-      const { data } = await query
+      const { data } = await supabase
+        .from('follow_ups')
+        .select('*')
         .eq('lead_id', leadId)
         .eq('status', 'pending')
         .order('due_date', { ascending: true });
-      if (data) setTasks(data as FollowUpTask[]);
+      if (data) setTasks(data);
     };
     fetchLeadTasks();
   }, [leadId]);
 
-  const setQuickDate = (daysToAdd: number) => {
+  const setQuickDate = (daysToAdd) => {
     const date = new Date();
     date.setDate(date.getDate() + daysToAdd);
     setTaskDate(date.toISOString().split('T')[0]);
   };
 
-  const handleAddTask = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddTask = async (e) => {
     e.preventDefault();
     if (!taskTitle || !taskDate || !leadId) return;
-
+    
     const newTask = {
       lead_id: leadId,
       lead_name: leadName || 'Unknown Lead',
@@ -57,21 +40,19 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
       type: taskType,
       due_date: taskDate,
       due_time: taskTime || '12:00',
-      status: 'pending' as const,
+      status: 'pending'
     };
 
     setTasks(prev => [...prev, { ...newTask, id: Date.now() }]);
-    setTaskTitle('');
-    setTaskDate('');
-    setTaskTime('');
+    setTaskTitle(''); setTaskDate(''); setTaskTime('');
 
-    const { error } = await (supabase.from('follow_ups') as any).insert([newTask]);
-    if (error) console.error('Error saving task:', error);
+    const { error } = await supabase.from('follow_ups').insert([newTask]);
+    if (error) console.error("Error saving task:", error);
   };
 
-  const completeTask = async (taskId: number) => {
+  const completeTask = async (taskId) => {
     setTasks(prev => prev.filter(t => t.id !== taskId));
-    await (supabase.from('follow_ups') as any).update({ status: 'completed' }).eq('id', taskId);
+    await supabase.from('follow_ups').update({ status: 'completed' }).eq('id', taskId);
   };
 
   return (
