@@ -169,6 +169,26 @@ async function getSafeFirstUser(userId: string) {
 }
 
 function leadToMemory(lead: any): Lead {
+  const sourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
+  const closedDealValueFromPayload =
+    typeof sourcePayload.closedDealValue === "number"
+      ? sourcePayload.closedDealValue
+      : typeof sourcePayload.closed_deal_value === "number"
+        ? sourcePayload.closed_deal_value
+        : null;
+  const closedAtFromPayload =
+    typeof sourcePayload.closedAt === "string"
+      ? sourcePayload.closedAt
+      : typeof sourcePayload.closed_at === "string"
+        ? sourcePayload.closed_at
+        : null;
+  const stripeCheckoutLinkFromPayload =
+    typeof sourcePayload.stripeCheckoutLink === "string"
+      ? sourcePayload.stripeCheckoutLink
+      : typeof sourcePayload.stripe_checkout_link === "string"
+        ? sourcePayload.stripe_checkout_link
+        : null;
+
   return {
     id: lead.id,
     businessName: lead.businessName ?? lead.business_name,
@@ -183,14 +203,23 @@ function leadToMemory(lead: any): Lead {
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
     ownerId: lead.ownerId ?? lead.owner_id,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
-    socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
-    aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
-    sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
-    closedDealValue: typeof (lead.sourcePayload ?? lead.source_payload)?.closedDealValue === "number" ? (lead.sourcePayload ?? lead.source_payload).closedDealValue : null,
-    closedAt: typeof (lead.sourcePayload ?? lead.source_payload)?.closedAt === "string" ? (lead.sourcePayload ?? lead.source_payload).closedAt : null,
-    stripeCheckoutLink: typeof (lead.sourcePayload ?? lead.source_payload)?.stripeCheckoutLink === "string" ? (lead.sourcePayload ?? lead.source_payload).stripeCheckoutLink : null,
-    transferRequests: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.transferRequests)
-      ? (lead.sourcePayload ?? lead.source_payload).transferRequests.filter((request: any) =>
+    socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
+    aiResearchSummary: typeof sourcePayload.aiResearchSummary === "string" ? sourcePayload.aiResearchSummary : null,
+    sourceQuery: typeof sourcePayload.sourceQuery === "string" ? sourcePayload.sourceQuery : null,
+    closedDealValue:
+      (typeof lead.closedDealValue === "number" ? lead.closedDealValue : null) ??
+      (typeof lead.closed_deal_value === "number" ? lead.closed_deal_value : null) ??
+      closedDealValueFromPayload,
+    closedAt:
+      (typeof lead.closedAt === "string" ? lead.closedAt : null) ??
+      (typeof lead.closed_at === "string" ? lead.closed_at : null) ??
+      closedAtFromPayload,
+    stripeCheckoutLink:
+      (typeof lead.stripeCheckoutLink === "string" ? lead.stripeCheckoutLink : null) ??
+      (typeof lead.stripe_checkout_link === "string" ? lead.stripe_checkout_link : null) ??
+      stripeCheckoutLinkFromPayload,
+    transferRequests: Array.isArray(sourcePayload.transferRequests)
+      ? sourcePayload.transferRequests.filter((request: any) =>
           request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",
         )
       : [],
@@ -495,6 +524,82 @@ export type LeadContactRecord = {
   phones: string[];
   emails: string[];
 };
+
+export async function closeLeadDeal(params: { leadId: string; ownerId: string; closedDealValue: number; stripeCheckoutLink?: string | null }) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to close deals.");
+
+  const { leadId, ownerId, closedDealValue, stripeCheckoutLink } = params;
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
+  if (leadOwnerId && leadOwnerId !== ownerId) throw new Error("Forbidden");
+
+  const sourcePayload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const closedAt = new Date().toISOString();
+
+  const updatedRows = await withLeadTableFallback((table) => {
+    const ownerColumn = isSnakeLeadsTable(table) ? "owner_id" : "ownerId";
+    const sourcePayloadColumn = isSnakeLeadsTable(table) ? "source_payload" : "sourcePayload";
+    const filters = {
+      id: `eq.${leadId}`,
+      select: "id",
+      ...(leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
+    } as Record<string, string>;
+
+    const fullPayload = isSnakeLeadsTable(table)
+      ? {
+          status: "CLOSED",
+          owner_id: ownerId,
+          source_payload: {
+            ...sourcePayload,
+            closedDealValue,
+            closedAt,
+            stripeCheckoutLink: stripeCheckoutLink ?? null,
+          },
+        }
+      : {
+          status: "CLOSED",
+          ownerId,
+          sourcePayload: {
+            ...sourcePayload,
+            closedDealValue,
+            closedAt,
+            stripeCheckoutLink: stripeCheckoutLink ?? null,
+          },
+        };
+
+    return supabaseRequest<any[]>(table, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(fullPayload),
+    }, filters).catch((error) => {
+      if (!isMissingColumnError(error, sourcePayloadColumn)) throw error;
+
+      return supabaseRequest<any[]>(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify(isSnakeLeadsTable(table) ? { status: "CLOSED", owner_id: ownerId } : { status: "CLOSED", ownerId }),
+      }, filters);
+    });
+  });
+
+  if (!updatedRows.length) {
+    throw new Error("Unable to close this lead.");
+  }
+
+  return {
+    closedAt,
+    closedDealValue,
+    stripeCheckoutLink: stripeCheckoutLink ?? null,
+  };
+}
 
 function normalizeLeadContactsInput(contacts: LeadContactRecord[]): LeadContactRecord[] {
   return contacts

@@ -616,7 +616,7 @@ export default function LeadExecutionPage() {
 
     if (checkoutAmount >= 500) {
       setApprovalPending(false);
-      setCheckoutLink("buy.stripe.com/test_123");
+      setCheckoutLink(`buy.stripe.com/test_123?amount=${Math.round(checkoutAmount * 100)}`);
       setLeadExecutionStatus("Payment Pending");
       setCheckoutLoading(false);
       return;
@@ -632,11 +632,17 @@ export default function LeadExecutionPage() {
     try {
       const safeUrl = link.startsWith("http://") || link.startsWith("https://") ? link : `https://${link}`;
       const parsed = new URL(safeUrl);
-      const amountParam = parsed.searchParams.get("amount") || parsed.searchParams.get("amount_total") || parsed.searchParams.get("unit_amount");
+      const amount = parsed.searchParams.get("amount");
+      const amountTotal = parsed.searchParams.get("amount_total");
+      const unitAmount = parsed.searchParams.get("unit_amount");
+      const amountParam = amount ?? amountTotal ?? unitAmount;
       if (!amountParam) return null;
 
       const numericAmount = Number(amountParam);
-      return Number.isFinite(numericAmount) ? numericAmount : null;
+      if (!Number.isFinite(numericAmount)) return null;
+
+      const shouldTreatAsCents = amountTotal !== null || unitAmount !== null || amountParam.includes(".") === false;
+      return shouldTreatAsCents ? numericAmount / 100 : numericAmount;
     } catch {
       return null;
     }
@@ -648,46 +654,50 @@ export default function LeadExecutionPage() {
     setClosingDeal(true);
     setCloseDealError("");
 
-    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
     const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
-    const closedAtIso = new Date().toISOString();
 
-    const { error } = await supabase
-      .from("leads")
-      .update({
-        status: "CLOSED",
-        source_payload: {
-          ...sourcePayload,
+    try {
+      const response = await fetch("/api/leads/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId,
           closedDealValue: inferredDealValue,
-          closedAt: closedAtIso,
           stripeCheckoutLink: checkoutLink || null,
-        },
-      })
-      .eq("id", leadId);
+        }),
+      });
 
-    if (error) {
-      setCloseDealError("Unable to mark this lead as closed right now.");
+      const payload = (await response.json()) as {
+        closed?: { closedAt: string; closedDealValue: number; stripeCheckoutLink: string | null };
+        error?: string;
+      };
+
+      if (!response.ok || !payload.closed) {
+        throw new Error(payload.error || "Unable to mark this lead as closed right now.");
+      }
+
+      setLeadExecutionStatus("Closed Won");
+      setLead((previous) =>
+        previous
+          ? {
+              ...previous,
+              status: "CLOSED",
+              source_payload: {
+                ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+                closedDealValue: payload.closed?.closedDealValue ?? inferredDealValue,
+                closedAt: payload.closed?.closedAt ?? new Date().toISOString(),
+                stripeCheckoutLink: payload.closed?.stripeCheckoutLink ?? (checkoutLink || null),
+              },
+            }
+          : previous,
+      );
+
+      router.push("/closed-deals");
+      router.refresh();
+    } catch (error) {
+      setCloseDealError(error instanceof Error ? error.message : "Unable to mark this lead as closed right now.");
       setClosingDeal(false);
-      return;
     }
-
-    setLeadExecutionStatus("Closed Won");
-    setLead((previous) =>
-      previous
-        ? {
-            ...previous,
-            status: "CLOSED",
-            source_payload: {
-              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
-              closedDealValue: inferredDealValue,
-              closedAt: closedAtIso,
-              stripeCheckoutLink: checkoutLink || null,
-            },
-          }
-        : previous,
-    );
-    router.push("/closed-deals");
-    router.refresh();
   }
 
   async function copyCheckoutLink() {
