@@ -484,6 +484,58 @@ export async function setLeadResearchSummary(leadId: string, summary: string) {
   }, { id: `eq.${leadId}` }));
 }
 
+
+export type LeadContactRecord = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
+
+function normalizeLeadContactsInput(contacts: LeadContactRecord[]): LeadContactRecord[] {
+  return contacts
+    .filter((contact) => contact && typeof contact === "object")
+    .map((contact) => ({
+      id: typeof contact.id === "string" && contact.id ? contact.id : crypto.randomUUID(),
+      name: typeof contact.name === "string" && contact.name.trim() ? contact.name.trim() : "Untitled Contact",
+      role: typeof contact.role === "string" ? contact.role.trim() : "",
+      phones: Array.isArray(contact.phones) ? contact.phones.map((value) => String(value).trim()).filter(Boolean) : [],
+      emails: Array.isArray(contact.emails) ? contact.emails.map((value) => String(value).trim()).filter(Boolean) : [],
+    }));
+}
+
+export async function setLeadContacts(leadId: string, ownerId: string, contacts: LeadContactRecord[]) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save lead contacts.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
+  if (leadOwnerId && leadOwnerId !== ownerId) {
+    throw new Error("Forbidden");
+  }
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const nextContacts = normalizeLeadContactsInput(contacts);
+
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? { source_payload: { ...payload, contacts: nextContacts } }
+      : { sourcePayload: { ...payload, contacts: nextContacts } }),
+  }, { id: `eq.${leadId}` }));
+
+  return nextContacts;
+}
+
 export async function claimLeads(leadIds: string[], ownerId: string) {
   if (!leadIds.length) return { claimed: 0, alreadyOwnedByYou: 0, claimedByOthers: 0, missing: 0 };
   if (!hasDb) throw new Error("Supabase environment variables are required to claim leads.");
