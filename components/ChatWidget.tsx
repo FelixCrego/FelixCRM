@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ChatMessage = {
   id: string;
@@ -24,12 +24,6 @@ function formatTimestamp(value: string) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function messageSignature(messages: ChatMessage[]) {
-  return messages
-    .map((message) => `${message.id}:${message.senderId}:${message.recipientId ?? "all"}:${message.createdAt}:${message.content}`)
-    .join("|");
-}
-
 export default function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState("");
@@ -42,8 +36,37 @@ export default function ChatWidget() {
   const [unreadCount, setUnreadCount] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRequestIdRef = useRef(0);
-  const latestMessagesRef = useRef<ChatMessage[]>([]);
-  const previousMessageCountRef = useRef(0);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const isOpenRef = useRef(isOpen);
+  const activeUserIdRef = useRef(activeUserId);
+  const selectedPeerIdRef = useRef(selectedPeerId);
+
+  const getMessageChannel = useCallback(
+    (message: ChatMessage) => {
+      if (message.recipientId === null) return "sales_floor";
+      if (!activeUserIdRef.current) return message.recipientId;
+      return message.senderId === activeUserIdRef.current ? message.recipientId : message.senderId;
+    },
+    [],
+  );
+
+  const activeChannel = selectedPeerId ?? "sales_floor";
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    activeUserIdRef.current = activeUserId;
+  }, [activeUserId]);
+
+  useEffect(() => {
+    selectedPeerIdRef.current = selectedPeerId;
+  }, [selectedPeerId]);
 
   const loadMessages = useCallback(async (peerId?: string | null) => {
     const requestId = ++messageRequestIdRef.current;
@@ -57,31 +80,44 @@ export default function ChatWidget() {
     const payload = (await response.json()) as { messages?: ChatMessage[]; userId?: string };
     if (requestId !== messageRequestIdRef.current) return;
 
-    const nextMessages = payload.messages ?? [];
-    const previousMessages = latestMessagesRef.current;
-    const hasChanged = messageSignature(previousMessages) !== messageSignature(nextMessages);
+    const incomingMessages = payload.messages ?? [];
+    const previousMessages = messagesRef.current;
+    const previousIds = new Set(previousMessages.map((message) => message.id));
+    const newIncomingMessages = incomingMessages.filter(
+      (message) => !previousIds.has(message.id) && message.senderId !== activeUserIdRef.current,
+    );
 
-    if (hasChanged) {
-      const previousIds = new Set(previousMessages.map((message) => message.id));
-      const newIncomingCount = nextMessages.filter((message) => !previousIds.has(message.id) && message.senderId !== activeUserId).length;
+    if (newIncomingMessages.length > 0) {
+      const currentChannel = selectedPeerIdRef.current ?? "sales_floor";
+      const shouldIncrementUnread = (message: ChatMessage) => {
+        if (!isOpenRef.current || document.hidden) return true;
+        return getMessageChannel(message) !== currentChannel;
+      };
 
-      setMessages(nextMessages);
-      latestMessagesRef.current = nextMessages;
+      const unreadIncrement = newIncomingMessages.filter(shouldIncrementUnread).length;
+      if (unreadIncrement > 0) {
+        setUnreadCount((prev) => prev + unreadIncrement);
+      }
 
-      if (newIncomingCount > 0 && (!isOpen || document.hidden)) {
-        setUnreadCount((prev) => prev + newIncomingCount);
-
-        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-          const newestMessage = nextMessages[nextMessages.length - 1];
-          if (newestMessage?.senderId !== activeUserId) {
-            new Notification(`New message from ${newestMessage.senderName}`, { body: newestMessage.content });
-          }
-        }
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+        const newestMessage = newIncomingMessages[newIncomingMessages.length - 1];
+        new Notification(`New message from ${newestMessage.senderName}`, { body: newestMessage.content });
       }
     }
 
+    const mergedById = new Map(previousMessages.map((message) => [message.id, message]));
+    for (const message of incomingMessages) {
+      mergedById.set(message.id, message);
+    }
+    const mergedMessages = Array.from(mergedById.values()).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+    setMessages(mergedMessages);
+    messagesRef.current = mergedMessages;
+
     if (payload.userId) setActiveUserId(payload.userId);
-  }, [activeUserId, isOpen]);
+  }, [getMessageChannel]);
 
   const loadUsers = useCallback(async () => {
     const response = await fetch("/api/chat/users", { cache: "no-store" });
@@ -108,11 +144,6 @@ export default function ChatWidget() {
 
   useEffect(() => {
     if (!isOpen) return;
-    setUnreadCount(0);
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
 
     loadMessages(selectedPeerId);
     loadUsers();
@@ -127,15 +158,15 @@ export default function ChatWidget() {
     return () => window.clearInterval(syncInterval);
   }, [heartbeatPresence, isOpen, loadMessages, loadUsers, selectedPeerId]);
 
+  const currentMessages = useMemo(
+    () => messages.filter((message) => getMessageChannel(message) === activeChannel),
+    [activeChannel, getMessageChannel, messages],
+  );
+
   useEffect(() => {
     if (!isOpen || !messagesEndRef.current) return;
-
-    const previousCount = previousMessageCountRef.current;
-    previousMessageCountRef.current = messages.length;
-    if (messages.length > previousCount) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages, isOpen]);
+    messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [currentMessages, isOpen]);
 
   const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -154,7 +185,7 @@ export default function ChatWidget() {
 
     setMessages((prev) => {
       const next = [...prev, optimisticMessage];
-      latestMessagesRef.current = next;
+      messagesRef.current = next;
       return next;
     });
     const outboundContent = inputValue;
@@ -172,13 +203,21 @@ export default function ChatWidget() {
     if (!response.ok) {
       setMessages((prev) => {
         const next = prev.filter((message) => message.id !== optimisticId);
-        latestMessagesRef.current = next;
+        messagesRef.current = next;
         return next;
       });
       return;
     }
 
     await loadMessages(sendPeerId);
+  };
+
+  const toggleChat = () => {
+    setIsOpen((prev) => {
+      const next = !prev;
+      if (next) setUnreadCount(0);
+      return next;
+    });
   };
 
   const selectedPeer = users.find((user) => user.id === selectedPeerId) ?? null;
@@ -222,13 +261,13 @@ export default function ChatWidget() {
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 <h3 className="text-sm font-black uppercase tracking-widest text-white">{selectedPeer ? `DM: ${selectedPeer.name}` : "Sales Floor"}</h3>
               </div>
-              <button onClick={() => setIsOpen(false)} className="text-zinc-500 transition-colors hover:text-white" aria-label="Close chat widget">
+              <button onClick={toggleChat} className="text-zinc-500 transition-colors hover:text-white" aria-label="Close chat widget">
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto p-4">
-              {messages.map((msg) => {
+              {currentMessages.map((msg) => {
                 const isMe = msg.senderId === activeUserId;
                 return (
                   <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
@@ -273,7 +312,7 @@ export default function ChatWidget() {
       )}
 
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggleChat}
         aria-label="Open global chat"
         className="relative flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] transition-all hover:scale-105 hover:bg-indigo-500 active:scale-95"
       >
