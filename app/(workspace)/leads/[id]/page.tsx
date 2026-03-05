@@ -451,6 +451,99 @@ export default function LeadExecutionPage() {
     setAiPlaybook(fallbackPlaybook);
   }, [fallbackPlaybook]);
 
+  async function persistContacts(nextContacts: LeadContactRecord[]) {
+    if (!leadId) {
+      setLeadContacts(nextContacts);
+      return true;
+    }
+
+    setSavingContacts(true);
+    setContactsError("");
+    try {
+      const response = await fetch("/api/leads/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId, contacts: nextContacts }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { contacts?: LeadContactRecord[]; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error || "Unable to save contact updates right now.");
+
+      const savedContacts = Array.isArray(payload?.contacts) ? payload.contacts : nextContacts;
+      setLeadContacts(savedContacts);
+      setLead((previous) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          source_payload: {
+            ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+            contacts: savedContacts,
+          },
+          sourcePayload: {
+            ...(previous.sourcePayload ?? previous.source_payload ?? {}),
+            contacts: savedContacts,
+          },
+        };
+      });
+      return true;
+    } catch (error) {
+      setContactsError(error instanceof Error ? error.message : "Unable to save contact updates right now.");
+      return false;
+    } finally {
+      setSavingContacts(false);
+    }
+  }
+
+  const handleLeadContactAdd = async () => {
+    const name = newContactName.trim();
+    const role = newContactRole.trim();
+    const phone = newContactPhone.trim();
+    const email = newContactEmail.trim();
+
+    if (!name && !phone && !email) {
+      setContactsError("Add at least a name, phone, or email for the contact.");
+      return;
+    }
+
+    const created: LeadContactRecord = {
+      id: crypto.randomUUID(),
+      name: name || "Untitled Contact",
+      role,
+      phones: phone ? [phone] : [],
+      emails: email ? [email] : [],
+    };
+
+    const success = await persistContacts([...leadContacts, created]);
+    if (!success) return;
+
+    setNewContactName("");
+    setNewContactRole("");
+    setNewContactPhone("");
+    setNewContactEmail("");
+  };
+
+  const handleLeadContactAddPhone = async (contactId: string, phone: string) => {
+    const cleanPhone = phone.trim();
+    if (!cleanPhone) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId ? { ...contact, phones: contact.phones.includes(cleanPhone) ? contact.phones : [...contact.phones, cleanPhone] } : contact,
+    );
+
+    await persistContacts(nextContacts);
+  };
+
+  const handleLeadContactAddEmail = async (contactId: string, email: string) => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId ? { ...contact, emails: contact.emails.includes(cleanEmail) ? contact.emails : [...contact.emails, cleanEmail] } : contact,
+    );
+
+    await persistContacts(nextContacts);
+  };
+
   async function runResearch() {
     if (!leadId) {
       setResearchError("This lead is missing an id, so analysis cannot be run.");
@@ -787,15 +880,29 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string } | null;
+      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string; warning?: string } | null;
 
-      if (!response.ok || !data) {
-        setPlaybookError(data?.error || "Could not generate playbook with Gemini.");
+      if (!data) {
+        setAiPlaybook(fallbackPlaybook);
+        setPlaybookError("Gemini returned an unreadable response. Showing fallback playbook.");
         return;
       }
 
       if (data.playbook) {
         setAiPlaybook(data.playbook);
+        if (data.warning) {
+          setPlaybookError(data.warning);
+        }
+        return;
+      }
+
+      if (!response.ok) {
+        setAiPlaybook(fallbackPlaybook);
+        if (data.error?.toLowerCase().includes("failed to generate draft")) {
+          setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
+        } else {
+          setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        }
         return;
       }
 
@@ -1127,7 +1234,7 @@ export default function LeadExecutionPage() {
                     onClick={async () => {
                       const value = window.prompt("Add a phone number");
                       if (!value) return;
-                      await addPhoneToContact(contact.id, value);
+                      await handleLeadContactAddPhone(contact.id, value);
                     }}
                     className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500"
                   >
@@ -1137,7 +1244,7 @@ export default function LeadExecutionPage() {
                     onClick={async () => {
                       const value = window.prompt("Add an email");
                       if (!value) return;
-                      await addEmailToContact(contact.id, value);
+                      await handleLeadContactAddEmail(contact.id, value);
                     }}
                     className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500"
                   >
@@ -1176,7 +1283,7 @@ export default function LeadExecutionPage() {
                 />
               </div>
               <button
-                onClick={addContact}
+                onClick={handleLeadContactAdd}
                 disabled={savingContacts}
                 className="mt-2 w-full rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-indigo-50 transition hover:bg-indigo-400 disabled:opacity-60"
               >
