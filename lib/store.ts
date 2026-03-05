@@ -25,6 +25,17 @@ export type LeadNote = {
   createdAt: string;
 };
 
+export type LeadTask = {
+  id: string;
+  leadId: string;
+  title: string;
+  type: "CALLBACK" | "FOLLOW_UP" | "CHECK_IN" | "CUSTOM";
+  reminderAt: string;
+  completed: boolean;
+  createdAt: string;
+  completedAt?: string | null;
+};
+
 function parseJsonSafely<T>(value: string): T | null {
   try {
     return JSON.parse(value) as T;
@@ -967,4 +978,119 @@ export async function createLeadNote(leadId: string, content: string, channel: s
       throw camelError;
     }
   }
+}
+
+function normalizeLeadTask(row: any): LeadTask {
+  return {
+    id: String(row.id ?? crypto.randomUUID()),
+    leadId: String(row.leadId ?? row.lead_id ?? ""),
+    title: String(row.title ?? "Follow up"),
+    type: (row.type === "CALLBACK" || row.type === "FOLLOW_UP" || row.type === "CHECK_IN" ? row.type : "CUSTOM") as LeadTask["type"],
+    reminderAt: String(row.reminderAt ?? row.reminder_at ?? new Date().toISOString()),
+    completed: Boolean(row.completed),
+    createdAt: String(row.createdAt ?? row.created_at ?? new Date().toISOString()),
+    completedAt: typeof row.completedAt === "string"
+      ? row.completedAt
+      : typeof row.completed_at === "string"
+        ? row.completed_at
+        : null,
+  };
+}
+
+export async function listLeadTasks(leadId: string): Promise<LeadTask[]> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load lead tasks.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) return [];
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+
+  return tasks
+    .filter((item) => item && typeof item === "object")
+    .map((item) => normalizeLeadTask(item))
+    .filter((task) => task.leadId === leadId)
+    .sort((a, b) => Number(a.completed) - Number(b.completed) || a.reminderAt.localeCompare(b.reminderAt));
+}
+
+export async function createLeadTask(
+  leadId: string,
+  input: Pick<LeadTask, "title" | "type" | "reminderAt">,
+): Promise<LeadTask> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save lead tasks.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const existingTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+
+  const created: LeadTask = {
+    id: crypto.randomUUID(),
+    leadId,
+    title: input.title.trim(),
+    type: input.type,
+    reminderAt: input.reminderAt,
+    completed: false,
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+  };
+
+  const nextTasks = [created, ...existingTasks].slice(0, 100);
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? { source_payload: { ...payload, tasks: nextTasks } }
+      : { sourcePayload: { ...payload, tasks: nextTasks } }),
+  }, { id: `eq.${leadId}` }));
+
+  return created;
+}
+
+export async function setLeadTaskCompleted(leadId: string, taskId: string, completed: boolean): Promise<LeadTask> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to update lead tasks.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const existingTasks = Array.isArray(payload.tasks) ? payload.tasks.map((task) => normalizeLeadTask(task)) : [];
+  const index = existingTasks.findIndex((task) => task.id === taskId);
+  if (index < 0) throw new Error("Task not found.");
+
+  const updated: LeadTask = {
+    ...existingTasks[index],
+    completed,
+    completedAt: completed ? new Date().toISOString() : null,
+  };
+  existingTasks[index] = updated;
+
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? { source_payload: { ...payload, tasks: existingTasks } }
+      : { sourcePayload: { ...payload, tasks: existingTasks } }),
+  }, { id: `eq.${leadId}` }));
+
+  return updated;
 }
