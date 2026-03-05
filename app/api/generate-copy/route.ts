@@ -214,7 +214,7 @@ export async function POST(req: Request) {
       if (activeTab === "PLAYBOOK") {
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
-          warning: "Gemini key missing. Showing fallback playbook.",
+          warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
         });
       }
 
@@ -278,7 +278,7 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
           playbook: buildFallbackPlaybook(leadName, researchContext),
           draft: text,
           model: generation.modelName,
-          warning: "Gemini returned an unexpected format. Showing fallback playbook.",
+          warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
         });
       }
 
@@ -309,7 +309,7 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
     if (activeTab === "PLAYBOOK" || rawBody.toUpperCase().includes("PLAYBOOK")) {
       return NextResponse.json({
         playbook: buildFallbackPlaybook(leadName, researchContext),
-        warning: "Unexpected AI error. Showing fallback playbook.",
+        warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
       });
     }
 
