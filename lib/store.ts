@@ -619,10 +619,25 @@ async function listLeadNotesFromPayload(leadId: string): Promise<LeadNote[]> {
   return notes
     .filter((item) => item && typeof item === "object")
     .map((item) => normalizeLeadNote(item))
+    .filter((note) => note.leadId === leadId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-async function appendLeadNoteToPayload(leadId: string, note: Omit<LeadNote, "id" | "createdAt">): Promise<LeadNote> {
+function mergeLeadNotes(primary: LeadNote[], fallback: LeadNote[]): LeadNote[] {
+  const seen = new Set<string>();
+  const merged: LeadNote[] = [];
+
+  for (const note of [...primary, ...fallback]) {
+    const key = `${note.id}|${note.createdAt}|${note.content}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(note);
+  }
+
+  return merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+}
+
+async function appendLeadNoteToPayload(leadId: string, note: Pick<LeadNote, "leadId" | "content" | "channel" | "contactId"> & Partial<Pick<LeadNote, "id" | "createdAt">>): Promise<LeadNote> {
   const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
     select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
     id: `eq.${leadId}`,
@@ -635,12 +650,12 @@ async function appendLeadNoteToPayload(leadId: string, note: Omit<LeadNote, "id"
   const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
   const existingNotes = Array.isArray(payload.notes) ? payload.notes : [];
   const created: LeadNote = {
-    id: crypto.randomUUID(),
+    id: note.id ?? crypto.randomUUID(),
     leadId,
     content: note.content,
     channel: note.channel,
     contactId: note.contactId ?? null,
-    createdAt: new Date().toISOString(),
+    createdAt: note.createdAt ?? new Date().toISOString(),
   };
 
   const nextNotes = [created, ...existingNotes].slice(0, 50);
@@ -658,16 +673,18 @@ async function appendLeadNoteToPayload(leadId: string, note: Omit<LeadNote, "id"
 export async function listLeadNotes(leadId: string): Promise<LeadNote[]> {
   if (!hasDb) throw new Error("Supabase environment variables are required to load lead notes.");
 
+  const payloadNotes = await listLeadNotesFromPayload(leadId);
+
   try {
     const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
       supabaseRequest<any[]>(table, undefined, {
         select: "*",
         lead_id: `eq.${leadId}`,
         order: "created_at.desc",
-        limit: "20",
+        limit: "50",
       }),
     );
-    return rows.map(normalizeLeadNote);
+    return mergeLeadNotes(rows.map(normalizeLeadNote), payloadNotes);
   } catch (error) {
     if (isSchemaCacheColumnError(error)) {
       try {
@@ -676,16 +693,16 @@ export async function listLeadNotes(leadId: string): Promise<LeadNote[]> {
             select: "*",
             leadId: `eq.${leadId}`,
             order: "createdAt.desc",
-            limit: "20",
+            limit: "50",
           }),
         );
-        return rows.map(normalizeLeadNote);
+        return mergeLeadNotes(rows.map(normalizeLeadNote), payloadNotes);
       } catch {
-        return listLeadNotesFromPayload(leadId);
+        return payloadNotes;
       }
     }
     if (isMissingTableError(error)) {
-      return listLeadNotesFromPayload(leadId);
+      return payloadNotes;
     }
     throw error;
   }
@@ -715,13 +732,15 @@ export async function createLeadNote(leadId: string, content: string, channel: s
   };
 
   try {
-    return await insertNote({
+    const created = await insertNote({
       lead_id: leadId,
       content: cleanContent,
       channel,
       contact_id: contactId,
       created_at: createdAt,
     });
+    await appendLeadNoteToPayload(leadId, created);
+    return created;
   } catch (snakeError) {
     if (!isSchemaCacheColumnError(snakeError)) {
       if (isMissingTableError(snakeError)) {
@@ -739,25 +758,31 @@ export async function createLeadNote(leadId: string, content: string, channel: s
 
     try {
       if (isMissingColumnError(snakeError, "channel")) {
-        return await insertNote(snakeWithoutChannel);
+        const created = await insertNote(snakeWithoutChannel);
+        await appendLeadNoteToPayload(leadId, created);
+        return created;
       }
 
-      return await insertNote({
+      const created = await insertNote({
         leadId,
         content: cleanContent,
         channel,
         contactId,
         createdAt,
       });
+      await appendLeadNoteToPayload(leadId, created);
+      return created;
     } catch (camelError) {
       if (isSchemaCacheColumnError(camelError) && isMissingColumnError(camelError, "channel")) {
         try {
-          return await insertNote({
+          const created = await insertNote({
             leadId,
             content: cleanContent,
             contactId,
             createdAt,
           });
+          await appendLeadNoteToPayload(leadId, created);
+          return created;
         } catch {
           return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
         }
