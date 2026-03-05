@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
 const apiKey = process.env.GEMINI_API_KEY;
-const GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"] as const;
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"] as const;
 
 type PlaybookPayload = {
   scripts: string[];
@@ -39,18 +39,12 @@ function normalizePlaybookPayload(raw: unknown): PlaybookPayload | null {
 
   if (!scripts.length || !objections.length || !closing || !roiSnapshot) return null;
 
-  return {
-    scripts,
-    objections,
-    closing,
-    roiSnapshot,
-    injectedData,
-  };
+  return { scripts, objections, closing, roiSnapshot, injectedData };
 }
 
 function parsePlaybookFromText(text: string): PlaybookPayload | null {
   const trimmed = text.trim();
-  const variants = [trimmed];
+  const variants: string[] = [trimmed];
 
   if (trimmed.startsWith("```")) {
     const noFence = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -68,7 +62,7 @@ function parsePlaybookFromText(text: string): PlaybookPayload | null {
       const normalized = normalizePlaybookPayload(parsed);
       if (normalized) return normalized;
     } catch {
-      // try next variant
+      // keep trying other variants
     }
   }
 
@@ -119,7 +113,7 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
       const response = await result.response;
-      return { text: response.text().trim(), modelName };
+      return { text: response.text().trim(), modelName, retries: errors.length };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${modelName}: ${message}`);
@@ -128,12 +122,6 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
 
   throw new Error(errors.join(" | "));
 }
-
-type GenerateCopyPayload = {
-  leadName?: string;
-  activeTab?: string;
-  researchContext?: string;
-};
 
 export async function POST(req: Request) {
   let leadName = "this business";
@@ -151,12 +139,6 @@ export async function POST(req: Request) {
       payload = {};
     }
   }
-
-    const payload = (await req.json()) as GenerateCopyPayload;
-    const leadName = typeof payload.leadName === "string" ? payload.leadName.trim() : "";
-    const activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim() : "";
-    const researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
-
 
     leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
@@ -178,7 +160,6 @@ export async function POST(req: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-
     const systemPrompt =
       activeTab === "PLAYBOOK"
         ? `You are an elite sales strategist helping close pre-built website deals for local service businesses.
@@ -188,24 +169,20 @@ CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep researc
 
 Return VALID JSON only (no markdown) with this exact shape:
 {
-  "scripts": [
-    "string opener that references their specific opportunity gap",
-    "string value pitch with speed-to-launch + conversion angle",
-    "string ROI line with realistic missed revenue framing"
-  ],
+  "scripts": ["string", "string", "string"],
   "objections": [
     {"objection":"string","counter":"string"},
     {"objection":"string","counter":"string"},
     {"objection":"string","counter":"string"}
   ],
-  "closing": "string closing ask that creates urgency without being pushy",
-  "roiSnapshot": "string one-liner estimate of lost leads/revenue opportunity",
+  "closing": "string",
+  "roiSnapshot": "string",
   "injectedData": ["string","string","string"]
 }
 
 Rules:
-- Be specific, persuasive, and natural.
-- Mention website/mobile performance, missed lead capture, and fast deployment.
+- Be specific, persuasive, natural.
+- Mention mobile performance, missed lead capture, and fast deployment.
 - Include objection handling and close-ready language.
 - Do not include placeholders like [Your Name].`
         : `You are an elite, high-converting tech sales copywriter.
@@ -214,11 +191,11 @@ Write a draft for a ${activeTab} to a prospect named ${leadName}.
 CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on web optimization and speed-to-lead."}
 
 RULES FOR FORMATTING:
-- If SMS: Keep it extremely casual, under 2 sentences. No emojis. Sound like a quick text from a human rep. Do NOT include placeholders like [Your Name].
-- If EMAIL: Include a catchy subject line like "Subject: [Your Subject]". Keep the body under 4 sentences. Focus directly on the gap found in the research.
-- If NOTE: Write a concise internal strategy note on how we should pitch this lead based on the research.
+- If SMS: extremely casual, <=2 sentences, no emojis.
+- If EMAIL: include "Subject: ...", <=4 sentences.
+- If NOTE: concise internal strategy note.
 
-Output ONLY the draft text. No robotic greetings, no filler.`;
+Output ONLY the draft text.`;
 
     try {
       const generation = await generateWithGeminiModelFallback(genAI, systemPrompt);
@@ -227,24 +204,31 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       if (activeTab === "PLAYBOOK") {
         const parsedPlaybook = parsePlaybookFromText(text);
         if (parsedPlaybook) {
-          return NextResponse.json({ playbook: parsedPlaybook, draft: text, model: generation.modelName });
+          return NextResponse.json({
+            playbook: parsedPlaybook,
+            draft: text,
+            model: generation.modelName,
+            retries: generation.retries,
+          });
         }
 
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
           draft: text,
           model: generation.modelName,
+          retries: generation.retries,
           warning: "Gemini returned an unexpected format. Showing fallback playbook.",
         });
       }
 
-      return NextResponse.json({ draft: text, model: generation.modelName });
+      return NextResponse.json({ draft: text, model: generation.modelName, retries: generation.retries });
     } catch (generationError) {
       if (activeTab === "PLAYBOOK") {
         console.error("Gemini Playbook Generation Error:", generationError);
+        const details = generationError instanceof Error ? generationError.message : String(generationError);
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
-          warning: "Gemini request failed across available models. Showing fallback playbook.",
+          warning: `Gemini request failed across available models. Showing fallback playbook. ${details.slice(0, 220)}`.trim(),
         });
       }
 
