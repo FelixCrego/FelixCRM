@@ -43,6 +43,60 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 > Most features degrade gracefully without optional keys, but lead scraping specifically requires `MAPS_API_KEY`.
 
+## Template deployment payload contract
+
+`POST /api/deploy` now builds a single versioned payload and sends it to the template as `TEMPLATE_CONFIG_JSON` plus a few scalar env vars (`TEMPLATE_CONFIG_VERSION`, `BUSINESS_NAME`, `CONTACT_PHONE`, `CONTACT_EMAIL`, `SOCIAL_LINKS`) for compatibility.
+
+### `TEMPLATE_CONFIG_JSON` (v1.0.0)
+
+```json
+{
+  "templateVersion": "1.0.0",
+  "leadId": "string",
+  "business": {
+    "name": "string",
+    "city": "string",
+    "category": "string",
+    "websiteUrl": "string"
+  },
+  "branding": {
+    "logoUrl": "string",
+    "heroImageUrl": "string",
+    "primaryColor": "string",
+    "secondaryColor": "string"
+  },
+  "content": {
+    "hero": {
+      "headline": "string",
+      "subheadline": "string",
+      "ctaLabel": "string"
+    },
+    "contact": {
+      "phone": "string",
+      "email": "string",
+      "address": "string",
+      "hours": "string",
+      "formCta": "string"
+    },
+    "serviceBlocks": [
+      { "title": "string", "description": "string" }
+    ]
+  },
+  "links": {
+    "googleBusinessProfile": "string",
+    "socials": [
+      { "label": "string", "url": "string" }
+    ]
+  },
+  "research": {
+    "summary": "string"
+  }
+}
+```
+
+`templateConfigOverrides` can be passed to `/api/deploy` and is merged over lead defaults. `researchOutput` is also supported and will replace `lead.aiResearchSummary` when provided.
+
+
 
 ## Lead scraper (CRM + Supabase)
 
