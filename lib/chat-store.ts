@@ -262,11 +262,23 @@ export async function listChatMessages(userId: string, limit?: number, peerId?: 
     if (!limit || limit <= 0) return filtered;
     return filtered.slice(-limit);
   } catch (error) {
-    if (peerId && isMissingColumnError(error, "recipient_id")) {
-      const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
-      if (!limit || limit <= 0) return filtered;
-      return filtered.slice(-limit);
+    if (isMissingColumnError(error, "recipient_id")) {
+      try {
+        const rows = await withTableFallback<StoredMessage[]>("chat-messages", CHAT_TABLE_CANDIDATES, (table) =>
+          supabaseRequest<StoredMessage[]>(table, undefined, {
+            select: "id,sender_id,sender_name,content,created_at",
+            order: "created_at.asc",
+          }),
+        );
+
+        const filtered = rows.map(mapStoredMessage).filter((message) => isMessageVisibleToUser(message, userId, peerId));
+        if (!limit || limit <= 0) return filtered;
+        return filtered.slice(-limit);
+      } catch {
+        // fall through to memory fallback
+      }
     }
+
     const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
     if (!limit || limit <= 0) return filtered;
     return filtered.slice(-limit);
@@ -304,7 +316,27 @@ export async function createChatMessage(userId: string, content: string, recipie
     );
 
     return mapStoredMessage(rows[0]);
-  } catch {
+  } catch (error) {
+    if (isMissingColumnError(error, "recipient_id")) {
+      try {
+        const rows = await withTableFallback<StoredMessage[]>("chat-messages", CHAT_TABLE_CANDIDATES, (table) =>
+          supabaseRequest<StoredMessage[]>(
+            table,
+            {
+              method: "POST",
+              headers: { Prefer: "return=representation" },
+              body: JSON.stringify([{ sender_id: userId, sender_name: senderName, content }]),
+            },
+            { select: "id,sender_id,sender_name,content,created_at" },
+          ),
+        );
+
+        return mapStoredMessage(rows[0]);
+      } catch {
+        // fall through to memory fallback
+      }
+    }
+
     const fallbackMessage: ChatMessage = {
       id: crypto.randomUUID(),
       senderId: userId,
