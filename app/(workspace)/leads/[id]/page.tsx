@@ -1238,7 +1238,34 @@ export default function LeadExecutionPage() {
       <div className="grid grid-cols-12 gap-4">
         <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Lead Context</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Lead Context</p>
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => goToAdjacentLead(previousLeadId)}
+                    disabled={!previousLeadId}
+                    className="inline-flex items-center justify-center gap-1 rounded-md border border-zinc-700 bg-zinc-900/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft className="h-3 w-3" />
+                    Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => goToAdjacentLead(nextLeadId)}
+                    disabled={!nextLeadId}
+                    className="inline-flex items-center justify-center gap-1 rounded-md border border-indigo-400/40 bg-indigo-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-100 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                </div>
+                <p className="mt-1 text-[10px] text-zinc-500">
+                  {currentLeadIndex >= 0 ? `Lead ${currentLeadIndex + 1} of ${orderedLeadIds.length}` : "Lead order unavailable"}
+                </p>
+              </div>
+            </div>
             <h1 className="mt-2 text-2xl font-semibold leading-tight text-zinc-100">{leadName}</h1>
             <p className="mt-2 text-xs uppercase tracking-[0.14em] text-zinc-500">
               Execution target:{" "}
