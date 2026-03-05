@@ -24,6 +24,12 @@ function formatTimestamp(value: string) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function messageSignature(messages: ChatMessage[]) {
+  return messages
+    .map((message) => `${message.id}:${message.senderId}:${message.recipientId ?? "all"}:${message.createdAt}:${message.content}`)
+    .join("|");
+}
+
 export default function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState("");
@@ -33,8 +39,11 @@ export default function ChatWidget() {
   const [onlineCount, setOnlineCount] = useState(0);
   const [activeUserId, setActiveUserId] = useState<string>("");
   const [isSending, setIsSending] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRequestIdRef = useRef(0);
+  const latestMessagesRef = useRef<ChatMessage[]>([]);
+  const previousMessageCountRef = useRef(0);
 
   const loadMessages = useCallback(async (peerId?: string | null) => {
     const requestId = ++messageRequestIdRef.current;
@@ -48,9 +57,31 @@ export default function ChatWidget() {
     const payload = (await response.json()) as { messages?: ChatMessage[]; userId?: string };
     if (requestId !== messageRequestIdRef.current) return;
 
-    setMessages(payload.messages ?? []);
+    const nextMessages = payload.messages ?? [];
+    const previousMessages = latestMessagesRef.current;
+    const hasChanged = messageSignature(previousMessages) !== messageSignature(nextMessages);
+
+    if (hasChanged) {
+      const previousIds = new Set(previousMessages.map((message) => message.id));
+      const newIncomingCount = nextMessages.filter((message) => !previousIds.has(message.id) && message.senderId !== activeUserId).length;
+
+      setMessages(nextMessages);
+      latestMessagesRef.current = nextMessages;
+
+      if (newIncomingCount > 0 && (!isOpen || document.hidden)) {
+        setUnreadCount((prev) => prev + newIncomingCount);
+
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          const newestMessage = nextMessages[nextMessages.length - 1];
+          if (newestMessage?.senderId !== activeUserId) {
+            new Notification(`New message from ${newestMessage.senderName}`, { body: newestMessage.content });
+          }
+        }
+      }
+    }
+
     if (payload.userId) setActiveUserId(payload.userId);
-  }, []);
+  }, [activeUserId, isOpen]);
 
   const loadUsers = useCallback(async () => {
     const response = await fetch("/api/chat/users", { cache: "no-store" });
@@ -69,6 +100,18 @@ export default function ChatWidget() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setUnreadCount(0);
+  }, [isOpen]);
+
+  useEffect(() => {
     if (!isOpen) return;
 
     loadMessages(selectedPeerId);
@@ -85,7 +128,11 @@ export default function ChatWidget() {
   }, [heartbeatPresence, isOpen, loadMessages, loadUsers, selectedPeerId]);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
+    if (!isOpen || !messagesEndRef.current) return;
+
+    const previousCount = previousMessageCountRef.current;
+    previousMessageCountRef.current = messages.length;
+    if (messages.length > previousCount) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, isOpen]);
@@ -105,7 +152,11 @@ export default function ChatWidget() {
       createdAt: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, optimisticMessage]);
+    setMessages((prev) => {
+      const next = [...prev, optimisticMessage];
+      latestMessagesRef.current = next;
+      return next;
+    });
     const outboundContent = inputValue;
     setInputValue("");
     setIsSending(true);
@@ -119,7 +170,11 @@ export default function ChatWidget() {
     setIsSending(false);
 
     if (!response.ok) {
-      setMessages((prev) => prev.filter((message) => message.id !== optimisticId));
+      setMessages((prev) => {
+        const next = prev.filter((message) => message.id !== optimisticId);
+        latestMessagesRef.current = next;
+        return next;
+      });
       return;
     }
 
@@ -220,8 +275,13 @@ export default function ChatWidget() {
       <button
         onClick={() => setIsOpen(!isOpen)}
         aria-label="Open global chat"
-        className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] transition-all hover:scale-105 hover:bg-indigo-500 active:scale-95"
+        className="relative flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] transition-all hover:scale-105 hover:bg-indigo-500 active:scale-95"
       >
+        {unreadCount > 0 && !isOpen && (
+          <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
         {isOpen ? (
           <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         ) : (
