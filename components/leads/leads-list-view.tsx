@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Search, SlidersHorizontal } from "lucide-react";
 import type { Lead } from "@/lib/types";
 import { AddLeadModal } from "@/components/leads/add-lead-modal";
 
@@ -132,6 +132,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
+  const [locationSortDirection, setLocationSortDirection] = useState<"asc" | "desc">("asc");
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
   const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
@@ -212,10 +213,24 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     });
   }, [displayLeads, search, status, lastContacted, viewMode, closedDateRange]);
 
-  const cumulativeClosedValue = useMemo(() => filteredLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [filteredLeads]);
+  const sortedLeads = useMemo(() => {
+    return [...filteredLeads].sort((a, b) => {
+      const left = (a.city || "").toLowerCase();
+      const right = (b.city || "").toLowerCase();
+      const locationSortOrder = locationSortDirection === "asc" ? 1 : -1;
+
+      if (left === right) {
+        return a.businessName.localeCompare(b.businessName);
+      }
+
+      return left.localeCompare(right) * locationSortOrder;
+    });
+  }, [filteredLeads, locationSortDirection]);
+
+  const cumulativeClosedValue = useMemo(() => sortedLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [sortedLeads]);
   const averageClosedDealValue = useMemo(
-    () => (filteredLeads.length > 0 ? cumulativeClosedValue / filteredLeads.length : 0),
-    [cumulativeClosedValue, filteredLeads.length],
+    () => (sortedLeads.length > 0 ? cumulativeClosedValue / sortedLeads.length : 0),
+    [cumulativeClosedValue, sortedLeads.length],
   );
   const demosBookedPerDay = useMemo(() => calculatorCallsPerDay * (calculatorCallToDemoRate / 100), [calculatorCallToDemoRate, calculatorCallsPerDay]);
   const demosCompletedPerDay = useMemo(() => demosBookedPerDay * (calculatorShowRate / 100), [calculatorShowRate, demosBookedPerDay]);
@@ -281,7 +296,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Closed Deals Count</p>
-            <p className="mt-2 text-3xl font-semibold text-zinc-100">{filteredLeads.length}</p>
+            <p className="mt-2 text-3xl font-semibold text-zinc-100">{sortedLeads.length}</p>
           </div>
         </section>
       ) : null}
@@ -482,6 +497,16 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           <thead className="border-b border-zinc-800 bg-zinc-950/70 text-xs uppercase tracking-[0.18em] text-zinc-500">
             <tr>
               <th className="px-4 py-3">Business Name</th>
+              <th className="px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setLocationSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
+                  className="inline-flex items-center gap-1 text-zinc-400 transition hover:text-zinc-100"
+                >
+                  Location
+                  {locationSortDirection === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+                </button>
+              </th>
               <th className="px-4 py-3">Phone</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Vercel Status</th>
@@ -491,13 +516,14 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             </tr>
           </thead>
           <tbody>
-            {(filteredLeads || []).map((lead) => (
+            {(sortedLeads || []).map((lead) => (
               <tr
                 key={lead?.id}
                 onClick={() => router.push(`/leads/${lead?.id}`)}
                 className="group cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-900/50"
               >
                 <td className="px-4 py-3 font-semibold text-white">{lead?.businessName ?? "Unknown business"}</td>
+                <td className="px-4 py-3 text-zinc-400">{lead?.city || "Unknown"}</td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td>
                 <td className="px-4 py-3">
                   <span
@@ -525,7 +551,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           </tbody>
         </table>
 
-        {(filteredLeads || []).length === 0 && (
+        {(sortedLeads || []).length === 0 && (
           <div className="p-8 text-center text-sm text-zinc-500">No leads match your filters. Try broadening status or last-contacted constraints.</div>
         )}
       </section>
