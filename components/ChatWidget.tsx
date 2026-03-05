@@ -36,10 +36,11 @@ export default function ChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const loadMessages = useCallback(async (peerId?: string | null) => {
-    const params = new URLSearchParams({ limit: "200" });
+    const params = new URLSearchParams();
     if (peerId) params.set("peerId", peerId);
 
-    const response = await fetch(`/api/chat/messages?${params.toString()}`, { cache: "no-store" });
+    const endpoint = params.toString() ? `/api/chat/messages?${params.toString()}` : "/api/chat/messages";
+    const response = await fetch(endpoint, { cache: "no-store" });
     if (!response.ok) return;
 
     const payload = (await response.json()) as { messages?: ChatMessage[]; userId?: string };

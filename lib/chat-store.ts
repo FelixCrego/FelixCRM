@@ -243,9 +243,11 @@ function isMessageVisibleToUser(message: ChatMessage, userId: string, peerId?: s
   );
 }
 
-export async function listChatMessages(userId: string, limit = 100, peerId?: string | null): Promise<ChatMessage[]> {
+export async function listChatMessages(userId: string, limit?: number, peerId?: string | null): Promise<ChatMessage[]> {
   if (!hasDb) {
-    return memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+    const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
+    if (!limit || limit <= 0) return filtered;
+    return filtered.slice(-limit);
   }
 
   try {
@@ -253,16 +255,21 @@ export async function listChatMessages(userId: string, limit = 100, peerId?: str
       supabaseRequest<StoredMessage[]>(table, undefined, {
         select: "id,sender_id,sender_name,recipient_id,content,created_at",
         order: "created_at.asc",
-        limit: String(Math.max(limit * 2, 200)),
       }),
     );
 
-    return rows.map(mapStoredMessage).filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+    const filtered = rows.map(mapStoredMessage).filter((message) => isMessageVisibleToUser(message, userId, peerId));
+    if (!limit || limit <= 0) return filtered;
+    return filtered.slice(-limit);
   } catch (error) {
     if (peerId && isMissingColumnError(error, "recipient_id")) {
-      return memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+      const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
+      if (!limit || limit <= 0) return filtered;
+      return filtered.slice(-limit);
     }
-    return memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+    const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
+    if (!limit || limit <= 0) return filtered;
+    return filtered.slice(-limit);
   }
 }
 

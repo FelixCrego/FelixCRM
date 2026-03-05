@@ -12,8 +12,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const limitParam = url.searchParams.get("limit");
     const peerId = url.searchParams.get("peerId");
-    const limit = Number(limitParam ?? "100");
-    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 100;
+    const parsedLimit = limitParam ? Number(limitParam) : undefined;
+    const safeLimit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 5000) : undefined;
     const messages = await listChatMessages(userId, safeLimit, peerId);
 
     return NextResponse.json({ messages, userId });
