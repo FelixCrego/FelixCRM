@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Check, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { createClientComponentClient } from "@/lib/supabase-client";
@@ -223,6 +223,7 @@ function LeadWorkspaceSkeleton() {
 
 export default function LeadExecutionPage() {
   const params = useParams<{ id?: string | string[] }>();
+  const router = useRouter();
   const leadId = useMemo(() => {
     const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
     return typeof rawId === "string" ? rawId.trim() : "";
@@ -278,6 +279,8 @@ export default function LeadExecutionPage() {
   const [newContactEmail, setNewContactEmail] = useState("");
   const [savingContacts, setSavingContacts] = useState(false);
   const [contactsError, setContactsError] = useState("");
+  const [closingDeal, setClosingDeal] = useState(false);
+  const [closeDealError, setCloseDealError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   useEffect(() => {
@@ -530,6 +533,26 @@ export default function LeadExecutionPage() {
     setApprovalPending(true);
     setLeadExecutionStatus("Awaiting Approval");
     setCheckoutLoading(false);
+  }
+
+  async function markLeadAsClosedDeal() {
+    if (!leadId) return;
+
+    setClosingDeal(true);
+    setCloseDealError("");
+
+    const { error } = await supabase.from("leads").update({ status: "CLOSED" }).eq("id", leadId);
+
+    if (error) {
+      setCloseDealError("Unable to mark this lead as closed right now.");
+      setClosingDeal(false);
+      return;
+    }
+
+    setLeadExecutionStatus("Closed Won");
+    setLead((previous) => (previous ? { ...previous, status: "CLOSED" } : previous));
+    router.push("/closed-deals");
+    router.refresh();
   }
 
   async function copyCheckoutLink() {
@@ -941,6 +964,15 @@ export default function LeadExecutionPage() {
             <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
               {leadExecutionStatus}
             </span>
+            <button
+              type="button"
+              onClick={markLeadAsClosedDeal}
+              disabled={closingDeal}
+              className="mt-3 w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
+            </button>
+            {closeDealError ? <p className="mt-2 text-xs text-rose-300">{closeDealError}</p> : null}
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
