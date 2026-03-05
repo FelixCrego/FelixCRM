@@ -43,6 +43,17 @@ type LeadContactRecord = {
   emails: string[];
 };
 
+type LeadTaskRecord = {
+  id: string;
+  leadId: string;
+  title: string;
+  type: "CALLBACK" | "FOLLOW_UP" | "CHECK_IN" | "CUSTOM";
+  reminderAt: string;
+  completed: boolean;
+  createdAt: string;
+  completedAt?: string | null;
+};
+
 type LeadNoteRecord = {
   id: string;
   leadId: string;
@@ -320,6 +331,12 @@ export default function LeadExecutionPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
   const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
+  const [tasks, setTasks] = useState<LeadTaskRecord[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskType, setTaskType] = useState<LeadTaskRecord["type"]>("FOLLOW_UP");
+  const [taskReminderAt, setTaskReminderAt] = useState("");
   const [leadContacts, setLeadContacts] = useState<LeadContactRecord[]>([]);
   const [newContactName, setNewContactName] = useState("");
   const [newContactRole, setNewContactRole] = useState("");
@@ -482,6 +499,44 @@ export default function LeadExecutionPage() {
 
     window.localStorage.setItem(researchStorageKey, researchInsight);
   }, [researchInsight, researchStorageKey]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadTasks() {
+      if (!leadId) {
+        setTasks([]);
+        return;
+      }
+
+      setTasksLoading(true);
+      setTasksError("");
+
+      const response = await fetch(`/api/lead-tasks?leadId=${encodeURIComponent(leadId)}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as { tasks?: LeadTaskRecord[]; error?: string } | null;
+
+      if (!alive) return;
+
+      if (!response.ok) {
+        setTasks([]);
+        setTasksError(payload?.error || "Unable to load tasks.");
+        setTasksLoading(false);
+        return;
+      }
+
+      setTasks(Array.isArray(payload?.tasks) ? payload.tasks : []);
+      setTasksLoading(false);
+    }
+
+    loadTasks();
+    return () => {
+      alive = false;
+    };
+  }, [leadId]);
 
   useEffect(() => {
     let alive = true;
@@ -1271,6 +1326,77 @@ export default function LeadExecutionPage() {
     return "NOTE";
   };
 
+  const monthlyTouchpointCount = (() => {
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
+
+    return notes.filter((note) => {
+      const created = new Date(note.createdAt || note.created_at || "");
+      return Number.isFinite(created.getTime()) && created.getMonth() === month && created.getFullYear() === year;
+    }).length;
+  })();
+
+  const remainingTouchpoints = Math.max(0, 7 - monthlyTouchpointCount);
+
+  async function createTask() {
+    if (!leadId) return;
+    const title = taskTitle.trim();
+    if (!title || !taskReminderAt) return;
+
+    setTasksLoading(true);
+    setTasksError("");
+
+    const reminderIso = new Date(taskReminderAt).toISOString();
+    const response = await fetch("/api/lead-tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
+        title,
+        type: taskType,
+        reminderAt: reminderIso,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { task?: LeadTaskRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.task) {
+      setTasksError(payload?.error || "Unable to add task.");
+      setTasksLoading(false);
+      return;
+    }
+
+    setTasks((previous) => [payload.task as LeadTaskRecord, ...previous]);
+    setTaskTitle("");
+    setTaskReminderAt("");
+    setTaskType("FOLLOW_UP");
+    setTasksLoading(false);
+  }
+
+  async function toggleTaskCompletion(task: LeadTaskRecord) {
+    if (!leadId) return;
+
+    const response = await fetch("/api/lead-tasks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
+        taskId: task.id,
+        completed: !task.completed,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { task?: LeadTaskRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.task) {
+      setTasksError(payload?.error || "Unable to update task.");
+      return;
+    }
+
+    setTasks((previous) => previous.map((item) => (item.id === task.id ? (payload.task as LeadTaskRecord) : item)));
+  }
+
   const filteredNotes = notes.filter((note) => {
     const type = resolveNoteType(note);
     if (activeTab === "Notes") {
@@ -1831,6 +1957,78 @@ export default function LeadExecutionPage() {
               </button>
               </div>
             ) : null}
+          </div>
+
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">Follow-up Tasks & Reminders</h2>
+                <p className="mt-1 text-xs text-zinc-400">
+                  Monthly touchpoints: <span className="font-semibold text-zinc-100">{monthlyTouchpointCount}/7</span>
+                  {remainingTouchpoints > 0 ? ` • ${remainingTouchpoints} more needed this month` : " • Goal reached"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_140px_220px_auto]">
+              <input
+                type="text"
+                value={taskTitle}
+                onChange={(event) => setTaskTitle(event.target.value)}
+                className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-3 text-xs text-zinc-100 outline-none"
+                placeholder="Task title (Call back, follow up, check-in...)"
+              />
+              <select
+                value={taskType}
+                onChange={(event) => setTaskType(event.target.value as LeadTaskRecord["type"])}
+                className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
+              >
+                <option value="CALLBACK">Callback</option>
+                <option value="FOLLOW_UP">Follow Up</option>
+                <option value="CHECK_IN">Check-in</option>
+                <option value="CUSTOM">Custom</option>
+              </select>
+              <input
+                type="datetime-local"
+                value={taskReminderAt}
+                onChange={(event) => setTaskReminderAt(event.target.value)}
+                className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
+              />
+              <button
+                type="button"
+                onClick={createTask}
+                disabled={tasksLoading || !taskTitle.trim() || !taskReminderAt}
+                className="rounded-md bg-indigo-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+              >
+                Add Task
+              </button>
+            </div>
+
+            {tasksError ? <p className="mt-2 text-xs text-rose-300">{tasksError}</p> : null}
+            {tasksLoading ? <p className="mt-2 text-xs text-zinc-500">Loading tasks...</p> : null}
+
+            <div className="mt-3 space-y-2">
+              {tasks.length === 0 && !tasksLoading ? (
+                <p className="text-xs text-zinc-500">No follow-up tasks yet.</p>
+              ) : null}
+              {tasks.map((task) => (
+                <div key={task.id} className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2">
+                  <div>
+                    <p className={`text-xs font-medium ${task.completed ? "text-zinc-500 line-through" : "text-zinc-100"}`}>{task.title}</p>
+                    <p className="text-[11px] text-zinc-400">
+                      {task.type.replaceAll("_", " ")} • Reminder: {new Date(task.reminderAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleTaskCompletion(task)}
+                    className={`rounded-md px-2 py-1 text-[11px] font-semibold ${task.completed ? "bg-zinc-700 text-zinc-200" : "bg-emerald-500 text-emerald-950"}`}
+                  >
+                    {task.completed ? "Completed" : "Mark Done"}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
