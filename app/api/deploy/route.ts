@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getLeadById, setLeadDeployment } from "@/lib/store";
 import { getAuthenticatedUserId } from "@/lib/auth";
+import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION } from "@/lib/template-config";
 
 export async function POST(request: Request) {
   try {
@@ -23,6 +24,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing Vercel configuration (VERCEL_TOKEN and VERCEL_TEMPLATE_PROJECT)." }, { status: 500 });
     }
 
+    const researchOutput = typeof body.researchOutput === "string" ? body.researchOutput : undefined;
+    const configOverrides = body.templateConfigOverrides;
+
+    const templateConfig = buildTemplateConfig(
+      {
+        ...lead,
+        aiResearchSummary: researchOutput || lead.aiResearchSummary,
+      },
+      configOverrides,
+    );
+
     const response = await fetch("https://api.vercel.com/v13/deployments", {
       method: "POST",
       headers: {
@@ -39,10 +51,12 @@ export async function POST(request: Request) {
         },
         target: "production",
         env: [
-          { key: "BUSINESS_NAME", value: lead.businessName, target: ["production"] },
-          { key: "CONTACT_PHONE", value: lead.phone ?? "", target: ["production"] },
-          { key: "CONTACT_EMAIL", value: lead.email ?? "", target: ["production"] },
-          { key: "SOCIAL_LINKS", value: (lead.socialLinks ?? []).join(","), target: ["production"] },
+          { key: "TEMPLATE_CONFIG_JSON", value: JSON.stringify(templateConfig), target: ["production"] },
+          { key: "TEMPLATE_CONFIG_VERSION", value: TEMPLATE_CONFIG_VERSION, target: ["production"] },
+          { key: "BUSINESS_NAME", value: templateConfig.business.name, target: ["production"] },
+          { key: "CONTACT_PHONE", value: templateConfig.content.contact.phone, target: ["production"] },
+          { key: "CONTACT_EMAIL", value: templateConfig.content.contact.email, target: ["production"] },
+          { key: "SOCIAL_LINKS", value: templateConfig.links.socials.map((social) => social.url).join(","), target: ["production"] },
         ],
       }),
     });
