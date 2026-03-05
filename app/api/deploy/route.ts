@@ -34,13 +34,12 @@ export async function POST(request: Request) {
     const project = process.env.VERCEL_TEMPLATE_PROJECT;
     const templateRepo = normalizeRepoSlug(process.env.VERCEL_TEMPLATE_REPO);
     const githubToken = process.env.GITHUB_TOKEN;
-    const githubOwner = process.env.GITHUB_OWNER;
-    if (!token || !project || !templateRepo || !githubToken || !githubOwner) {
+    const githubOwner = process.env.GITHUB_OWNER || templateRepo?.owner;
+    if (!token || !templateRepo || !githubToken || !githubOwner) {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
       return NextResponse.json(
         {
-          error:
-            "Missing deployment configuration. Required: VERCEL_TOKEN, VERCEL_TEMPLATE_PROJECT, VERCEL_TEMPLATE_REPO, GITHUB_TOKEN, GITHUB_OWNER.",
+          error: "Missing deployment configuration. Required: VERCEL_TOKEN, VERCEL_TEMPLATE_REPO, GITHUB_TOKEN. Optional: GITHUB_OWNER (defaults to template repo owner), VERCEL_TEMPLATE_PROJECT.",
         },
         { status: 500 },
       );
@@ -156,7 +155,7 @@ export async function POST(request: Request) {
       deploymentId: payload.id,
       project: vercelProjectName,
       repository: clonedRepoFullName,
-      templateProject: project,
+      templateProject: project ?? null,
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
