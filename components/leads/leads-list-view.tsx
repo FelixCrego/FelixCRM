@@ -287,67 +287,124 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       ) : null}
 
       {viewMode === "closed" ? (
-        <section className="mb-8 rounded-xl border border-indigo-500/25 bg-gradient-to-br from-zinc-900 via-zinc-900 to-indigo-950/40 p-6 shadow-[0_0_40px_rgba(79,70,229,0.12)]">
-          <div className="mb-6 border-b border-zinc-800 pb-4">
-            <h2 className="text-xl font-bold text-white">Your Daily Battle Plan</h2>
-            <p className="mt-1 text-sm text-zinc-300">Turn every dial into momentum and pressure your pipeline until it pays out.</p>
-          </div>
+        <section className="mb-8">
+          <div className="bg-[#0a0a0a] border border-zinc-800 rounded-2xl p-6 shadow-2xl mb-8 font-sans">
+            <div className="mb-6 flex justify-between items-end border-b border-zinc-800 pb-4">
+              <div>
+                <h2 className="text-2xl font-black text-white tracking-tight uppercase">Your Daily Battle Plan</h2>
+                <p className="text-sm text-zinc-500 mt-1 font-medium">Control your inputs. Dictate your income.</p>
+              </div>
+              <div className="hidden sm:block px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold uppercase tracking-widest rounded-full border border-emerald-500/20">
+                Live Calculator
+              </div>
+            </div>
 
-          <div className="mb-2">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-indigo-300">The Grind (Your Inputs)</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[
-              ["Calls / day", calculatorCallsPerDay, setCalculatorCallsPerDay],
-              ["Call → Demo Booked %", calculatorCallToDemoRate, setCalculatorCallToDemoRate],
-              ["Demo Show Rate %", calculatorShowRate, setCalculatorShowRate],
-              ["Demo Close Rate %", calculatorCloseRate, setCalculatorCloseRate],
-              ["Monthly Income Goal ($)", calculatorIncomeGoal, setCalculatorIncomeGoal],
-              ["Commission Rate %", calculatorCommissionRate, setCalculatorCommissionRate],
-            ].map(([label, value, setter]) => (
-              <label key={label as string} className="flex flex-col">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">{label as string}</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={value as number}
-                  onChange={(event) => (setter as (value: number) => void)(Math.max(0, Number(event.target.value) || 0))}
-                  className="bg-zinc-950 border border-zinc-700 text-white text-sm rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
-                />
-              </label>
-            ))}
-          </div>
-          </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <div className="lg:col-span-7 space-y-5">
+                <h3 className="text-[11px] font-black text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-sm bg-indigo-500"></span> The Grind (Inputs)
+                </h3>
 
-          <div className="mb-6 mt-8">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-emerald-300">The Payoff (Your Pipeline)</h3>
-            <div className="grid grid-cols-2 gap-4 rounded-lg border border-zinc-700/70 bg-zinc-950/80 p-4 md:grid-cols-4">
-            <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Demos Booked</span>
-              <span className="text-xl font-semibold text-zinc-200">{demosBookedPerDay.toFixed(1)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Demos Completed</span>
-              <span className="text-xl font-semibold text-zinc-200">{demosCompletedPerDay.toFixed(1)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Projected Closes</span>
-              <span className="text-xl font-semibold text-indigo-400">{closedDealsPerDay.toFixed(2)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Take-Home Pay</span>
-              <span className="text-xl font-bold text-emerald-400">{formatCurrency(projectedCommissionPerDay)}</span>
-              <span className={`mt-1 text-xs font-semibold ${hypeColor}`}>{hypeMessage}</span>
-            </div>
-          </div>
-          </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  <div className="flex flex-col group">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 group-focus-within:text-indigo-400 transition-colors">Calls / Day</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calculatorCallsPerDay}
+                      onChange={(event) => setCalculatorCallsPerDay(Math.max(0, Number(event.target.value) || 0))}
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2.5 text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-zinc-900 transition-all shadow-inner"
+                    />
+                  </div>
 
-          <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-4 flex items-center gap-3">
-            <span className="text-indigo-400 text-xl">🎯</span>
-            <p className="text-sm text-indigo-200 font-medium leading-relaxed">
-              Daily plan target: <span className="font-semibold">{formatCurrency(incomeGoalPerDay)}</span> commission/day requires about{" "}
-              <span className="font-semibold">{closesNeededPerDay.toFixed(2)}</span> closes/day ({formatCurrency(revenueNeededPerDay)} in revenue/day at current average deal value of{" "}
-              {formatCurrency(averageClosedDealValue)}).
-            </p>
+                  <div className="flex flex-col group">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 group-focus-within:text-indigo-400 transition-colors">Booked %</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calculatorCallToDemoRate}
+                      onChange={(event) => setCalculatorCallToDemoRate(Math.max(0, Number(event.target.value) || 0))}
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2.5 text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-zinc-900 transition-all shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex flex-col group">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 group-focus-within:text-indigo-400 transition-colors">Show Rate %</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calculatorShowRate}
+                      onChange={(event) => setCalculatorShowRate(Math.max(0, Number(event.target.value) || 0))}
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2.5 text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-zinc-900 transition-all shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex flex-col group">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 group-focus-within:text-indigo-400 transition-colors">Close Rate %</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calculatorCloseRate}
+                      onChange={(event) => setCalculatorCloseRate(Math.max(0, Number(event.target.value) || 0))}
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2.5 text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-zinc-900 transition-all shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex flex-col group">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 group-focus-within:text-indigo-400 transition-colors">Monthly Goal ($)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calculatorIncomeGoal}
+                      onChange={(event) => setCalculatorIncomeGoal(Math.max(0, Number(event.target.value) || 0))}
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2.5 text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-zinc-900 transition-all shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex flex-col group">
+                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5 group-focus-within:text-indigo-400 transition-colors">Comm %</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calculatorCommissionRate}
+                      onChange={(event) => setCalculatorCommissionRate(Math.max(0, Number(event.target.value) || 0))}
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2.5 text-white text-sm font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:bg-zinc-900 transition-all shadow-inner"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="lg:col-span-5 relative overflow-hidden bg-gradient-to-br from-zinc-900 via-[#0a0a0a] to-black border border-zinc-800 rounded-xl p-6 shadow-2xl">
+                <div className="absolute -top-10 -right-10 w-48 h-48 bg-emerald-500/10 rounded-full blur-[50px] animate-pulse pointer-events-none"></div>
+
+                <h3 className="text-[11px] font-black text-zinc-400 uppercase tracking-widest mb-5">The Payoff (Pipeline)</h3>
+
+                <div className="grid grid-cols-3 gap-3 mb-6">
+                  <div className="bg-zinc-950/50 border border-zinc-800/80 rounded-lg p-3 text-center">
+                    <p className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Booked</p>
+                    <p className="text-xl font-black text-zinc-200">{demosBookedPerDay.toFixed(1)}</p>
+                  </div>
+                  <div className="bg-zinc-950/50 border border-zinc-800/80 rounded-lg p-3 text-center">
+                    <p className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Shows</p>
+                    <p className="text-xl font-black text-zinc-200">{demosCompletedPerDay.toFixed(1)}</p>
+                  </div>
+                  <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-3 text-center shadow-[0_0_15px_rgba(99,102,241,0.1)]">
+                    <p className="text-[9px] uppercase tracking-widest text-indigo-400/80 font-bold mb-1">Closes</p>
+                    <p className="text-xl font-black text-indigo-400">{closedDealsPerDay.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-zinc-800/80 mt-auto">
+                  <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Take-Home Pay</p>
+                  <div className="flex flex-col">
+                    <p className="text-5xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-300 tracking-tighter drop-shadow-sm">
+                      ${projectedCommissionPerDay.toFixed(2)}
+                    </p>
+                    <p className={`text-xs font-bold uppercase tracking-wider mt-2 ${hypeColor}`}>{hypeMessage}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       ) : null}
