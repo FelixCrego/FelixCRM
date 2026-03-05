@@ -23,10 +23,20 @@ type LeadRecord = {
   deployedUrl?: string | null;
   source_payload?: {
     aiResearchSummary?: string | null;
+    contacts?: LeadContactRecord[];
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
+    contacts?: LeadContactRecord[];
   } | null;
+};
+
+type LeadContactRecord = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
 };
 
 type LeadNoteRecord = {
@@ -134,6 +144,49 @@ const FALLBACK_LEAD: LeadRecord = {
   deployed_url: "",
 };
 
+function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord[] {
+  const payloadContacts = leadRecord?.source_payload?.contacts ?? leadRecord?.sourcePayload?.contacts;
+
+  if (Array.isArray(payloadContacts)) {
+    const sanitized = payloadContacts
+      .filter((contact) => contact && typeof contact === "object")
+      .map((contact) => {
+        const name = typeof contact.name === "string" ? contact.name.trim() : "";
+        const role = typeof contact.role === "string" ? contact.role.trim() : "";
+        const phones = Array.isArray(contact.phones)
+          ? contact.phones.map((phone) => String(phone).trim()).filter(Boolean)
+          : [];
+        const emails = Array.isArray(contact.emails)
+          ? contact.emails.map((email) => String(email).trim()).filter(Boolean)
+          : [];
+
+        return {
+          id: typeof contact.id === "string" && contact.id ? contact.id : crypto.randomUUID(),
+          name: name || "Primary Contact",
+          role,
+          phones,
+          emails,
+        };
+      })
+      .filter((contact) => contact.name || contact.phones.length || contact.emails.length);
+
+    if (sanitized.length) return sanitized;
+  }
+
+  const fallbackPhones = leadRecord?.phone ? [leadRecord.phone] : [];
+  const fallbackEmails = leadRecord?.email ? [leadRecord.email] : [];
+
+  return [
+    {
+      id: "primary-contact",
+      name: "Primary Contact",
+      role: "",
+      phones: fallbackPhones,
+      emails: fallbackEmails,
+    },
+  ];
+}
+
 function LeadWorkspaceSkeleton() {
   return (
     <div className="min-h-screen bg-zinc-950 p-6 text-zinc-100">
@@ -207,6 +260,13 @@ export default function LeadExecutionPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
   const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
+  const [leadContacts, setLeadContacts] = useState<LeadContactRecord[]>([]);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactRole, setNewContactRole] = useState("");
+  const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactEmail, setNewContactEmail] = useState("");
+  const [savingContacts, setSavingContacts] = useState(false);
+  const [contactsError, setContactsError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   useEffect(() => {
@@ -251,6 +311,7 @@ export default function LeadExecutionPage() {
 
         if (data) {
           setLead(data);
+          setLeadContacts(normalizeLeadContacts(data));
           const existingResearch = data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? "";
           setResearchInsight(existingResearch);
           const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
@@ -274,6 +335,7 @@ export default function LeadExecutionPage() {
       if (!alive) return;
 
       setLead(FALLBACK_LEAD);
+      setLeadContacts(normalizeLeadContacts(FALLBACK_LEAD));
       setLeadExecutionStatus("New");
       setStatus("ready");
     }
@@ -332,6 +394,112 @@ export default function LeadExecutionPage() {
     setDialNumber(lead?.phone || "");
   }, [lead?.phone]);
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
+
+  async function persistContacts(nextContacts: LeadContactRecord[]) {
+    if (!leadId) {
+      setLeadContacts(nextContacts);
+      return true;
+    }
+
+    setSavingContacts(true);
+    setContactsError("");
+    try {
+      const { data: existingRow } = await supabase
+        .from<{ source_payload?: Record<string, unknown> | null; sourcePayload?: Record<string, unknown> | null }>("leads")
+        .select("source_payload,sourcePayload")
+        .eq("id", leadId)
+        .single();
+
+      const baseSnakePayload = existingRow?.source_payload && typeof existingRow.source_payload === "object" ? existingRow.source_payload : {};
+      const baseCamelPayload = existingRow?.sourcePayload && typeof existingRow.sourcePayload === "object" ? existingRow.sourcePayload : {};
+
+      let result = await supabase
+        .from("leads")
+        .update({ source_payload: { ...baseSnakePayload, contacts: nextContacts } })
+        .eq("id", leadId);
+
+      if (result.error) {
+        result = await supabase
+          .from("leads")
+          .update({ sourcePayload: { ...baseCamelPayload, contacts: nextContacts } })
+          .eq("id", leadId);
+      }
+
+      if (result.error) throw result.error;
+
+      setLeadContacts(nextContacts);
+      setLead((previous) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          source_payload: {
+            ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+            contacts: nextContacts,
+          },
+          sourcePayload: {
+            ...(previous.sourcePayload ?? previous.source_payload ?? {}),
+            contacts: nextContacts,
+          },
+        };
+      });
+      return true;
+    } catch {
+      setContactsError("Unable to save contact updates right now.");
+      return false;
+    } finally {
+      setSavingContacts(false);
+    }
+  }
+
+  const handleLeadContactAdd = async () => {
+    const name = newContactName.trim();
+    const role = newContactRole.trim();
+    const phone = newContactPhone.trim();
+    const email = newContactEmail.trim();
+
+    if (!name && !phone && !email) {
+      setContactsError("Add at least a name, phone, or email for the contact.");
+      return;
+    }
+
+    const created: LeadContactRecord = {
+      id: crypto.randomUUID(),
+      name: name || "Untitled Contact",
+      role,
+      phones: phone ? [phone] : [],
+      emails: email ? [email] : [],
+    };
+
+    const success = await persistContacts([...leadContacts, created]);
+    if (!success) return;
+
+    setNewContactName("");
+    setNewContactRole("");
+    setNewContactPhone("");
+    setNewContactEmail("");
+  };
+
+  const handleLeadContactAddPhone = async (contactId: string, phone: string) => {
+    const cleanPhone = phone.trim();
+    if (!cleanPhone) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId ? { ...contact, phones: contact.phones.includes(cleanPhone) ? contact.phones : [...contact.phones, cleanPhone] } : contact,
+    );
+
+    await persistContacts(nextContacts);
+  };
+
+  const handleLeadContactAddEmail = async (contactId: string, email: string) => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId ? { ...contact, emails: contact.emails.includes(cleanEmail) ? contact.emails : [...contact.emails, cleanEmail] } : contact,
+    );
+
+    await persistContacts(nextContacts);
+  };
 
   async function runResearch() {
     if (!leadId) return;
@@ -668,7 +836,6 @@ export default function LeadExecutionPage() {
 
   if (!lead) return <LeadWorkspaceSkeleton />;
 
-  const leadEmail = lead?.email || "No email on file";
   const leadLocation = lead?.city || "Unknown location";
   const resolveNoteType = (note: LeadNoteRecord) => {
     const explicitType = (note.activity_type || note.activityType || "").toUpperCase();
@@ -763,17 +930,80 @@ export default function LeadExecutionPage() {
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="flex items-center gap-2 text-sm text-zinc-300">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">📞</span>
-              <span>{leadPhone}</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-zinc-300">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">✉️</span>
-              <span>{leadEmail}</span>
-            </div>
+            <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">Lead Contacts</p>
             <div className="flex items-center gap-2 text-sm text-zinc-300">
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">📍</span>
               <span>{leadLocation}</span>
+            </div>
+            {leadContacts.map((contact) => (
+              <div key={contact.id} className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+                <p className="text-sm font-medium text-zinc-100">{contact.name}</p>
+                <p className="text-xs text-zinc-500">{contact.role || "No role specified"}</p>
+                <div className="mt-2 space-y-1 text-xs text-zinc-300">
+                  <p>📞 {contact.phones.length ? contact.phones.join(" • ") : "No phone on file"}</p>
+                  <p>✉️ {contact.emails.length ? contact.emails.join(" • ") : "No email on file"}</p>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={async () => {
+                      const value = window.prompt("Add a phone number");
+                      if (!value) return;
+                      await handleLeadContactAddPhone(contact.id, value);
+                    }}
+                    className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500"
+                  >
+                    + Phone
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const value = window.prompt("Add an email");
+                      if (!value) return;
+                      await handleLeadContactAddEmail(contact.id, value);
+                    }}
+                    className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500"
+                  >
+                    + Email
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <div className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Add Contact</p>
+              <div className="mt-2 grid grid-cols-1 gap-2">
+                <input
+                  value={newContactName}
+                  onChange={(event) => setNewContactName(event.target.value)}
+                  placeholder="Contact name"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+                <input
+                  value={newContactRole}
+                  onChange={(event) => setNewContactRole(event.target.value)}
+                  placeholder="Role (Owner, Manager, etc)"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+                <input
+                  value={newContactPhone}
+                  onChange={(event) => setNewContactPhone(event.target.value)}
+                  placeholder="Phone"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+                <input
+                  value={newContactEmail}
+                  onChange={(event) => setNewContactEmail(event.target.value)}
+                  placeholder="Email"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+              </div>
+              <button
+                onClick={handleLeadContactAdd}
+                disabled={savingContacts}
+                className="mt-2 w-full rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-indigo-50 transition hover:bg-indigo-400 disabled:opacity-60"
+              >
+                {savingContacts ? "Saving..." : "Add Contact"}
+              </button>
+              {contactsError ? <p className="mt-2 text-xs text-rose-300">{contactsError}</p> : null}
             </div>
           </div>
 

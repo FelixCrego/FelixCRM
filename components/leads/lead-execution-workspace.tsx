@@ -1,6 +1,6 @@
 "use client";
 
-import { type MouseEvent, useMemo, useState } from "react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   CalendarDays,
@@ -13,6 +13,15 @@ import {
   Rocket,
   UserCircle2,
 } from "lucide-react";
+import { createClientComponentClient } from "@/lib/supabase-client";
+
+type WorkspaceLeadContact = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
 
 type LeadExecutionWorkspaceProps = {
   lead: {
@@ -78,6 +87,37 @@ function resolveStatus(input: string): (typeof statusOptions)[number] {
   return statusOptions.includes(input as (typeof statusOptions)[number]) ? (input as (typeof statusOptions)[number]) : "NEW";
 }
 
+function fallbackContacts(phone?: string | null, email?: string | null): WorkspaceLeadContact[] {
+  return [{
+    id: "primary",
+    name: "Primary Contact",
+    role: "Owner",
+    phones: phone ? [phone] : [],
+    emails: email ? [email] : [],
+  }];
+}
+
+function normalizeContacts(value: unknown, phone?: string | null, email?: string | null): WorkspaceLeadContact[] {
+  if (!Array.isArray(value)) return fallbackContacts(phone, email);
+
+  const contacts = value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => {
+      const record = item as Partial<WorkspaceLeadContact>;
+      const phones = Array.isArray(record.phones) ? record.phones.map((v) => String(v).trim()).filter(Boolean) : [];
+      const emails = Array.isArray(record.emails) ? record.emails.map((v) => String(v).trim()).filter(Boolean) : [];
+      return {
+        id: typeof record.id === "string" && record.id ? record.id : crypto.randomUUID(),
+        name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Untitled Contact",
+        role: typeof record.role === "string" ? record.role.trim() : "",
+        phones,
+        emails,
+      };
+    });
+
+  return contacts.length ? contacts : fallbackContacts(phone, email);
+}
+
 export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [currentStatus, setCurrentStatus] = useState<(typeof statusOptions)[number]>(resolveStatus(lead.status));
   const [commsTab, setCommsTab] = useState<"NOTES" | "SMS" | "EMAIL">("NOTES");
@@ -93,7 +133,15 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [meetLink, setMeetLink] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
+  const [contacts, setContacts] = useState<WorkspaceLeadContact[]>(fallbackContacts(lead.phone, lead.email));
+  const [contactsError, setContactsError] = useState("");
+  const [savingContacts, setSavingContacts] = useState(false);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactRole, setNewContactRole] = useState("");
+  const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactEmail, setNewContactEmail] = useState("");
   const activeTab = commsTab;
+  const supabase = useMemo(() => createClientComponentClient(), []);
 
   const siteUrl = useMemo(
     () => lead.deployedUrl ?? `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`,
@@ -103,6 +151,51 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const commsFeed = [...notesFeed, ...smsFeed, ...emailFeed];
 
   const personalizedScript = `Hey ${lead.businessName}, I noticed from your Google Reviews that customers love your speed, but your current site makes it hard to book on mobile. I actually just built a faster, mobile-optimized site for you here: ${siteUrl}. Do you have 5 mins to check it out?`;
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadContacts() {
+      const { data } = await supabase.from<{ source_payload?: { contacts?: unknown }; sourcePayload?: { contacts?: unknown } }>("leads").select("source_payload,sourcePayload").eq("id", lead.id).single();
+      if (!alive) return;
+
+      const payloadContacts = data?.source_payload?.contacts ?? data?.sourcePayload?.contacts;
+      setContacts(normalizeContacts(payloadContacts, lead.phone, lead.email));
+    }
+
+    loadContacts().catch(() => {
+      if (!alive) return;
+      setContacts(fallbackContacts(lead.phone, lead.email));
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [lead.id, lead.email, lead.phone, supabase]);
+
+  const persistContacts = async (nextContacts: WorkspaceLeadContact[]) => {
+    setSavingContacts(true);
+    setContactsError("");
+
+    try {
+      const { data } = await supabase.from<{ source_payload?: Record<string, unknown> | null; sourcePayload?: Record<string, unknown> | null }>("leads").select("source_payload,sourcePayload").eq("id", lead.id).single();
+      const baseSnake = data?.source_payload && typeof data.source_payload === "object" ? data.source_payload : {};
+      const baseCamel = data?.sourcePayload && typeof data.sourcePayload === "object" ? data.sourcePayload : {};
+
+      let result = await supabase.from("leads").update({ source_payload: { ...baseSnake, contacts: nextContacts } }).eq("id", lead.id);
+      if (result.error) {
+        result = await supabase.from("leads").update({ sourcePayload: { ...baseCamel, contacts: nextContacts } }).eq("id", lead.id);
+      }
+
+      if (result.error) throw result.error;
+
+      setContacts(nextContacts);
+    } catch {
+      setContactsError("Could not save contacts. Please try again.");
+    } finally {
+      setSavingContacts(false);
+    }
+  };
 
   const handleRunAnalysis = () => {
     setIsResearchLoading(true);
@@ -171,15 +264,109 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-sm">
           <p className="mb-2 font-medium text-zinc-200">Contact Info</p>
-          <p className="flex items-center gap-2 text-zinc-400">
-            <Phone className="h-3.5 w-3.5" /> {lead.phone || "No phone"}
-          </p>
-          <p className="mt-1 flex items-center gap-2 text-zinc-400">
-            <Mail className="h-3.5 w-3.5" /> {lead.email || "No email"}
-          </p>
-          <p className="mt-1 flex items-center gap-2 text-zinc-400">
+          <p className="mb-2 flex items-center gap-2 text-zinc-400">
             <MapPin className="h-3.5 w-3.5" /> {lead.city || "Unknown city"}
           </p>
+          <div className="space-y-2">
+            {contacts.map((contact) => (
+              <div key={contact.id} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2">
+                <p className="text-xs font-semibold text-zinc-200">{contact.name}</p>
+                <p className="text-[11px] text-zinc-500">{contact.role || "No role"}</p>
+                <p className="mt-1 flex items-center gap-2 text-zinc-400">
+                  <Phone className="h-3.5 w-3.5" /> {contact.phones.length ? contact.phones.join(" • ") : "No phone on file"}
+                </p>
+                <p className="mt-1 flex items-center gap-2 text-zinc-400">
+                  <Mail className="h-3.5 w-3.5" /> {contact.emails.length ? contact.emails.join(" • ") : "No email on file"}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => {
+                      const value = window.prompt("Add phone number");
+                      if (!value?.trim()) return;
+                      const nextContacts = contacts.map((item) =>
+                        item.id === contact.id && !item.phones.includes(value.trim())
+                          ? { ...item, phones: [...item.phones, value.trim()] }
+                          : item,
+                      );
+                      void persistContacts(nextContacts);
+                    }}
+                    className="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300"
+                  >
+                    + Phone
+                  </button>
+                  <button
+                    onClick={() => {
+                      const value = window.prompt("Add email");
+                      if (!value?.trim()) return;
+                      const nextContacts = contacts.map((item) =>
+                        item.id === contact.id && !item.emails.includes(value.trim())
+                          ? { ...item, emails: [...item.emails, value.trim()] }
+                          : item,
+                      );
+                      void persistContacts(nextContacts);
+                    }}
+                    className="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300"
+                  >
+                    + Email
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/70 p-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Add contact</p>
+            <div className="mt-2 grid gap-2">
+              <input
+                value={newContactName}
+                onChange={(event) => setNewContactName(event.target.value)}
+                placeholder="Name"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <input
+                value={newContactRole}
+                onChange={(event) => setNewContactRole(event.target.value)}
+                placeholder="Role (Owner, Manager, etc)"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <input
+                value={newContactPhone}
+                onChange={(event) => setNewContactPhone(event.target.value)}
+                placeholder="Phone"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <input
+                value={newContactEmail}
+                onChange={(event) => setNewContactEmail(event.target.value)}
+                placeholder="Email"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <button
+                onClick={() => {
+                  if (!newContactName.trim() && !newContactPhone.trim() && !newContactEmail.trim()) return;
+                  const nextContacts = [
+                    ...contacts,
+                    {
+                      id: crypto.randomUUID(),
+                      name: newContactName.trim() || "Untitled Contact",
+                      role: newContactRole.trim(),
+                      phones: newContactPhone.trim() ? [newContactPhone.trim()] : [],
+                      emails: newContactEmail.trim() ? [newContactEmail.trim()] : [],
+                    },
+                  ];
+                  void persistContacts(nextContacts);
+                  setNewContactName("");
+                  setNewContactRole("");
+                  setNewContactPhone("");
+                  setNewContactEmail("");
+                }}
+                disabled={savingContacts}
+                className="rounded bg-indigo-500 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+              >
+                Add Contact
+              </button>
+              {contactsError ? <p className="text-[11px] text-rose-300">{contactsError}</p> : null}
+            </div>
+          </div>
         </div>
 
         <label className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3">
