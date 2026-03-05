@@ -3,6 +3,8 @@ import { scrapeLeads } from "@/lib/scraper";
 import { insertLeads } from "@/lib/store";
 import { getAuthenticatedUserId } from "@/lib/auth";
 
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   try {
     const userId = await getAuthenticatedUserId();
