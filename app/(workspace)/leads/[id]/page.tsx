@@ -1609,8 +1609,6 @@ export default function LeadExecutionPage() {
 
           <a
             href={deployedUrl}
-            target="_blank"
-            rel="noreferrer"
             className="group block rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-4 shadow-lg shadow-indigo-900/40 transition hover:scale-[1.01]"
           >
             <div className="flex items-start justify-between gap-3">
