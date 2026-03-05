@@ -616,7 +616,7 @@ export default function LeadExecutionPage() {
 
     if (checkoutAmount >= 500) {
       setApprovalPending(false);
-      setCheckoutLink("buy.stripe.com/test_123");
+      setCheckoutLink(`buy.stripe.com/test_123?amount=${Math.round(checkoutAmount * 100)}`);
       setLeadExecutionStatus("Payment Pending");
       setCheckoutLoading(false);
       return;
@@ -632,11 +632,17 @@ export default function LeadExecutionPage() {
     try {
       const safeUrl = link.startsWith("http://") || link.startsWith("https://") ? link : `https://${link}`;
       const parsed = new URL(safeUrl);
-      const amountParam = parsed.searchParams.get("amount") || parsed.searchParams.get("amount_total") || parsed.searchParams.get("unit_amount");
+      const amount = parsed.searchParams.get("amount");
+      const amountTotal = parsed.searchParams.get("amount_total");
+      const unitAmount = parsed.searchParams.get("unit_amount");
+      const amountParam = amount ?? amountTotal ?? unitAmount;
       if (!amountParam) return null;
 
       const numericAmount = Number(amountParam);
-      return Number.isFinite(numericAmount) ? numericAmount : null;
+      if (!Number.isFinite(numericAmount)) return null;
+
+      const shouldTreatAsCents = amountTotal !== null || unitAmount !== null || amountParam.includes(".") === false;
+      return shouldTreatAsCents ? numericAmount / 100 : numericAmount;
     } catch {
       return null;
     }
@@ -652,9 +658,9 @@ export default function LeadExecutionPage() {
     const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
     const closedAtIso = new Date().toISOString();
 
-    const { error } = await supabase
-      .from("leads")
-      .update({
+    const tableCandidates = ["leads", "Lead", "lead"];
+    const payloadCandidates = [
+      {
         status: "CLOSED",
         source_payload: {
           ...sourcePayload,
@@ -662,10 +668,56 @@ export default function LeadExecutionPage() {
           closedAt: closedAtIso,
           stripeCheckoutLink: checkoutLink || null,
         },
-      })
-      .eq("id", leadId);
+      },
+      {
+        status: "CLOSED",
+        sourcePayload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      },
+      {
+        status: "CLOSED",
+        closed_deal_value: inferredDealValue,
+        closed_at: closedAtIso,
+        stripe_checkout_link: checkoutLink || null,
+        source_payload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      },
+      {
+        status: "CLOSED",
+        closedDealValue: inferredDealValue,
+        closedAt: closedAtIso,
+        stripeCheckoutLink: checkoutLink || null,
+        sourcePayload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      },
+    ];
 
-    if (error) {
+    let updateSucceeded = false;
+
+    for (const table of tableCandidates) {
+      for (const payload of payloadCandidates) {
+        const { error } = await supabase.from(table).update(payload).eq("id", leadId);
+        if (!error) {
+          updateSucceeded = true;
+          break;
+        }
+      }
+      if (updateSucceeded) break;
+    }
+
+    if (!updateSucceeded) {
       setCloseDealError("Unable to mark this lead as closed right now.");
       setClosingDeal(false);
       return;
