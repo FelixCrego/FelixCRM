@@ -273,13 +273,15 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       ) : null}
 
       {viewMode === "closed" ? (
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold text-zinc-100">Deal Calculator + Daily Plan</h2>
-            <p className="mt-1 text-sm text-zinc-400">Model your funnel math and see the daily activity needed to hit your income target.</p>
+        <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-lg mb-8">
+          <div className="mb-6 border-b border-zinc-800 pb-4">
+            <h2 className="text-xl font-bold text-white">Deal Calculator + Daily Plan</h2>
+            <p className="text-zinc-400 text-sm mt-1">Model your funnel math and see the daily activity needed to hit your income target.</p>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <div className="mb-2">
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Funnel Levers</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {[
               ["Calls / day", calculatorCallsPerDay, setCalculatorCallsPerDay],
               ["Call → Demo Booked %", calculatorCallToDemoRate, setCalculatorCallToDemoRate],
@@ -288,40 +290,45 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
               ["Monthly Income Goal ($)", calculatorIncomeGoal, setCalculatorIncomeGoal],
               ["Commission Rate %", calculatorCommissionRate, setCalculatorCommissionRate],
             ].map(([label, value, setter]) => (
-              <label key={label as string} className="rounded-xl border border-zinc-700 bg-zinc-950/70 p-3 text-sm text-zinc-300">
-                <span className="block text-xs uppercase tracking-[0.14em] text-zinc-500">{label as string}</span>
+              <label key={label as string} className="flex flex-col">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">{label as string}</span>
                 <input
                   type="number"
                   min={0}
                   value={value as number}
                   onChange={(event) => (setter as (value: number) => void)(Math.max(0, Number(event.target.value) || 0))}
-                  className="mt-2 w-full bg-transparent text-lg font-semibold text-zinc-100 outline-none"
+                  className="bg-zinc-950 border border-zinc-700 text-white text-sm rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
                 />
               </label>
             ))}
           </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
-              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Demos Booked / Day</p>
-              <p className="mt-1 text-2xl font-semibold text-zinc-100">{demosBookedPerDay.toFixed(1)}</p>
-            </div>
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
-              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Demos Completed / Day</p>
-              <p className="mt-1 text-2xl font-semibold text-zinc-100">{demosCompletedPerDay.toFixed(1)}</p>
-            </div>
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
-              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Projected Closes / Day</p>
-              <p className="mt-1 text-2xl font-semibold text-emerald-200">{closedDealsPerDay.toFixed(2)}</p>
-            </div>
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
-              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Projected Commission / Day</p>
-              <p className="mt-1 text-2xl font-semibold text-emerald-200">{formatCurrency(projectedCommissionPerDay)}</p>
-            </div>
           </div>
 
-          <div className="mt-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-sm text-indigo-100">
-            <p>
+          <div className="mt-8 mb-6">
+            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Daily Projections</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-zinc-950/50 border border-zinc-800/50 rounded-lg">
+            <div className="flex flex-col">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Demos Booked</span>
+              <span className="text-xl font-semibold text-zinc-200">{demosBookedPerDay.toFixed(1)}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Demos Completed</span>
+              <span className="text-xl font-semibold text-zinc-200">{demosCompletedPerDay.toFixed(1)}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Projected Closes</span>
+              <span className="text-xl font-semibold text-indigo-400">{closedDealsPerDay.toFixed(2)}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Commission / Day</span>
+              <span className="text-xl font-bold text-emerald-400">{formatCurrency(projectedCommissionPerDay)}</span>
+            </div>
+          </div>
+          </div>
+
+          <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-4 flex items-center gap-3">
+            <span className="text-indigo-400 text-xl">🎯</span>
+            <p className="text-sm text-indigo-200 font-medium leading-relaxed">
               Daily plan target: <span className="font-semibold">{formatCurrency(incomeGoalPerDay)}</span> commission/day requires about{" "}
               <span className="font-semibold">{closesNeededPerDay.toFixed(2)}</span> closes/day ({formatCurrency(revenueNeededPerDay)} in revenue/day at current average deal value of{" "}
               {formatCurrency(averageClosedDealValue)}).
