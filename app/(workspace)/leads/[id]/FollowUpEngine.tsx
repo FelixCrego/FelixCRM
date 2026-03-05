@@ -98,14 +98,14 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
             </select>
             <input type="text" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Objective (e.g., Ask for the close)" className="flex-1 bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-4 py-2.5 focus:outline-none focus:border-indigo-500 placeholder-zinc-500"/>
           </div>
-          <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <div className="flex gap-2">
               <button type="button" onClick={() => setQuickDate(1)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-md border border-zinc-700">Tomorrow</button>
               <button type="button" onClick={() => setQuickDate(3)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-md border border-zinc-700">In 3 Days</button>
             </div>
-            <div className="flex gap-2 flex-1">
-              <input type="date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
-              <input type="time" value={taskTime} onChange={(e) => setTaskTime(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
+            <div className="flex gap-2 flex-1 min-w-0">
+              <input type="date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} required className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
+              <input type="time" value={taskTime} onChange={(e) => setTaskTime(e.target.value)} required className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
             </div>
             <button type="submit" className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider px-5 py-2 rounded-md shadow-[0_0_15px_rgba(79,70,229,0.3)]">Lock It In</button>
           </div>
