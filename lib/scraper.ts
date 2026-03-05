@@ -21,9 +21,11 @@ type GooglePlaceDetailsResponse = {
 
 const SCRAPE_FETCH_TIMEOUT_MS = 15000;
 const SCRAPE_RETRY_ATTEMPTS = 3;
-const MAX_AI_MICRO_QUERIES = 12;
+const MAX_AI_MICRO_QUERIES = 10;
 const MAX_RESULTS_PAGES_PER_QUERY = 2;
-const MAX_PLACE_DETAILS_LOOKUPS_PER_RUN = 120;
+const MAX_PLACE_DETAILS_LOOKUPS_PER_RUN = 80;
+const MAX_LEADS_PER_RUN = 40;
+const SCRAPE_RUNTIME_BUDGET_MS = 45000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,6 +174,8 @@ export type ScrapeDiagnostics = {
   detailsErrorCount: number;
   detailsLookupCount: number;
   stoppedEarly: boolean;
+  timeBudgetExceeded: boolean;
+  leadCapReached: boolean;
   skippedByRating: number;
   skippedByDedupe: number;
 };
@@ -214,19 +218,36 @@ export async function scrapeLeads(
     detailsErrorCount: 0,
     detailsLookupCount: 0,
     stoppedEarly: false,
+    timeBudgetExceeded: false,
+    leadCapReached: false,
     skippedByRating: 0,
     skippedByDedupe: 0,
   };
 
   const querySeed = `${businessType} in ${city}`;
   const queries = await generateMicroQueries(querySeed, geminiApiKey);
+  const startedAt = Date.now();
+
+  const isRuntimeBudgetExceeded = () => Date.now() - startedAt >= SCRAPE_RUNTIME_BUDGET_MS;
 
   for (const query of queries) {
+    if (isRuntimeBudgetExceeded()) {
+      diagnostics.stoppedEarly = true;
+      diagnostics.timeBudgetExceeded = true;
+      break;
+    }
+
     diagnostics.queriesAttempted += 1;
     let params = new URLSearchParams({ query, key: mapsApiKey });
     let pageCount = 0;
 
     while (pageCount < MAX_RESULTS_PAGES_PER_QUERY) {
+      if (isRuntimeBudgetExceeded()) {
+        diagnostics.stoppedEarly = true;
+        diagnostics.timeBudgetExceeded = true;
+        break;
+      }
+
       const searchJson = await fetchSearchPage(params);
       if (!searchJson) {
         diagnostics.textSearchErrorCount += 1;
@@ -251,6 +272,18 @@ export async function scrapeLeads(
       if (!results.length) break;
 
       for (const place of results) {
+        if (isRuntimeBudgetExceeded()) {
+          diagnostics.stoppedEarly = true;
+          diagnostics.timeBudgetExceeded = true;
+          break;
+        }
+
+        if (leads.length >= MAX_LEADS_PER_RUN) {
+          diagnostics.stoppedEarly = true;
+          diagnostics.leadCapReached = true;
+          break;
+        }
+
         if (diagnostics.detailsLookupCount >= MAX_PLACE_DETAILS_LOOKUPS_PER_RUN) {
           diagnostics.stoppedEarly = true;
           break;
