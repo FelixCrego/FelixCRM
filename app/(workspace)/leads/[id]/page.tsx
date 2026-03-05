@@ -265,6 +265,8 @@ export default function LeadExecutionPage() {
   const [checkoutLink, setCheckoutLink] = useState("");
   const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
+  const [closingDeal, setClosingDeal] = useState(false);
+  const [closeDealError, setCloseDealError] = useState("");
   const [playbookLoading, setPlaybookLoading] = useState(false);
   const [playbookError, setPlaybookError] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);

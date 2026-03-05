@@ -144,19 +144,12 @@ export async function POST(req: Request) {
   try {
     rawBody = await req.text();
 
-    let payload: Record<string, unknown> = {};
+    let payload: GenerateCopyPayload = {};
     try {
-      payload = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+      payload = rawBody ? (JSON.parse(rawBody) as GenerateCopyPayload) : {};
     } catch {
       payload = {};
     }
-  }
-
-    const payload = (await req.json()) as GenerateCopyPayload;
-    const leadName = typeof payload.leadName === "string" ? payload.leadName.trim() : "";
-    const activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim() : "";
-    const researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
-
 
     leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
