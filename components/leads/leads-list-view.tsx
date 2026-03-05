@@ -54,14 +54,19 @@ function normalizeLead(raw: unknown): Lead | null {
 
   const updatedAtSource = typeof lead.updatedAt === "string" ? lead.updatedAt : new Date().toISOString();
   const updatedAt = Number.isNaN(new Date(updatedAtSource).getTime()) ? new Date().toISOString() : updatedAtSource;
+  const rawStatus = typeof lead["status"] === "string" ? (lead["status"] as string) : "";
   const status =
-    lead.status === "NEW" ||
-    lead.status === "CONTACTED" ||
-    lead.status === "IN_PROGRESS" ||
-    lead.status === "CLOSED" ||
-    lead.status === "DISQUALIFIED"
-      ? lead.status
-      : "NEW";
+    rawStatus === "NEW" || rawStatus === "New"
+      ? "NEW"
+      : rawStatus === "CONTACTED"
+        ? "CONTACTED"
+        : rawStatus === "IN_PROGRESS" || rawStatus === "Pitched" || rawStatus === "Awaiting Approval" || rawStatus === "Payment Pending"
+          ? "IN_PROGRESS"
+          : rawStatus === "CLOSED" || rawStatus === "Closed Won"
+            ? "CLOSED"
+            : rawStatus === "DISQUALIFIED"
+              ? "DISQUALIFIED"
+              : "NEW";
 
   const siteStatus =
     lead.siteStatus === "UNBUILT" || lead.siteStatus === "BUILDING" || lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED"

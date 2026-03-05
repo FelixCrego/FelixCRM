@@ -766,7 +766,7 @@ export default function LeadExecutionPage() {
     const { error } = await supabase
       .from("leads")
       .update({
-        status: "CLOSED",
+        status: "Closed Won",
         source_payload: {
           ...sourcePayload,
           closedDealValue: inferredDealValue,
@@ -787,7 +787,7 @@ export default function LeadExecutionPage() {
       previous
         ? {
             ...previous,
-            status: "CLOSED",
+            status: "Closed Won",
             source_payload: {
               ...(previous.source_payload ?? previous.sourcePayload ?? {}),
               closedDealValue: inferredDealValue,
