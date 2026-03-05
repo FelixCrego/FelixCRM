@@ -98,15 +98,29 @@ function buildFallbackPlaybook(leadName: string, researchContext?: string): Play
 }
 
 export async function POST(req: Request) {
-  try {
-    if (!apiKey) {
-      return NextResponse.json({ error: "Missing GEMINI_API_KEY configuration" }, { status: 500 });
-    }
+  let leadName = "this business";
+  let activeTab = "";
+  let researchContext = "";
 
-    const { leadName, activeTab, researchContext } = await req.json();
+  try {
+    const payload = await req.json();
+    leadName = payload?.leadName || "this business";
+    activeTab = payload?.activeTab || "";
+    researchContext = payload?.researchContext || "";
 
     if (!leadName || !activeTab) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+
+    if (!apiKey) {
+      if (activeTab === "PLAYBOOK") {
+        return NextResponse.json({
+          playbook: buildFallbackPlaybook(leadName, researchContext),
+          warning: "Gemini key missing. Showing fallback playbook.",
+        });
+      }
+
+      return NextResponse.json({ error: "Missing GEMINI_API_KEY configuration" }, { status: 500 });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -185,6 +199,14 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
     }
   } catch (error) {
     console.error("Gemini Draft Error:", error);
+
+    if (activeTab === "PLAYBOOK") {
+      return NextResponse.json({
+        playbook: buildFallbackPlaybook(leadName, researchContext),
+        warning: "Unexpected AI error. Showing fallback playbook.",
+      });
+    }
+
     return NextResponse.json({ error: "Failed to generate draft" }, { status: 500 });
   }
 }
