@@ -1,14 +1,121 @@
 import { NextResponse } from "next/server";
 import { getLeadById, setLeadDeployment } from "@/lib/store";
 import { getAuthenticatedUserId } from "@/lib/auth";
-import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION } from "@/lib/template-config";
+import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION, type TemplateConfig } from "@/lib/template-config";
 
 function normalizeRepoSlug(value: string | undefined): { owner: string; repo: string } | null {
   if (!value) return null;
-  const normalized = value.trim().replace(/^https?:\/\/github.com\//i, "").replace(/\.git$/i, "").replace(/^\/+|\/+$/g, "");
-  const [owner, repo] = normalized.split("/");
+  const normalized = value
+    .trim()
+    .replace(/^git@github\.com:/i, "")
+    .replace(/^ssh:\/\/git@github\.com\//i, "")
+    .replace(/^https?:\/\/github.com\//i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const [owner, repo] = normalized.split("/").filter(Boolean);
   if (!owner || !repo) return null;
   return { owner, repo };
+}
+
+
+function normalizePhoneHref(phone: string): string {
+  const digits = phone.replace(/\D+/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("1") && digits.length === 11) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  return `+${digits}`;
+}
+
+function escapeForQuotedValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function normalizeSocialPlatform(label: string): "facebook" | "instagram" | "x" | "youtube" | "google" | "linkedin" {
+  const lower = label.toLowerCase();
+  if (lower.includes("facebook")) return "facebook";
+  if (lower.includes("instagram")) return "instagram";
+  if (lower.includes("youtube")) return "youtube";
+  if (lower.includes("google")) return "google";
+  if (lower.includes("linkedin")) return "linkedin";
+  return "x";
+}
+
+function applySiteConfigOverrides(source: string, config: TemplateConfig): string {
+  let updated = source;
+  const businessName = config.business.name;
+  const phoneDisplay = config.content.contact.phone;
+  const phoneHref = normalizePhoneHref(phoneDisplay);
+  const email = config.content.contact.email;
+
+  updated = updated.replace(/businessName:\s*"[^"]*"/, `businessName: "${escapeForQuotedValue(businessName)}"`);
+  updated = updated.replace(/text:\s*"[^"]*"/, `text: "${escapeForQuotedValue(businessName)}"`);
+  updated = updated.replace(/shortText:\s*"[^"]*"/, `shortText: "${escapeForQuotedValue(businessName)}"`);
+
+  if (phoneDisplay) {
+    updated = updated.replace(/phoneDisplay:\s*"[^"]*"/, `phoneDisplay: "${escapeForQuotedValue(phoneDisplay)}"`);
+  }
+  if (phoneHref) {
+    updated = updated.replace(/phoneHref:\s*"[^"]*"/, `phoneHref: "${escapeForQuotedValue(phoneHref)}"`);
+  }
+  if (email) {
+    updated = updated.replace(/email:\s*"[^"]*"/, `email: "${escapeForQuotedValue(email)}"`);
+  }
+
+  if (config.links.socials.length > 0) {
+    const firstSocial = config.links.socials[0];
+    const firstLabel = firstSocial.label || "Social";
+    const platform = normalizeSocialPlatform(firstSocial.label || firstSocial.url);
+    updated = updated.replace(
+      /\{\s*platform:\s*"[^"]+"\s*,\s*label:\s*"[^"]+"\s*,\s*url:\s*"[^"]+"\s*\}/,
+      `{ platform: "${platform}", label: "${escapeForQuotedValue(firstLabel)}", url: "${escapeForQuotedValue(firstSocial.url)}" }`,
+    );
+  }
+
+  return updated;
+}
+
+async function patchGeneratedRepoSiteConfig(params: {
+  githubHeaders: Record<string, string>;
+  repoFullName: string;
+  branch: string;
+  templateConfig: TemplateConfig;
+}) {
+  const candidatePaths = ["src/config/site.ts", "src/config/siteConfig.ts", "config/site.ts", "siteConfig.ts", "lib/siteConfig.ts"];
+
+  for (const path of candidatePaths) {
+    const getResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}?ref=${params.branch}`, {
+      headers: params.githubHeaders,
+    });
+
+    if (!getResponse.ok) continue;
+
+    const contentPayload = (await getResponse.json()) as { sha?: string; content?: string; encoding?: string };
+    const sha = contentPayload.sha;
+    const encodedContent = contentPayload.content;
+    if (!sha || !encodedContent || contentPayload.encoding !== "base64") continue;
+
+    const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
+    const updated = applySiteConfigOverrides(source, params.templateConfig);
+    if (updated === source) return;
+
+    const putResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}`, {
+      method: "PUT",
+      headers: params.githubHeaders,
+      body: JSON.stringify({
+        message: "chore: customize site config from lead data",
+        content: Buffer.from(updated, "utf8").toString("base64"),
+        sha,
+        branch: params.branch,
+      }),
+    });
+
+    if (!putResponse.ok) {
+      const errorText = await putResponse.text();
+      throw new Error(`Failed to customize ${path}: ${errorText || putResponse.statusText}`);
+    }
+
+    return;
+  }
 }
 
 function slugify(input: string, fallback: string): string {
@@ -57,40 +164,96 @@ export async function POST(request: Request) {
     );
 
     const repoName = slugify(lead.businessName, `felix-${lead.id.slice(0, 8)}`);
-    const gitRepoCreateResponse = await fetch(
-      `https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          owner: githubOwner,
-          name: repoName,
-          description: `Felix CRM generated site for ${lead.businessName}`,
-          include_all_branches: false,
-          private: true,
-        }),
-      },
-    );
+    const githubHeaders = {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+    };
 
-    if (!gitRepoCreateResponse.ok) {
+    let createdRepo: { id?: number; full_name?: string; default_branch?: string } | null = null;
+    let repoDefaultBranch = process.env.VERCEL_TEMPLATE_BRANCH || "main";
+
+    const gitRepoCreateResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`, {
+      method: "POST",
+      headers: githubHeaders,
+      body: JSON.stringify({
+        owner: githubOwner,
+        name: repoName,
+        description: `Felix CRM generated site for ${lead.businessName}`,
+        include_all_branches: false,
+        private: true,
+      }),
+    });
+
+    if (gitRepoCreateResponse.ok) {
+      createdRepo = (await gitRepoCreateResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
+      repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
+    } else if (gitRepoCreateResponse.status === 404) {
+      let forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+        method: "POST",
+        headers: githubHeaders,
+        body: JSON.stringify({
+          name: repoName,
+          organization: githubOwner,
+          default_branch_only: true,
+        }),
+      });
+
+      if (!forkRepoResponse.ok) {
+        forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+          method: "POST",
+          headers: githubHeaders,
+          body: JSON.stringify({
+            name: repoName,
+            default_branch_only: true,
+          }),
+        });
+      }
+
+      if (!forkRepoResponse.ok) {
+        await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+        const templateError = await gitRepoCreateResponse.text();
+        const forkError = await forkRepoResponse.text();
+        return NextResponse.json(
+          {
+            error: `GitHub template clone failed and fork fallback failed: template=${templateError || gitRepoCreateResponse.statusText}; fork=${forkError || forkRepoResponse.statusText}`,
+          },
+          { status: 500 },
+        );
+      }
+
+      createdRepo = (await forkRepoResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
+      repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
+    } else {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
       const errorText = await gitRepoCreateResponse.text();
       return NextResponse.json({ error: `GitHub template clone failed: ${errorText || gitRepoCreateResponse.statusText}` }, { status: 500 });
     }
 
-    const createdRepo = (await gitRepoCreateResponse.json()) as { full_name?: string; default_branch?: string };
     const clonedRepoFullName = createdRepo.full_name;
-    const repoDefaultBranch = createdRepo.default_branch || process.env.VERCEL_TEMPLATE_BRANCH || "main";
+    const clonedRepoId = createdRepo.id;
 
-    if (!clonedRepoFullName) {
+    if (!clonedRepoFullName || !clonedRepoId) {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
-      return NextResponse.json({ error: "GitHub template clone succeeded but did not return a repository name." }, { status: 500 });
+      return NextResponse.json({ error: "GitHub repository creation succeeded but did not return repository metadata (name/id)." }, { status: 500 });
     }
+
+    await patchGeneratedRepoSiteConfig({
+      githubHeaders,
+      repoFullName: clonedRepoFullName,
+      branch: repoDefaultBranch,
+      templateConfig,
+    });
+
+    const deploymentEnv = {
+      TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
+      TEMPLATE_CONFIG_VERSION,
+      BUSINESS_NAME: templateConfig.business.name,
+      CONTACT_PHONE: templateConfig.content.contact.phone,
+      CONTACT_EMAIL: templateConfig.content.contact.email,
+      SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
+    };
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
     const createProjectResponse = await fetch("https://api.vercel.com/v10/projects", {
@@ -115,6 +278,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Vercel project creation failed: ${errorText || createProjectResponse.statusText}` }, { status: 500 });
     }
 
+    for (const [key, value] of Object.entries(deploymentEnv)) {
+      const upsertEnvResponse = await fetch(`https://api.vercel.com/v10/projects/${vercelProjectName}/env?upsert=true`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          key,
+          value,
+          target: ["production"],
+          type: "encrypted",
+        }),
+      });
+
+      if (!upsertEnvResponse.ok) {
+        await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+        const errorText = await upsertEnvResponse.text();
+        return NextResponse.json({ error: `Vercel env upsert failed for ${key}: ${errorText || upsertEnvResponse.statusText}` }, { status: 500 });
+      }
+    }
+
     const response = await fetch("https://api.vercel.com/v13/deployments", {
       method: "POST",
       headers: {
@@ -127,17 +312,11 @@ export async function POST(request: Request) {
         gitSource: {
           type: "github",
           repo: clonedRepoFullName,
+          repoId: String(clonedRepoId),
           ref: repoDefaultBranch,
         },
         target: "production",
-        env: [
-          { key: "TEMPLATE_CONFIG_JSON", value: JSON.stringify(templateConfig), target: ["production"] },
-          { key: "TEMPLATE_CONFIG_VERSION", value: TEMPLATE_CONFIG_VERSION, target: ["production"] },
-          { key: "BUSINESS_NAME", value: templateConfig.business.name, target: ["production"] },
-          { key: "CONTACT_PHONE", value: templateConfig.content.contact.phone, target: ["production"] },
-          { key: "CONTACT_EMAIL", value: templateConfig.content.contact.email, target: ["production"] },
-          { key: "SOCIAL_LINKS", value: templateConfig.links.socials.map((social) => social.url).join(","), target: ["production"] },
-        ],
+        env: deploymentEnv,
       }),
     });
 
