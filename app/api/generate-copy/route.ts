@@ -3,13 +3,22 @@ import { NextResponse } from "next/server";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
+type GenerateCopyPayload = {
+  leadName?: string;
+  activeTab?: string;
+  researchContext?: string;
+};
+
 export async function POST(req: Request) {
   try {
     if (!apiKey) {
       return NextResponse.json({ error: "Missing GEMINI_API_KEY configuration" }, { status: 500 });
     }
 
-    const { leadName, activeTab, researchContext } = await req.json();
+    const payload = (await req.json()) as GenerateCopyPayload;
+    const leadName = typeof payload.leadName === "string" ? payload.leadName.trim() : "";
+    const activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim() : "";
+    const researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
 
     if (!leadName || !activeTab) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
