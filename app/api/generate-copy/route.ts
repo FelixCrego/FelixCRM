@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
 const apiKey = process.env.GEMINI_API_KEY;
-const GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"] as const;
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"] as const;
 
 type PlaybookPayload = {
   scripts: string[];
@@ -119,7 +119,7 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
       const response = await result.response;
-      return { text: response.text().trim(), modelName };
+      return { text: response.text().trim(), modelName, errors };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${modelName}: ${message}`);
@@ -128,12 +128,6 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
 
   throw new Error(errors.join(" | "));
 }
-
-type GenerateCopyPayload = {
-  leadName?: string;
-  activeTab?: string;
-  researchContext?: string;
-};
 
 export async function POST(req: Request) {
   let leadName = "this business";
@@ -151,12 +145,6 @@ export async function POST(req: Request) {
       payload = {};
     }
   }
-
-    const payload = (await req.json()) as GenerateCopyPayload;
-    const leadName = typeof payload.leadName === "string" ? payload.leadName.trim() : "";
-    const activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim() : "";
-    const researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
-
 
     leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
@@ -227,7 +215,12 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       if (activeTab === "PLAYBOOK") {
         const parsedPlaybook = parsePlaybookFromText(text);
         if (parsedPlaybook) {
-          return NextResponse.json({ playbook: parsedPlaybook, draft: text, model: generation.modelName });
+          return NextResponse.json({
+            playbook: parsedPlaybook,
+            draft: text,
+            model: generation.modelName,
+            retries: generation.errors.length,
+          });
         }
 
         return NextResponse.json({
@@ -238,13 +231,14 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
         });
       }
 
-      return NextResponse.json({ draft: text, model: generation.modelName });
+      return NextResponse.json({ draft: text, model: generation.modelName, retries: generation.errors.length });
     } catch (generationError) {
       if (activeTab === "PLAYBOOK") {
         console.error("Gemini Playbook Generation Error:", generationError);
+        const details = generationError instanceof Error ? generationError.message : String(generationError);
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
-          warning: "Gemini request failed across available models. Showing fallback playbook.",
+          warning: `Gemini request failed across available models. Showing fallback playbook. ${details.slice(0, 220)}`.trim(),
         });
       }
 
