@@ -27,7 +27,38 @@ function formatTimestamp(value: string) {
 export default function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // 1. Load from LocalStorage (or default if empty)
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window !== "undefined") {
+      const savedMessages = localStorage.getItem("crm_chat_history");
+      if (savedMessages) {
+        try {
+          return JSON.parse(savedMessages) as ChatMessage[];
+        } catch {
+          localStorage.removeItem("crm_chat_history");
+        }
+      }
+    }
+    // Default fallback state
+    return [
+      {
+        id: "1",
+        senderId: "manager-dan",
+        senderName: "Manager Dan",
+        recipientId: null,
+        content: "Who is covering the 3PM demo?",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "2",
+        senderId: "codegym787",
+        senderName: "codegym787",
+        recipientId: null,
+        content: "Hey, did you send that AWS link?",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  });
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState(0);
@@ -67,6 +98,13 @@ export default function ChatWidget() {
   useEffect(() => {
     selectedPeerIdRef.current = selectedPeerId;
   }, [selectedPeerId]);
+
+  // 2. Save to LocalStorage whenever messages change
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("crm_chat_history", JSON.stringify(messages));
+    }
+  }, [messages]);
 
   const loadMessages = useCallback(async (peerId?: string | null) => {
     const requestId = ++messageRequestIdRef.current;
