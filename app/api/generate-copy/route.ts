@@ -129,6 +129,12 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
   throw new Error(errors.join(" | "));
 }
 
+type GenerateCopyPayload = {
+  leadName?: string;
+  activeTab?: string;
+  researchContext?: string;
+};
+
 export async function POST(req: Request) {
   let leadName = "this business";
   let activeTab = "";
@@ -146,8 +152,10 @@ export async function POST(req: Request) {
     }
   }
 
-  return null;
-}
+    const payload = (await req.json()) as GenerateCopyPayload;
+    const leadName = typeof payload.leadName === "string" ? payload.leadName.trim() : "";
+    const activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim() : "";
+    const researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
 
 
     leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
