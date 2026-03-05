@@ -1,15 +1,19 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-// IMPORTANT: Adjust this import to match your actual Supabase client path
-import { supabase } from '@/lib/supabaseClient'; 
 
 type ChatMessage = {
   id: string;
-  created_at?: string;
-  channel: string;
-  sender: string;
+  createdAt?: string;
+  recipientId?: string | null;
+  senderId: string;
+  senderName: string;
   content: string;
+};
+
+type ChatUser = {
+  id: string;
+  name: string;
 };
 
 export default function ChatWidget() {
@@ -21,68 +25,70 @@ export default function ChatWidget() {
   
   // Data State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [username, setUsername] = useState('');
-  const [isNameSet, setIsNameSet] = useState(false);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
+  const [users, setUsers] = useState<ChatUser[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // 1. Check for existing username on mount
+  const activePeerId = activeChannel === 'sales_floor' ? null : activeChannel;
+
+  // Fetch users for DM channels
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedName = localStorage.getItem('crm_chat_username');
-      if (savedName) {
-        setUsername(savedName);
-        setIsNameSet(true);
-      }
-    }
+    const fetchUsers = async () => {
+      const response = await fetch('/api/chat/users', { cache: 'no-store' });
+      if (!response.ok) return;
+
+      const payload = (await response.json()) as { users?: ChatUser[] };
+      setUsers(Array.isArray(payload.users) ? payload.users : []);
+    };
+
+    fetchUsers().catch(() => undefined);
   }, []);
 
-  const handleSaveUsername = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!username.trim()) return;
-    localStorage.setItem('crm_chat_username', username.trim());
-    setIsNameSet(true);
-  };
-
-  // 2. Fetch History & Subscribe to Realtime (Only if name is set)
+  // Fetch message history and poll for new messages.
   useEffect(() => {
-    if (!isNameSet) return;
-
     const fetchMessages = async () => {
-      const { data, error } = await supabase
-        .from<ChatMessage>('chat_messages')
-        .select('*')
-        .order('created_at', { ascending: true });
-        
-      if (data) setMessages(data);
-      if (error) console.error("Error fetching messages:", error);
+      const query = activePeerId ? `?peerId=${encodeURIComponent(activePeerId)}` : '';
+      const response = await fetch(`/api/chat/messages${query}`, { cache: 'no-store' });
+      if (!response.ok) return;
+
+      const payload = (await response.json()) as { messages?: ChatMessage[]; userId?: string };
+      setMessages(Array.isArray(payload.messages) ? payload.messages : []);
+      if (typeof payload.userId === 'string' && payload.userId) {
+        setMyUserId(payload.userId);
+      }
     };
 
-    fetchMessages();
+    fetchMessages().catch(() => undefined);
 
-    const channel = supabase
-      .channel<ChatMessage>('public:chat_messages')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'chat_messages' },
-        (payload: { new: ChatMessage }) => {
-          const newMessage = payload.new;
-          setMessages((prev) => [...prev, newMessage]);
-          
-          // Trigger notification if the message wasn't sent by me
-          if (newMessage.sender !== username) {
-            setUnreadCount((prev) => isOpen ? prev : prev + 1);
-          }
-        }
-      )
-      .subscribe();
+    const timer = setInterval(() => {
+      fetchMessages().catch(() => undefined);
+    }, 2000);
 
+    return () => clearInterval(timer);
+  }, [activePeerId]);
+
+  // Trigger notification count for unseen incoming updates.
+  useEffect(() => {
+    if (isOpen || !myUserId) return;
+    const unseen = messages.filter((message) => message.senderId !== myUserId).length;
+    if (unseen > unreadCount) {
+      setUnreadCount(unseen);
+    }
+  }, [messages, isOpen, myUserId, unreadCount]);
+
+  // Heartbeat while chat is open.
+  useEffect(() => {
+    if (!isOpen) return;
+    const ping = () => fetch('/api/chat/presence', { method: 'GET', cache: 'no-store' }).catch(() => undefined);
+    ping();
+    const timer = setInterval(ping, 20_000);
     return () => {
-      supabase.removeChannel(channel);
+      clearInterval(timer);
     };
-  }, [isNameSet, isOpen, username]);
+  }, [isOpen]);
 
   // 3. Auto-scroll to bottom
-  const currentMessages = messages.filter((msg) => msg.channel === activeChannel);
+  const currentMessages = messages;
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -98,18 +104,19 @@ export default function ChatWidget() {
   // 4. Send Message to Supabase
   const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!inputValue.trim() || !username) return;
-
-    const newMsg = {
-      channel: activeChannel,
-      sender: username,
-      content: inputValue,
-    };
+    if (!inputValue.trim()) return;
 
     setInputValue(''); // Optimistically clear input
-    
-    const { error } = await supabase.from<ChatMessage>('chat_messages').insert([newMsg]);
-    if (error) console.error("Error sending message:", error);
+
+    const response = await fetch('/api/chat/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: inputValue,
+        recipientId: activePeerId,
+      }),
+    });
+    if (!response.ok) console.error('Error sending message:', await response.text());
   };
 
   return (
@@ -119,30 +126,7 @@ export default function ChatWidget() {
       {isOpen && (
         <div className="mb-4 w-[600px] h-[500px] bg-[#0a0a0a]/95 backdrop-blur-xl border border-zinc-800/80 rounded-2xl shadow-2xl flex overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-300">
           
-          {!isNameSet ? (
-            // Username Registration Screen
-            <div className="flex-1 flex flex-col items-center justify-center p-8 relative">
-              <div className="absolute w-64 h-64 bg-indigo-500/10 rounded-full blur-[80px] pointer-events-none"></div>
-              <h2 className="text-2xl font-black text-white uppercase tracking-tight relative z-10 mb-2">Join the Floor</h2>
-              <p className="text-zinc-400 text-sm text-center mb-8 relative z-10">Enter your display name so the team knows who is crushing it.</p>
-              
-              <form onSubmit={handleSaveUsername} className="w-full max-w-xs relative z-10">
-                <input 
-                  type="text" 
-                  value={username}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)}
-                  placeholder="e.g. Dan (Manager)"
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all mb-4"
-                  autoFocus
-                />
-                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg transition-colors">
-                  Enter Chat
-                </button>
-              </form>
-            </div>
-          ) : (
-            // The Normal Chat Interface
-            <>
+          <>
               {/* Sidebar (Conversations) */}
               <div className="w-48 bg-zinc-950 border-r border-zinc-800 flex flex-col">
                 <div className="p-4 border-b border-zinc-800">
@@ -150,7 +134,9 @@ export default function ChatWidget() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
                   <button onClick={() => setActiveChannel('sales_floor')} className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${activeChannel === 'sales_floor' ? 'bg-indigo-500/20 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900'}`}># Sales Floor</button>
-                  <button onClick={() => setActiveChannel('codegym787')} className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${activeChannel === 'codegym787' ? 'bg-indigo-500/20 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900'}`}><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> codegym787</button>
+                  {users.map((user) => (
+                    <button key={user.id} onClick={() => setActiveChannel(user.id)} className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${activeChannel === user.id ? 'bg-indigo-500/20 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900'}`}><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {user.name}</button>
+                  ))}
                 </div>
               </div>
 
@@ -173,13 +159,13 @@ export default function ChatWidget() {
                       <div className="h-full flex items-center justify-center text-zinc-500 text-sm italic">No messages yet. Start the floor.</div>
                     ) : (
                       currentMessages.map((msg) => {
-                        const isMe = msg.sender === username;
+                        const isMe = msg.senderId === myUserId;
                         return (
                           <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className="flex items-baseline gap-2 mb-1">
-                              <span className={`text-[10px] font-bold ${isMe ? 'text-indigo-400' : 'text-zinc-500'}`}>{msg.sender}</span>
+                              <span className={`text-[10px] font-bold ${isMe ? 'text-indigo-400' : 'text-zinc-500'}`}>{msg.senderName}</span>
                               <span className="text-[9px] text-zinc-600">
-                                {new Date(msg.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
                             <div className={`max-w-[85%] p-3 rounded-xl text-sm ${isMe ? 'bg-indigo-600 text-white rounded-tr-none shadow-[0_4px_15px_rgba(79,70,229,0.2)]' : 'bg-zinc-800 text-zinc-300 rounded-tl-none border border-zinc-700/50'}`}>
@@ -201,7 +187,6 @@ export default function ChatWidget() {
                  </div>
               </div>
             </>
-          )}
 
         </div>
       )}
