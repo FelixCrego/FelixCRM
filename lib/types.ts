@@ -13,6 +13,13 @@ export type Lead = {
   socialLinks?: string[];
   aiResearchSummary?: string | null;
   sourceQuery?: string | null;
+  contacts?: Array<{
+    id: string;
+    name: string;
+    role?: string;
+    phones: string[];
+    emails: string[];
+  }>;
   status: "NEW" | "CONTACTED" | "IN_PROGRESS" | "CLOSED" | "DISQUALIFIED";
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
