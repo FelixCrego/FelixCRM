@@ -170,17 +170,6 @@ async function getSafeFirstUser(userId: string) {
 
 function leadToMemory(lead: any): Lead {
   const sourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
-  const contacts = Array.isArray(sourcePayload.contacts)
-    ? sourcePayload.contacts
-        .filter((contact: unknown) => contact && typeof contact === "object")
-        .map((contact: any) => ({
-          id: typeof contact.id === "string" && contact.id ? contact.id : crypto.randomUUID(),
-          name: typeof contact.name === "string" && contact.name.trim() ? contact.name.trim() : "Untitled Contact",
-          role: typeof contact.role === "string" ? contact.role.trim() : "",
-          phones: Array.isArray(contact.phones) ? contact.phones.map((value: unknown) => String(value).trim()).filter(Boolean) : [],
-          emails: Array.isArray(contact.emails) ? contact.emails.map((value: unknown) => String(value).trim()).filter(Boolean) : [],
-        }))
-    : [];
   const closedDealValueFromPayload =
     typeof sourcePayload.closedDealValue === "number"
       ? sourcePayload.closedDealValue
@@ -217,7 +206,6 @@ function leadToMemory(lead: any): Lead {
     socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
     aiResearchSummary: typeof sourcePayload.aiResearchSummary === "string" ? sourcePayload.aiResearchSummary : null,
     sourceQuery: typeof sourcePayload.sourceQuery === "string" ? sourcePayload.sourceQuery : null,
-    contacts,
     closedDealValue:
       (typeof lead.closedDealValue === "number" ? lead.closedDealValue : null) ??
       (typeof lead.closed_deal_value === "number" ? lead.closed_deal_value : null) ??
@@ -536,6 +524,80 @@ export type LeadContactRecord = {
   phones: string[];
   emails: string[];
 };
+
+export async function closeLeadDeal(params: { leadId: string; ownerId: string; closedDealValue: number; stripeCheckoutLink?: string | null }) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to close deals.");
+
+  const { leadId, ownerId, closedDealValue, stripeCheckoutLink } = params;
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
+  if (leadOwnerId && leadOwnerId !== ownerId) throw new Error("Forbidden");
+
+  const sourcePayload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const closedAt = new Date().toISOString();
+
+  const updatedRows = await withLeadTableFallback((table) => {
+    const ownerColumn = isSnakeLeadsTable(table) ? "owner_id" : "ownerId";
+    const sourcePayloadColumn = isSnakeLeadsTable(table) ? "source_payload" : "sourcePayload";
+    const filters = {
+      id: `eq.${leadId}`,
+      [ownerColumn]: `eq.${ownerId}`,
+      select: "id",
+    } as Record<string, string>;
+
+    const fullPayload = isSnakeLeadsTable(table)
+      ? {
+          status: "CLOSED",
+          source_payload: {
+            ...sourcePayload,
+            closedDealValue,
+            closedAt,
+            stripeCheckoutLink: stripeCheckoutLink ?? null,
+          },
+        }
+      : {
+          status: "CLOSED",
+          sourcePayload: {
+            ...sourcePayload,
+            closedDealValue,
+            closedAt,
+            stripeCheckoutLink: stripeCheckoutLink ?? null,
+          },
+        };
+
+    return supabaseRequest<any[]>(table, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(fullPayload),
+    }, filters).catch((error) => {
+      if (!isMissingColumnError(error, sourcePayloadColumn)) throw error;
+
+      return supabaseRequest<any[]>(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ status: "CLOSED" }),
+      }, filters);
+    });
+  });
+
+  if (!updatedRows.length) {
+    throw new Error("Unable to close this lead.");
+  }
+
+  return {
+    closedAt,
+    closedDealValue,
+    stripeCheckoutLink: stripeCheckoutLink ?? null,
+  };
+}
 
 function normalizeLeadContactsInput(contacts: LeadContactRecord[]): LeadContactRecord[] {
   return contacts

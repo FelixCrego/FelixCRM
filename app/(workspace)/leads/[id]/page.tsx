@@ -667,92 +667,50 @@ export default function LeadExecutionPage() {
     setClosingDeal(true);
     setCloseDealError("");
 
-    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
     const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
-    const closedAtIso = new Date().toISOString();
 
-    const tableCandidates = ["leads", "Lead", "lead"];
-    const payloadCandidates = [
-      {
-        status: "CLOSED",
-        source_payload: {
-          ...sourcePayload,
+    try {
+      const response = await fetch("/api/leads/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId,
           closedDealValue: inferredDealValue,
-          closedAt: closedAtIso,
           stripeCheckoutLink: checkoutLink || null,
-        },
-      },
-      {
-        status: "CLOSED",
-        sourcePayload: {
-          ...sourcePayload,
-          closedDealValue: inferredDealValue,
-          closedAt: closedAtIso,
-          stripeCheckoutLink: checkoutLink || null,
-        },
-      },
-      {
-        status: "CLOSED",
-        closed_deal_value: inferredDealValue,
-        closed_at: closedAtIso,
-        stripe_checkout_link: checkoutLink || null,
-        source_payload: {
-          ...sourcePayload,
-          closedDealValue: inferredDealValue,
-          closedAt: closedAtIso,
-          stripeCheckoutLink: checkoutLink || null,
-        },
-      },
-      {
-        status: "CLOSED",
-        closedDealValue: inferredDealValue,
-        closedAt: closedAtIso,
-        stripeCheckoutLink: checkoutLink || null,
-        sourcePayload: {
-          ...sourcePayload,
-          closedDealValue: inferredDealValue,
-          closedAt: closedAtIso,
-          stripeCheckoutLink: checkoutLink || null,
-        },
-      },
-    ];
+        }),
+      });
 
-    let updateSucceeded = false;
+      const payload = (await response.json()) as {
+        closed?: { closedAt: string; closedDealValue: number; stripeCheckoutLink: string | null };
+        error?: string;
+      };
 
-    for (const table of tableCandidates) {
-      for (const payload of payloadCandidates) {
-        const { error } = await supabase.from(table).update(payload).eq("id", leadId);
-        if (!error) {
-          updateSucceeded = true;
-          break;
-        }
+      if (!response.ok || !payload.closed) {
+        throw new Error(payload.error || "Unable to mark this lead as closed right now.");
       }
-      if (updateSucceeded) break;
-    }
 
-    if (!updateSucceeded) {
-      setCloseDealError("Unable to mark this lead as closed right now.");
+      setLeadExecutionStatus("Closed Won");
+      setLead((previous) =>
+        previous
+          ? {
+              ...previous,
+              status: "CLOSED",
+              source_payload: {
+                ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+                closedDealValue: payload.closed?.closedDealValue ?? inferredDealValue,
+                closedAt: payload.closed?.closedAt ?? new Date().toISOString(),
+                stripeCheckoutLink: payload.closed?.stripeCheckoutLink ?? (checkoutLink || null),
+              },
+            }
+          : previous,
+      );
+
+      router.push("/closed-deals");
+      router.refresh();
+    } catch (error) {
+      setCloseDealError(error instanceof Error ? error.message : "Unable to mark this lead as closed right now.");
       setClosingDeal(false);
-      return;
     }
-
-    setLeadExecutionStatus("Closed Won");
-    setLead((previous) =>
-      previous
-        ? {
-            ...previous,
-            status: "CLOSED",
-            source_payload: {
-              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
-              closedDealValue: inferredDealValue,
-              closedAt: closedAtIso,
-              stripeCheckoutLink: checkoutLink || null,
-            },
-          }
-        : previous,
-    );
-    router.push("/closed-deals");
-    router.refresh();
   }
 
   async function copyCheckoutLink() {
