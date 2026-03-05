@@ -925,7 +925,7 @@ export default function LeadExecutionPage() {
 
       if (!data) {
         setAiPlaybook(fallbackPlaybook);
-        setPlaybookError("Gemini returned an unreadable response. Showing fallback playbook.");
+        setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
         return;
       }
 
@@ -960,7 +960,7 @@ export default function LeadExecutionPage() {
       setAiPlaybook(parsed);
     } catch (error) {
       console.error("Playbook generation failed", error);
-      setPlaybookError("Gemini could not return a valid playbook format. Showing the fallback playbook.");
+      setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
       setAiPlaybook(fallbackPlaybook);
     } finally {
       setPlaybookLoading(false);
