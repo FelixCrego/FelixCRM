@@ -4,6 +4,113 @@ import { useState } from "react";
 
 export default function TrainingCenter() {
   const [activeTab, setActiveTab] = useState("SCRIPTS");
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [score, setScore] = useState(0);
+  const [showScore, setShowScore] = useState(false);
+
+  const questions = [
+    {
+      questionText: "What is your ABSOLUTE MINIMUM daily dial target?",
+      answerOptions: [
+        { answerText: "30 calls", isCorrect: false },
+        { answerText: "50 calls", isCorrect: true },
+        { answerText: "100 calls", isCorrect: false },
+        { answerText: "Whatever I feel like", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "What is your non-negotiable daily target for booked demos?",
+      answerOptions: [
+        { answerText: "1 demo per day", isCorrect: false },
+        { answerText: "2 demos per day", isCorrect: true },
+        { answerText: "5 demos per day", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "How many closed deals are reps expected to generate per week?",
+      answerOptions: [
+        { answerText: "1 closed deal", isCorrect: false },
+        { answerText: "2 closed deals", isCorrect: true },
+        { answerText: "4 closed deals", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "Why must calls happen inside the CRM dialer instead of a personal cell phone?",
+      answerOptions: [
+        { answerText: "It makes the dashboard look busier", isCorrect: false },
+        { answerText: "It captures AWS Contact IDs so call recordings and AI transcripts attach to the lead", isCorrect: true },
+        { answerText: "It automatically closes deals", isCorrect: false },
+      ],
+    },
+    {
+      questionText: 'A homeowner says: "The heavy spring over the door snapped and now the door is dead." What failed?',
+      answerOptions: [
+        { answerText: "Photo eyes", isCorrect: false },
+        { answerText: "Torsion spring", isCorrect: true },
+        { answerText: "Weather stripping", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "Which line best matches our opener script framework?",
+      answerOptions: [
+        { answerText: "Hey, I sell websites. Want one?", isCorrect: false },
+        { answerText: "I help garage door companies lock more installs without increasing ad spend. Got 27 seconds?", isCorrect: true },
+        { answerText: "Can you transfer me to the owner immediately?", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "Prospect says: 'Just send me an email.' What is the best response strategy?",
+      answerOptions: [
+        { answerText: "End the call and hope they reply", isCorrect: false },
+        { answerText: "Agree, then ask a micro-commitment question for a short teardown call", isCorrect: true },
+        { answerText: "Tell them email never works and push harder", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "What does a higher garage door R-Value indicate to a homeowner?",
+      answerOptions: [
+        { answerText: "Better insulation and energy efficiency", isCorrect: true },
+        { answerText: "Faster opener motor speed", isCorrect: false },
+        { answerText: "A stronger torsion shaft", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "A prospect says their door will not close and lights blink. A common culprit is:",
+      answerOptions: [
+        { answerText: "Broken cable drums", isCorrect: false },
+        { answerText: "Misaligned photo eyes", isCorrect: true },
+        { answerText: "Insulation panel rating", isCorrect: false },
+      ],
+    },
+    {
+      questionText: "When handling 'too expensive,' what frame should you use?",
+      answerOptions: [
+        { answerText: "Discount immediately", isCorrect: false },
+        { answerText: "Compare cost to pipeline leakage and lost installs", isCorrect: true },
+        { answerText: "Argue that competitors are worse", isCorrect: false },
+      ],
+    },
+  ];
+
+  const handleAnswerOptionClick = (isCorrect: boolean) => {
+    if (isCorrect) {
+      setScore((previousScore) => previousScore + 1);
+    }
+
+    const nextQuestion = currentQuestion + 1;
+    if (nextQuestion < questions.length) {
+      setCurrentQuestion(nextQuestion);
+      return;
+    }
+
+    setShowScore(true);
+  };
+
+  const handleQuizReset = () => {
+    setCurrentQuestion(0);
+    setScore(0);
+    setShowScore(false);
+  };
 
   const tabs = [
     { id: "SCRIPTS", label: "Battle Scripts", icon: "📜" },
@@ -11,6 +118,7 @@ export default function TrainingCenter() {
     { id: "TAPE_ROOM", label: "The Tape Room", icon: "🎧" },
     { id: "DEMOS", label: "Demo Vault", icon: "💻" },
     { id: "JARGON", label: "Industry Intel", icon: "🧠" },
+    { id: "QUIZ", label: "Certification Quiz", icon: "✅" },
     { id: "CONTINUING_ED", label: "Continuing Ed", icon: "🚀" },
   ];
 
@@ -204,6 +312,52 @@ export default function TrainingCenter() {
             <p className="text-zinc-300 text-base mt-2 max-w-md text-center relative z-10 font-semibold">
               New Industries Unlocking Soon. Master the current pipeline first.
             </p>
+          </div>
+        )}
+
+        {activeTab === "QUIZ" && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-3xl">
+            <h1 className="text-2xl font-black text-white uppercase tracking-tight">Certification Quiz</h1>
+            <p className="text-zinc-400 text-sm">Pass the fundamentals to unlock advanced training.</p>
+
+            <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-5">
+              {showScore ? (
+                <div className="space-y-4">
+                  <h2 className="text-xl font-bold text-emerald-300">
+                    You scored {score} out of {questions.length}
+                  </h2>
+                  <p className="text-sm text-zinc-300">
+                    {score === questions.length
+                      ? "Perfect score. You are certified and ready for the next phase."
+                      : "Review the playbook and run it back until this is second nature."}
+                  </p>
+                  <button
+                    onClick={handleQuizReset}
+                    className="px-4 py-2 rounded-md bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-sm font-semibold hover:bg-indigo-500/30 transition-colors"
+                  >
+                    Retake Quiz
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    Question {currentQuestion + 1} / {questions.length}
+                  </div>
+                  <h2 className="text-lg font-bold text-zinc-100 leading-relaxed">{questions[currentQuestion].questionText}</h2>
+                  <div className="grid gap-3">
+                    {questions[currentQuestion].answerOptions.map((answerOption) => (
+                      <button
+                        key={answerOption.answerText}
+                        onClick={() => handleAnswerOptionClick(answerOption.isCorrect)}
+                        className="w-full text-left px-4 py-3 rounded-lg border border-zinc-700 bg-zinc-950 text-zinc-200 text-sm font-medium hover:border-indigo-500/70 hover:bg-zinc-900 transition-colors"
+                      >
+                        {answerOption.answerText}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         )}
       </div>
