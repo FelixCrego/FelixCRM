@@ -182,7 +182,10 @@ export default function LeadExecutionPage() {
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
   const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
   const [isCustomScheduling, setIsCustomScheduling] = useState(false);
-  const [customMeetingDateTime, setCustomMeetingDateTime] = useState("");
+  const [customDayInput, setCustomDayInput] = useState("");
+  const [customTimeInput, setCustomTimeInput] = useState("");
+  const [customMeetingDays, setCustomMeetingDays] = useState<Array<{ value: string; label: string }>>([]);
+  const [customMeetingTimes, setCustomMeetingTimes] = useState<string[]>([]);
   const [meetingLoading, setMeetingLoading] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -340,7 +343,7 @@ export default function LeadExecutionPage() {
   async function copyInviteText() {
     if (!meetingLink) return;
     const dayLabel =
-      leadDayOptions.find((day) => day.value === selectedMeetingDay)?.label ||
+      combinedDayOptions.find((day) => day.value === selectedMeetingDay)?.label ||
       new Date(`${selectedMeetingDay}T00:00:00`).toLocaleDateString("en-US", {
         weekday: "long",
         month: "short",
@@ -579,7 +582,10 @@ export default function LeadExecutionPage() {
     });
   }, []);
 
+  const combinedDayOptions = useMemo(() => [...leadDayOptions, ...customMeetingDays], [leadDayOptions, customMeetingDays]);
+
   const leadTimeSlots = ["09:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "05:00 PM", "06:30 PM"];
+  const combinedTimeSlots = [...leadTimeSlots, ...customMeetingTimes];
 
   const leadLocalTimeText = useMemo(
     () =>
@@ -605,30 +611,36 @@ export default function LeadExecutionPage() {
     [repTimeZone],
   );
 
-  const selectedCustomLabel = useMemo(() => {
-    if (!customMeetingDateTime) return "";
-    const [dayValue, timeValue] = customMeetingDateTime.split("T");
-    if (!dayValue || !timeValue) return "";
+  const applyCustomDay = () => {
+    if (!customDayInput) return;
 
-    const customDate = new Date(`${dayValue}T00:00:00`);
+    const customDate = new Date(`${customDayInput}T00:00:00`);
     const dateLabel = customDate.toLocaleDateString("en-US", {
       weekday: "short",
       month: "short",
       day: "numeric",
     });
 
-    return `${dateLabel} • ${toTwelveHourLabel(timeValue)}`;
-  }, [customMeetingDateTime]);
-
-  const applyCustomSchedule = () => {
-    if (!customMeetingDateTime) return;
-    const [dayValue, timeValue] = customMeetingDateTime.split("T");
-    if (!dayValue || !timeValue) return;
-
-    setSelectedMeetingDay(dayValue);
-    setSelectedMeetingTime(toTwelveHourLabel(timeValue));
+    setCustomMeetingDays((previous) => {
+      if (previous.some((day) => day.value === customDayInput)) return previous;
+      return [...previous, { value: customDayInput, label: `Custom, ${dateLabel}` }];
+    });
+    setSelectedMeetingDay(customDayInput);
     setMeetingLink("");
-    setIsCustomScheduling(false);
+    setCustomDayInput("");
+  };
+
+  const applyCustomTime = () => {
+    if (!customTimeInput) return;
+
+    const formattedTime = toTwelveHourLabel(customTimeInput);
+    setCustomMeetingTimes((previous) => {
+      if (previous.includes(formattedTime)) return previous;
+      return [...previous, formattedTime];
+    });
+    setSelectedMeetingTime(formattedTime);
+    setMeetingLink("");
+    setCustomTimeInput("");
   };
   if (status === "loading") return <LeadWorkspaceSkeleton />;
 
@@ -953,31 +965,55 @@ export default function LeadExecutionPage() {
 
             {isCustomScheduling ? (
               <div className="mt-4 rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">Manual date &amp; time</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <input
-                    type="datetime-local"
-                    value={customMeetingDateTime}
-                    onChange={(event) => setCustomMeetingDateTime(event.target.value)}
-                    className="h-9 rounded-md border border-indigo-400/30 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={applyCustomSchedule}
-                    disabled={!customMeetingDateTime}
-                    className="rounded-md bg-indigo-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                  >
-                    Apply
-                  </button>
+                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">Add custom date/time options</p>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <div className="rounded-md border border-indigo-400/20 bg-zinc-950/70 p-2">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-400">Add custom day</p>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={customDayInput}
+                        onChange={(event) => setCustomDayInput(event.target.value)}
+                        className="h-8 flex-1 rounded-md border border-indigo-400/30 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={applyCustomDay}
+                        disabled={!customDayInput}
+                        className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border border-indigo-400/20 bg-zinc-950/70 p-2">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-400">Add custom time</p>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={customTimeInput}
+                        onChange={(event) => setCustomTimeInput(event.target.value)}
+                        className="h-8 flex-1 rounded-md border border-indigo-400/30 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={applyCustomTime}
+                        disabled={!customTimeInput}
+                        className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                {selectedCustomLabel ? <p className="mt-2 text-xs text-indigo-100">Selected: {selectedCustomLabel}</p> : null}
               </div>
             ) : null}
 
             <div className="mt-4">
               <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Select Day</p>
               <div className="flex flex-wrap gap-2">
-                {leadDayOptions.map((day) => {
+                {combinedDayOptions.map((day) => {
                   const isActive = selectedMeetingDay === day.value;
 
                   return (
@@ -1009,7 +1045,7 @@ export default function LeadExecutionPage() {
             <div className="mt-4">
               <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Available Times ({leadTimeZone})</p>
               <div className="grid grid-cols-3 gap-2">
-                {leadTimeSlots.map((slot) => {
+                {combinedTimeSlots.map((slot) => {
                   const isActive = selectedMeetingTime === slot;
 
                   return (
