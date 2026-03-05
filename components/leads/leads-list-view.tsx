@@ -9,6 +9,7 @@ import { AddLeadModal } from "@/components/leads/add-lead-modal";
 type LeadsListViewProps = {
   leads?: Lead[] | null;
   errorMessage?: string | null;
+  viewMode?: "open" | "closed";
 };
 
 const statusLabelMap: Record<Lead["status"], string> = {
@@ -97,7 +98,7 @@ function safelyBucketLastContact(updatedAt?: string | null) {
   return "30d+" as const;
 }
 
-export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
+export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsListViewProps) {
   const router = useRouter();
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -127,11 +128,11 @@ export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
   }, []);
 
   const displayLeads = useMemo(() => {
-    if (createdLeads.length > 0) return [...createdLeads, ...normalizedServerLeads];
-    if (normalizedServerLeads.length > 0) return normalizedServerLeads;
-    if (storageLeads.length > 0) return storageLeads;
-    return [];
-  }, [createdLeads, normalizedServerLeads, storageLeads]);
+    const mergedLeads = createdLeads.length > 0 ? [...createdLeads, ...normalizedServerLeads] : normalizedServerLeads.length > 0 ? normalizedServerLeads : storageLeads;
+    const shouldIncludeClosed = viewMode === "closed";
+
+    return mergedLeads.filter((lead) => (shouldIncludeClosed ? lead.status === "CLOSED" : lead.status !== "CLOSED"));
+  }, [createdLeads, normalizedServerLeads, storageLeads, viewMode]);
 
   async function handleAddLead() {
     setAddLeadError(null);
@@ -184,19 +185,25 @@ export function LeadsListView({ leads, errorMessage }: LeadsListViewProps) {
       <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-100">My Leads</h1>
-            <p className="mt-1 text-sm text-zinc-400">Claimed territory ready for live outreach and rapid deployment closes.</p>
+            <h1 className="text-2xl font-semibold text-zinc-100">{viewMode === "closed" ? "Closed Deals" : "My Leads"}</h1>
+            <p className="mt-1 text-sm text-zinc-400">
+              {viewMode === "closed"
+                ? "Recently won deals that were moved out of active outreach."
+                : "Claimed territory ready for live outreach and rapid deployment closes."}
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setAddLeadError(null);
-              setIsAddLeadOpen(true);
-            }}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:border-zinc-500"
-          >
-            + Add Lead
-          </button>
+          {viewMode === "open" ? (
+            <button
+              type="button"
+              onClick={() => {
+                setAddLeadError(null);
+                setIsAddLeadOpen(true);
+              }}
+              className="rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:border-zinc-500"
+            >
+              + Add Lead
+            </button>
+          ) : null}
         </div>
       </header>
 

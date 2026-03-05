@@ -23,6 +23,14 @@ type WorkspaceLeadContact = {
   emails: string[];
 };
 
+type LeadContact = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
+
 type LeadExecutionWorkspaceProps = {
   lead: {
     id: string;
