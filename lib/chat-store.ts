@@ -27,6 +27,19 @@ type StoredUser = {
   role?: string | null;
 };
 
+type AuthAdminUser = {
+  id: string;
+  email?: string | null;
+  user_metadata?: {
+    full_name?: string | null;
+    name?: string | null;
+  } | null;
+};
+
+type AuthAdminUsersResponse = {
+  users?: AuthAdminUser[];
+};
+
 export type ChatMessage = {
   id: string;
   senderId: string;
@@ -148,6 +161,44 @@ function mapStoredMessage(row: StoredMessage): ChatMessage {
 
 function getFallbackName(userId: string) {
   return `Rep ${userId.slice(0, 6)}`;
+}
+
+function getDisplayNameFromStoredUser(user: StoredUser) {
+  return (
+    (typeof user.name === "string" && user.name.trim()) ||
+    (typeof user.full_name === "string" && user.full_name.trim()) ||
+    (typeof user.email === "string" && user.email.split("@")[0]) ||
+    getFallbackName(user.id)
+  );
+}
+
+function getDisplayNameFromAuthUser(user: AuthAdminUser) {
+  return (
+    (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()) ||
+    (typeof user.user_metadata?.name === "string" && user.user_metadata.name.trim()) ||
+    (typeof user.email === "string" && user.email.split("@")[0]) ||
+    getFallbackName(user.id)
+  );
+}
+
+async function listAuthUsers(): Promise<AuthAdminUser[]> {
+  if (!hasDb) return [];
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=500`, {
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to list auth users: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as AuthAdminUsersResponse;
+  return Array.isArray(payload.users) ? payload.users : [];
 }
 
 async function resolveDisplayName(userId: string) {
@@ -279,27 +330,42 @@ export async function listChatUsers(currentUserId: string): Promise<ChatUser[]> 
     return [...users.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  const usersById = new Map<string, ChatUser>();
+
   try {
     const rows = await withTableFallback<StoredUser[]>("chat-users", USERS_TABLE_CANDIDATES, (table) =>
-      supabaseRequest<StoredUser[]>(table, undefined, { select: "id,name,full_name,email,role", limit: "200" }),
+      supabaseRequest<StoredUser[]>(table, undefined, { select: "id,name,full_name,email,role", limit: "500" }),
     );
 
-    return rows
-      .filter((user) => user.id && user.id !== currentUserId)
-      .map((user) => ({
+    for (const user of rows) {
+      if (!user.id || user.id === currentUserId) continue;
+      usersById.set(user.id, {
         id: user.id,
-        name:
-          (typeof user.name === "string" && user.name.trim()) ||
-          (typeof user.full_name === "string" && user.full_name.trim()) ||
-          (typeof user.email === "string" && user.email.split("@")[0]) ||
-          getFallbackName(user.id),
+        name: getDisplayNameFromStoredUser(user),
         role: (typeof user.role === "string" && user.role.trim()) || "REP",
         isOnline: memoryPresence.has(user.id),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      });
+    }
   } catch {
-    return [];
+    // continue; auth users fallback below
   }
+
+  try {
+    const authUsers = await listAuthUsers();
+    for (const user of authUsers) {
+      if (!user.id || user.id === currentUserId || usersById.has(user.id)) continue;
+      usersById.set(user.id, {
+        id: user.id,
+        name: getDisplayNameFromAuthUser(user),
+        role: "REP",
+        isOnline: memoryPresence.has(user.id),
+      });
+    }
+  } catch {
+    // ignore auth directory errors
+  }
+
+  return [...usersById.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function heartbeatChatPresence(userId: string) {
