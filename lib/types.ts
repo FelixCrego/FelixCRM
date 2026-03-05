@@ -1,6 +1,27 @@
 export type ToneOfVoice = "PROFESSIONAL" | "AGGRESSIVE" | "CONSULTATIVE" | "FRIENDLY";
 export type UserRole = "REP" | "MANAGER" | "TEAM_LEAD" | "SUPER_ADMIN";
 
+export type LeadResearchSocialLinks = Partial<Record<"facebook" | "instagram" | "googleBusiness" | "linkedin" | "x" | "youtube" | "tiktok" | "yelp", string>> & Record<string, string | undefined>;
+
+export type LeadResearchStructuredPayload = {
+  businessName: string;
+  primaryPhone: string | null;
+  primaryEmail: string | null;
+  logoUrl: string | null;
+  brandColors: string[];
+  socialLinks: LeadResearchSocialLinks;
+  heroCopy: string | null;
+  services: string[];
+  trustSignals: string[];
+  confidence: number;
+  sources: string[];
+};
+
+export type LeadEnrichmentPayload = {
+  summary: string;
+  structured: LeadResearchStructuredPayload;
+};
+
 export type Lead = {
   id: string;
   businessName: string;
@@ -12,6 +33,7 @@ export type Lead = {
   websiteStatus?: string | null;
   socialLinks?: string[];
   aiResearchSummary?: string | null;
+  enrichment?: LeadEnrichmentPayload | null;
   sourceQuery?: string | null;
   contacts?: Array<{
     id: string;

@@ -1,4 +1,4 @@
-import type { Lead } from "@/lib/types";
+import type { Lead, LeadEnrichmentPayload, LeadResearchSocialLinks, LeadResearchStructuredPayload } from "@/lib/types";
 
 type GooglePlaceSearchResponse = {
   status?: string;
@@ -147,24 +147,146 @@ async function fetchSearchPage(params: URLSearchParams) {
   return null;
 }
 
-async function researchLeadWithGemini(name: string, phone: string, address: string, geminiApiKey?: string) {
-  if (!geminiApiKey) return "Limited online footprint found.";
 
-  const prompt = `You are an expert lead generation researcher. Research this local business and return a concise 2-3 sentence summary.
-Include: services offered, likely owner name if available, and online footprint.
-If nothing meaningful is found reply exactly: "Limited online footprint found."
+function parseJsonFromModelResponse(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1]?.trim() || trimmed;
+
+  try {
+    return JSON.parse(candidate) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function toStringOrNull(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function toStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function toStringRecord(value: unknown) {
+  if (!value || typeof value !== "object") return {} as Record<string, string>;
+
+  const out: Record<string, string> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof val !== "string") continue;
+    const normalized = val.trim();
+    if (!normalized) continue;
+    out[key] = normalized;
+  }
+
+  return out;
+}
+
+function normalizeResearchResult(input: { name: string; phone?: string | null }, raw: Record<string, unknown> | null): LeadEnrichmentPayload {
+  const structuredRaw = raw?.structured && typeof raw.structured === "object" ? (raw.structured as Record<string, unknown>) : raw;
+
+  const confidenceValue =
+    typeof structuredRaw?.confidence === "number"
+      ? structuredRaw.confidence
+      : typeof raw?.confidence === "number"
+        ? raw.confidence
+        : 0.25;
+
+  const confidence = Math.min(1, Math.max(0, confidenceValue));
+
+  const structured: LeadResearchStructuredPayload = {
+    businessName: toStringOrNull(structuredRaw?.businessName) ?? input.name,
+    primaryPhone: toStringOrNull(structuredRaw?.primaryPhone) ?? toStringOrNull(input.phone ?? null),
+    primaryEmail: toStringOrNull(structuredRaw?.primaryEmail),
+    logoUrl: toStringOrNull(structuredRaw?.logoUrl),
+    brandColors: toStringArray(structuredRaw?.brandColors),
+    socialLinks: toStringRecord(structuredRaw?.socialLinks),
+    heroCopy: toStringOrNull(structuredRaw?.heroCopy),
+    services: toStringArray(structuredRaw?.services),
+    trustSignals: toStringArray(structuredRaw?.trustSignals),
+    confidence,
+    sources: toStringArray(structuredRaw?.sources),
+  };
+
+  const summary =
+    toStringOrNull(raw?.summary) ??
+    toStringOrNull((raw as Record<string, unknown> | null)?.humanSummary) ??
+    toStringOrNull((raw as Record<string, unknown> | null)?.aiResearchSummary) ??
+    "Limited online footprint found.";
+
+  return { summary, structured };
+}
+
+async function researchLeadWithGemini(name: string, phone: string, address: string, geminiApiKey?: string): Promise<LeadEnrichmentPayload> {
+  const fallback = normalizeResearchResult({ name, phone }, {
+    summary: "Limited online footprint found.",
+    businessName: name,
+    primaryPhone: phone,
+    confidence: 0.2,
+    sources: [],
+  });
+
+  if (!geminiApiKey) return fallback;
+
+  const prompt = `You are an expert lead generation researcher.
+Research the business and return ONLY strict JSON with this shape:
+{
+  "summary": "2-3 sentence, human-readable sales summary.",
+  "structured": {
+    "businessName": "string",
+    "primaryPhone": "string|null",
+    "primaryEmail": "string|null",
+    "logoUrl": "string|null",
+    "brandColors": ["string"],
+    "socialLinks": {
+      "facebook": "string",
+      "instagram": "string",
+      "googleBusiness": "string",
+      "linkedin": "string",
+      "x": "string",
+      "youtube": "string",
+      "tiktok": "string",
+      "yelp": "string"
+    },
+    "heroCopy": "string|null",
+    "services": ["string"],
+    "trustSignals": ["string"],
+    "confidence": 0.0,
+    "sources": ["string"]
+  }
+}
+Rules:
+- Return JSON only. No markdown.
+- Use null or empty arrays/objects when unknown.
+- confidence must be a number from 0 to 1.
 Business Name: ${name}
 Phone: ${phone}
 Address: ${address}`;
 
   const text = await callGeminiText(prompt, geminiApiKey);
-  return text.trim() || "AI Research timeout or quota limit reached.";
+  const parsed = parseJsonFromModelResponse(text);
+  const normalized = normalizeResearchResult({ name, phone }, parsed);
+
+  if (!text.trim()) {
+    return {
+      ...normalized,
+      summary: "AI Research timeout or quota limit reached.",
+    };
+  }
+
+  return normalized;
 }
 
-export async function runLeadResearch(input: { name: string; phone?: string | null; address?: string | null }) {
+export async function runLeadResearch(input: { name: string; phone?: string | null; address?: string | null }): Promise<LeadEnrichmentPayload> {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   return researchLeadWithGemini(input.name, input.phone ?? "N/A", input.address ?? "N/A", geminiApiKey);
 }
+
 
 export type ScrapeDiagnostics = {
   queriesAttempted: number;
