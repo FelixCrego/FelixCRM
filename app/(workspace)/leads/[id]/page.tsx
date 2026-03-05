@@ -815,10 +815,20 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const data = (await response.json().catch(() => null)) as { draft?: string; error?: string } | null;
+      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string } | null;
 
-      if (!response.ok || !data?.draft) {
+      if (!response.ok || !data) {
         setPlaybookError(data?.error || "Could not generate playbook with Gemini.");
+        return;
+      }
+
+      if (data.playbook) {
+        setAiPlaybook(data.playbook);
+        return;
+      }
+
+      if (!data.draft) {
+        setPlaybookError(data.error || "Could not generate playbook with Gemini.");
         return;
       }
 
