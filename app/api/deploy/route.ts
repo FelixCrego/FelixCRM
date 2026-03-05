@@ -82,21 +82,45 @@ async function patchGeneratedRepoSiteConfig(params: {
 }) {
   const candidatePaths = ["src/config/site.ts", "src/config/siteConfig.ts", "config/site.ts", "siteConfig.ts", "lib/siteConfig.ts"];
 
-  for (const path of candidatePaths) {
+  const allPaths: string[] = [...candidatePaths];
+  const treeResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/git/trees/${params.branch}?recursive=1`, {
+    headers: params.githubHeaders,
+  });
+
+  if (treeResponse.ok) {
+    const treePayload = (await treeResponse.json()) as { tree?: Array<{ path?: string; type?: string }> };
+    for (const item of treePayload.tree ?? []) {
+      const path = item.path ?? "";
+      if (item.type !== "blob") continue;
+      const lower = path.toLowerCase();
+      if (!lower.endsWith(".ts") && !lower.endsWith(".tsx")) continue;
+      if (!lower.includes("site") && !lower.includes("config")) continue;
+      if (allPaths.includes(path)) continue;
+      allPaths.push(path);
+    }
+  }
+
+  const tryPatchPath = async (path: string): Promise<boolean> => {
     const getResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}?ref=${params.branch}`, {
       headers: params.githubHeaders,
     });
 
-    if (!getResponse.ok) continue;
+    if (!getResponse.ok) return false;
 
     const contentPayload = (await getResponse.json()) as { sha?: string; content?: string; encoding?: string };
     const sha = contentPayload.sha;
     const encodedContent = contentPayload.content;
-    if (!sha || !encodedContent || contentPayload.encoding !== "base64") continue;
+    if (!sha || !encodedContent || contentPayload.encoding !== "base64") return false;
 
     const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
+    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay")) {
+      return false;
+    }
+
     const updated = applySiteConfigOverrides(source, params.templateConfig);
-    if (updated === source) return;
+    if (updated === source) {
+      return true;
+    }
 
     const putResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}`, {
       method: "PUT",
@@ -114,8 +138,19 @@ async function patchGeneratedRepoSiteConfig(params: {
       throw new Error(`Failed to customize ${path}: ${errorText || putResponse.statusText}`);
     }
 
-    return;
+    return true;
+  };
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    for (const path of allPaths) {
+      const patched = await tryPatchPath(path);
+      if (patched) return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
+
+  throw new Error(`Could not find a patchable site config file in ${params.repoFullName} on branch ${params.branch}.`);
 }
 
 function slugify(input: string, fallback: string): string {
