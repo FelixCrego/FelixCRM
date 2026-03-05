@@ -232,6 +232,20 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     [averageClosedDealValue, revenueNeededPerDay],
   );
 
+  let hypeMessage = "Keep dialing.";
+  let hypeColor = "text-zinc-500";
+
+  if (projectedCommissionPerDay >= 1000) {
+    hypeMessage = "🔥 President's Club Pacing. Don't stop now.";
+    hypeColor = "text-orange-400";
+  } else if (projectedCommissionPerDay >= 500) {
+    hypeMessage = "🥩 Steak dinner pacing. Lock it in.";
+    hypeColor = "text-emerald-400";
+  } else if (projectedCommissionPerDay >= 250) {
+    hypeMessage = "🚀 Good baseline. Push for one more close.";
+    hypeColor = "text-indigo-400";
+  }
+
   return (
     <div className="space-y-4">
       <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
@@ -273,14 +287,14 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       ) : null}
 
       {viewMode === "closed" ? (
-        <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-lg mb-8">
+        <section className="mb-8 rounded-xl border border-indigo-500/25 bg-gradient-to-br from-zinc-900 via-zinc-900 to-indigo-950/40 p-6 shadow-[0_0_40px_rgba(79,70,229,0.12)]">
           <div className="mb-6 border-b border-zinc-800 pb-4">
-            <h2 className="text-xl font-bold text-white">Deal Calculator + Daily Plan</h2>
-            <p className="text-zinc-400 text-sm mt-1">Model your funnel math and see the daily activity needed to hit your income target.</p>
+            <h2 className="text-xl font-bold text-white">Your Daily Battle Plan</h2>
+            <p className="mt-1 text-sm text-zinc-300">Turn every dial into momentum and pressure your pipeline until it pays out.</p>
           </div>
 
           <div className="mb-2">
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Funnel Levers</h3>
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-indigo-300">The Grind (Your Inputs)</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {[
               ["Calls / day", calculatorCallsPerDay, setCalculatorCallsPerDay],
@@ -304,9 +318,9 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           </div>
           </div>
 
-          <div className="mt-8 mb-6">
-            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Daily Projections</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-zinc-950/50 border border-zinc-800/50 rounded-lg">
+          <div className="mb-6 mt-8">
+            <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-emerald-300">The Payoff (Your Pipeline)</h3>
+            <div className="grid grid-cols-2 gap-4 rounded-lg border border-zinc-700/70 bg-zinc-950/80 p-4 md:grid-cols-4">
             <div className="flex flex-col">
               <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Demos Booked</span>
               <span className="text-xl font-semibold text-zinc-200">{demosBookedPerDay.toFixed(1)}</span>
@@ -320,8 +334,9 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
               <span className="text-xl font-semibold text-indigo-400">{closedDealsPerDay.toFixed(2)}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Commission / Day</span>
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Take-Home Pay</span>
               <span className="text-xl font-bold text-emerald-400">{formatCurrency(projectedCommissionPerDay)}</span>
+              <span className={`mt-1 text-xs font-semibold ${hypeColor}`}>{hypeMessage}</span>
             </div>
           </div>
           </div>
