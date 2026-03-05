@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
@@ -62,6 +62,15 @@ type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "NOTES" | "SMS" | "EMAIL";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
+
+
+
+type AwsActiveContact = {
+  onConnected?: (callback: () => void) => void;
+  onEnded?: (callback: () => void) => void;
+  getContactId?: () => string;
+  sendDigit?: (digit: string) => void;
+};
 
 type AIDynamicPlaybook = {
   scripts: string[];
@@ -247,6 +256,7 @@ export default function LeadExecutionPage() {
   const [showDisposition, setShowDisposition] = useState(false);
   const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
   const [currentContactId, setCurrentContactId] = useState<string | null>(null);
+  const activeContactRef = useRef<AwsActiveContact | null>(null);
   const [selectedDisposition, setSelectedDisposition] = useState("");
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
@@ -300,19 +310,23 @@ export default function LeadExecutionPage() {
   useEffect(() => {
     type ConnectWindow = Window & {
       connect?: {
-        contact?: (callback: (contact: { onConnected?: (callback: () => void) => void; onEnded?: (callback: () => void) => void; getContactId?: () => string }) => void) => void;
+        contact?: (callback: (contact: AwsActiveContact) => void) => void;
       };
     };
 
     const windowWithConnect = window as ConnectWindow;
     windowWithConnect.connect?.contact?.((contact) => {
+      activeContactRef.current = contact;
+
       contact.onConnected?.(() => {
+        activeContactRef.current = contact;
         const contactId = contact.getContactId?.() ?? null;
         console.log("AWS Call Connected. Contact ID:", contactId);
         setCurrentContactId(contactId);
       });
 
       contact.onEnded?.(() => {
+        activeContactRef.current = null;
         setShowDisposition(true);
       });
     });
@@ -1050,12 +1064,20 @@ export default function LeadExecutionPage() {
 
   // Amazon Connect DTMF Handler
   const handleSendDigit = (digit: string) => {
-    // NOTE: activeContact is tracked in the AmazonConnectProvider and exposed via sendCallDigit.
+    const activeContact = activeContactRef.current;
+
+    // Prefer the lead page's live AWS contact subscription, with provider fallback.
+    if (activeContact?.sendDigit) {
+      activeContact.sendDigit(digit);
+      return;
+    }
+
     if (callActive) {
       sendCallDigit(digit);
-    } else {
-      console.warn("No active contact to send digit to.");
+      return;
     }
+
+    console.warn("No active contact to send digit to.");
   };
 
   const softphoneStatusLabel =
