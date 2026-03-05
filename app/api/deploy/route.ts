@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
     };
 
-    let createdRepo: { full_name?: string; default_branch?: string } | null = null;
+    let createdRepo: { id?: number; full_name?: string; default_branch?: string } | null = null;
     let repoDefaultBranch = process.env.VERCEL_TEMPLATE_BRANCH || "main";
 
     const gitRepoCreateResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`, {
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     });
 
     if (gitRepoCreateResponse.ok) {
-      createdRepo = (await gitRepoCreateResponse.json()) as { full_name?: string; default_branch?: string };
+      createdRepo = (await gitRepoCreateResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
       repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
     } else if (gitRepoCreateResponse.status === 404) {
       let forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
@@ -122,7 +122,7 @@ export async function POST(request: Request) {
         );
       }
 
-      createdRepo = (await forkRepoResponse.json()) as { full_name?: string; default_branch?: string };
+      createdRepo = (await forkRepoResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
       repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
     } else {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
@@ -131,10 +131,11 @@ export async function POST(request: Request) {
     }
 
     const clonedRepoFullName = createdRepo.full_name;
+    const clonedRepoId = createdRepo.id;
 
-    if (!clonedRepoFullName) {
+    if (!clonedRepoFullName || !clonedRepoId) {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
-      return NextResponse.json({ error: "GitHub template clone succeeded but did not return a repository name." }, { status: 500 });
+      return NextResponse.json({ error: "GitHub repository creation succeeded but did not return repository metadata (name/id)." }, { status: 500 });
     }
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
@@ -172,6 +173,7 @@ export async function POST(request: Request) {
         gitSource: {
           type: "github",
           repo: clonedRepoFullName,
+          repoId: String(clonedRepoId),
           ref: repoDefaultBranch,
         },
         target: "production",
