@@ -1,6 +1,6 @@
 "use client";
 
-import { type MouseEvent, useMemo, useState } from "react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   CalendarDays,
@@ -13,6 +13,15 @@ import {
   Rocket,
   UserCircle2,
 } from "lucide-react";
+import { createClientComponentClient } from "@/lib/supabase-client";
+
+type WorkspaceLeadContact = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
 
 type LeadContact = {
   id: string;
@@ -86,6 +95,37 @@ function resolveStatus(input: string): (typeof statusOptions)[number] {
   return statusOptions.includes(input as (typeof statusOptions)[number]) ? (input as (typeof statusOptions)[number]) : "NEW";
 }
 
+function fallbackContacts(phone?: string | null, email?: string | null): WorkspaceLeadContact[] {
+  return [{
+    id: "primary",
+    name: "Primary Contact",
+    role: "Owner",
+    phones: phone ? [phone] : [],
+    emails: email ? [email] : [],
+  }];
+}
+
+function normalizeContacts(value: unknown, phone?: string | null, email?: string | null): WorkspaceLeadContact[] {
+  if (!Array.isArray(value)) return fallbackContacts(phone, email);
+
+  const contacts = value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => {
+      const record = item as Partial<WorkspaceLeadContact>;
+      const phones = Array.isArray(record.phones) ? record.phones.map((v) => String(v).trim()).filter(Boolean) : [];
+      const emails = Array.isArray(record.emails) ? record.emails.map((v) => String(v).trim()).filter(Boolean) : [];
+      return {
+        id: typeof record.id === "string" && record.id ? record.id : crypto.randomUUID(),
+        name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Untitled Contact",
+        role: typeof record.role === "string" ? record.role.trim() : "",
+        phones,
+        emails,
+      };
+    });
+
+  return contacts.length ? contacts : fallbackContacts(phone, email);
+}
+
 export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [currentStatus, setCurrentStatus] = useState<(typeof statusOptions)[number]>(resolveStatus(lead.status));
   const [commsTab, setCommsTab] = useState<"NOTES" | "SMS" | "EMAIL">("NOTES");
@@ -101,18 +141,15 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [meetLink, setMeetLink] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
-  const [contacts, setContacts] = useState<LeadContact[]>([{
-    id: "primary",
-    name: "Primary Contact",
-    role: "Owner",
-    phones: lead.phone ? [lead.phone] : [],
-    emails: lead.email ? [lead.email] : [],
-  }]);
+  const [contacts, setContacts] = useState<WorkspaceLeadContact[]>(fallbackContacts(lead.phone, lead.email));
+  const [contactsError, setContactsError] = useState("");
+  const [savingContacts, setSavingContacts] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const [newContactRole, setNewContactRole] = useState("");
   const [newContactPhone, setNewContactPhone] = useState("");
   const [newContactEmail, setNewContactEmail] = useState("");
   const activeTab = commsTab;
+  const supabase = useMemo(() => createClientComponentClient(), []);
 
   const siteUrl = useMemo(
     () => lead.deployedUrl ?? `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`,
@@ -122,6 +159,51 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const commsFeed = [...notesFeed, ...smsFeed, ...emailFeed];
 
   const personalizedScript = `Hey ${lead.businessName}, I noticed from your Google Reviews that customers love your speed, but your current site makes it hard to book on mobile. I actually just built a faster, mobile-optimized site for you here: ${siteUrl}. Do you have 5 mins to check it out?`;
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadContacts() {
+      const { data } = await supabase.from<{ source_payload?: { contacts?: unknown }; sourcePayload?: { contacts?: unknown } }>("leads").select("source_payload,sourcePayload").eq("id", lead.id).single();
+      if (!alive) return;
+
+      const payloadContacts = data?.source_payload?.contacts ?? data?.sourcePayload?.contacts;
+      setContacts(normalizeContacts(payloadContacts, lead.phone, lead.email));
+    }
+
+    loadContacts().catch(() => {
+      if (!alive) return;
+      setContacts(fallbackContacts(lead.phone, lead.email));
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [lead.id, lead.email, lead.phone, supabase]);
+
+  const persistContacts = async (nextContacts: WorkspaceLeadContact[]) => {
+    setSavingContacts(true);
+    setContactsError("");
+
+    try {
+      const { data } = await supabase.from<{ source_payload?: Record<string, unknown> | null; sourcePayload?: Record<string, unknown> | null }>("leads").select("source_payload,sourcePayload").eq("id", lead.id).single();
+      const baseSnake = data?.source_payload && typeof data.source_payload === "object" ? data.source_payload : {};
+      const baseCamel = data?.sourcePayload && typeof data.sourcePayload === "object" ? data.sourcePayload : {};
+
+      let result = await supabase.from("leads").update({ source_payload: { ...baseSnake, contacts: nextContacts } }).eq("id", lead.id);
+      if (result.error) {
+        result = await supabase.from("leads").update({ sourcePayload: { ...baseCamel, contacts: nextContacts } }).eq("id", lead.id);
+      }
+
+      if (result.error) throw result.error;
+
+      setContacts(nextContacts);
+    } catch {
+      setContactsError("Could not save contacts. Please try again.");
+    } finally {
+      setSavingContacts(false);
+    }
+  };
 
   const handleRunAnalysis = () => {
     setIsResearchLoading(true);
@@ -209,11 +291,12 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
                     onClick={() => {
                       const value = window.prompt("Add phone number");
                       if (!value?.trim()) return;
-                      setContacts((previous) => previous.map((item) =>
+                      const nextContacts = contacts.map((item) =>
                         item.id === contact.id && !item.phones.includes(value.trim())
                           ? { ...item, phones: [...item.phones, value.trim()] }
                           : item,
-                      ));
+                      );
+                      void persistContacts(nextContacts);
                     }}
                     className="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300"
                   >
@@ -223,11 +306,12 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
                     onClick={() => {
                       const value = window.prompt("Add email");
                       if (!value?.trim()) return;
-                      setContacts((previous) => previous.map((item) =>
+                      const nextContacts = contacts.map((item) =>
                         item.id === contact.id && !item.emails.includes(value.trim())
                           ? { ...item, emails: [...item.emails, value.trim()] }
                           : item,
-                      ));
+                      );
+                      void persistContacts(nextContacts);
                     }}
                     className="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300"
                   >
@@ -267,8 +351,8 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
               <button
                 onClick={() => {
                   if (!newContactName.trim() && !newContactPhone.trim() && !newContactEmail.trim()) return;
-                  setContacts((previous) => [
-                    ...previous,
+                  const nextContacts = [
+                    ...contacts,
                     {
                       id: crypto.randomUUID(),
                       name: newContactName.trim() || "Untitled Contact",
@@ -276,16 +360,19 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
                       phones: newContactPhone.trim() ? [newContactPhone.trim()] : [],
                       emails: newContactEmail.trim() ? [newContactEmail.trim()] : [],
                     },
-                  ]);
+                  ];
+                  void persistContacts(nextContacts);
                   setNewContactName("");
                   setNewContactRole("");
                   setNewContactPhone("");
                   setNewContactEmail("");
                 }}
-                className="rounded bg-indigo-500 px-2 py-1 text-xs font-semibold text-white"
+                disabled={savingContacts}
+                className="rounded bg-indigo-500 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
               >
                 Add Contact
               </button>
+              {contactsError ? <p className="text-[11px] text-rose-300">{contactsError}</p> : null}
             </div>
           </div>
         </div>
