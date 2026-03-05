@@ -6,6 +6,7 @@ const apiKey = process.env.GEMINI_API_KEY;
 const GEMINI_MODELS = [
   "gemini-2.0-flash",
   "gemini-2.0-flash-lite",
+  "gemini-1.5-flash-latest",
   "gemini-1.5-flash",
   "gemini-1.5-pro",
 ] as const;
@@ -124,7 +125,7 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
     ?.split(",")
     .map((model) => model.trim())
     .filter(Boolean);
-  const modelsToTry = configuredModels?.length ? configuredModels : [...GEMINI_MODELS];
+  const modelsToTry = Array.from(new Set([...(configuredModels || []), ...GEMINI_MODELS]));
 
   for (const modelName of modelsToTry) {
     try {
