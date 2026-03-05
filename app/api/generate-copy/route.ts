@@ -150,13 +150,6 @@ export async function POST(req: Request) {
     } catch {
       payload = {};
     }
-  }
-
-    const payload = (await req.json()) as GenerateCopyPayload;
-    const leadName = typeof payload.leadName === "string" ? payload.leadName.trim() : "";
-    const activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim() : "";
-    const researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
-
 
     leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
