@@ -1,5 +1,5 @@
 import { dedupeKey } from "@/lib/utils";
-import type { Lead, Script, ToneOfVoice, UserRole } from "@/lib/types";
+import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -179,6 +179,56 @@ async function getSafeFirstUser(userId: string) {
   }
 }
 
+
+function normalizeLeadResearchStructuredPayload(value: unknown, fallbackBusinessName: string, fallbackPhone?: string | null): LeadResearchStructuredPayload {
+  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const socialInput = input.socialLinks && typeof input.socialLinks === "object" ? (input.socialLinks as Record<string, unknown>) : {};
+
+  const socialLinks = Object.entries(socialInput).reduce<Record<string, string>>((acc, [key, socialValue]) => {
+    if (typeof socialValue !== "string") return acc;
+    const normalized = socialValue.trim();
+    if (!normalized) return acc;
+    acc[key] = normalized;
+    return acc;
+  }, {});
+
+  const normalizeStringArray = (raw: unknown) => Array.isArray(raw) ? raw.map((item) => String(item).trim()).filter(Boolean) : [];
+  const stringOrNull = (raw: unknown) => typeof raw === "string" && raw.trim() ? raw.trim() : null;
+
+  const confidenceRaw = typeof input.confidence === "number" ? input.confidence : 0;
+  const confidence = Math.min(1, Math.max(0, confidenceRaw));
+
+  return {
+    businessName: stringOrNull(input.businessName) ?? fallbackBusinessName,
+    primaryPhone: stringOrNull(input.primaryPhone) ?? (fallbackPhone && fallbackPhone.trim() ? fallbackPhone.trim() : null),
+    primaryEmail: stringOrNull(input.primaryEmail),
+    logoUrl: stringOrNull(input.logoUrl),
+    brandColors: normalizeStringArray(input.brandColors),
+    socialLinks,
+    heroCopy: stringOrNull(input.heroCopy),
+    services: normalizeStringArray(input.services),
+    trustSignals: normalizeStringArray(input.trustSignals),
+    confidence,
+    sources: normalizeStringArray(input.sources),
+  };
+}
+
+function normalizeLeadEnrichmentPayload(value: unknown, fallbackBusinessName: string, fallbackPhone?: string | null): LeadEnrichmentPayload | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const summary = typeof input.summary === "string" && input.summary.trim() ? input.summary.trim() : null;
+  const structured = normalizeLeadResearchStructuredPayload(input.structured, fallbackBusinessName, fallbackPhone);
+
+  if (!summary && !structured.services.length && !structured.trustSignals.length && !structured.sources.length) {
+    return null;
+  }
+
+  return {
+    summary: summary ?? "Limited online footprint found.",
+    structured,
+  };
+}
+
 function leadToMemory(lead: any): Lead {
   const sourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
   const contactsFromPayload = Array.isArray(sourcePayload.contacts)
@@ -227,6 +277,7 @@ function leadToMemory(lead: any): Lead {
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
     aiResearchSummary: typeof sourcePayload.aiResearchSummary === "string" ? sourcePayload.aiResearchSummary : null,
+    enrichment: normalizeLeadEnrichmentPayload(sourcePayload.enrichment, lead.businessName ?? lead.business_name, lead.phone),
     sourceQuery: typeof sourcePayload.sourceQuery === "string" ? sourcePayload.sourceQuery : null,
     contacts: contactsFromPayload,
     closedDealValue:
@@ -329,6 +380,7 @@ export async function createLead(ownerId: string, lead: { businessName: string; 
           source_payload: {
             socialLinks: [],
             aiResearchSummary: null,
+            enrichment: null,
             sourceQuery: "manual_entry",
           },
         }
@@ -348,6 +400,7 @@ export async function createLead(ownerId: string, lead: { businessName: string; 
           sourcePayload: {
             socialLinks: [],
             aiResearchSummary: null,
+            enrichment: null,
             sourceQuery: "manual_entry",
           },
         }),
@@ -391,6 +444,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
               source_payload: {
                 socialLinks: lead.socialLinks ?? [],
                 aiResearchSummary: lead.aiResearchSummary ?? null,
+                enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
               },
             }
@@ -412,6 +466,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
               sourcePayload: {
                 socialLinks: lead.socialLinks ?? [],
                 aiResearchSummary: lead.aiResearchSummary ?? null,
+                enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
               },
             }),
@@ -508,7 +563,7 @@ export async function releaseStaleLeads() {
   }));
 }
 
-export async function setLeadResearchSummary(leadId: string, summary: string) {
+export async function setLeadResearchSummary(leadId: string, research: LeadEnrichmentPayload) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save lead research.");
 
   const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
@@ -527,13 +582,15 @@ export async function setLeadResearchSummary(leadId: string, summary: string) {
       ? {
           source_payload: {
             ...payload,
-            aiResearchSummary: summary,
+            aiResearchSummary: research.summary,
+            enrichment: research,
           },
         }
       : {
           sourcePayload: {
             ...payload,
-            aiResearchSummary: summary,
+            aiResearchSummary: research.summary,
+            enrichment: research,
           },
         }),
   }, { id: `eq.${leadId}` }));

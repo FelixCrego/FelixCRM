@@ -20,12 +20,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }
 
-  const summary = await runLeadResearch({
+  const research = await runLeadResearch({
     name: lead.businessName,
     phone: lead.phone,
     address: lead.city,
   });
 
-  await setLeadResearchSummary(leadId, summary);
-  return NextResponse.json({ summary });
+  await setLeadResearchSummary(leadId, research);
+  return NextResponse.json(research);
 }
