@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Check, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { createClientComponentClient } from "@/lib/supabase-client";
@@ -24,10 +24,16 @@ type LeadRecord = {
   source_payload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
+    closedDealValue?: number | null;
+    closedAt?: string | null;
+    stripeCheckoutLink?: string | null;
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
+    closedDealValue?: number | null;
+    closedAt?: string | null;
+    stripeCheckoutLink?: string | null;
   } | null;
 };
 
@@ -223,6 +229,7 @@ function LeadWorkspaceSkeleton() {
 
 export default function LeadExecutionPage() {
   const params = useParams<{ id?: string | string[] }>();
+  const router = useRouter();
   const leadId = useMemo(() => {
     const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
     return typeof rawId === "string" ? rawId.trim() : "";
@@ -278,6 +285,8 @@ export default function LeadExecutionPage() {
   const [newContactEmail, setNewContactEmail] = useState("");
   const [savingContacts, setSavingContacts] = useState(false);
   const [contactsError, setContactsError] = useState("");
+  const [closingDeal, setClosingDeal] = useState(false);
+  const [closeDealError, setCloseDealError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   useEffect(() => {
@@ -532,6 +541,68 @@ export default function LeadExecutionPage() {
     setCheckoutLoading(false);
   }
 
+  function extractStripeValueFromLink(link: string) {
+    try {
+      const safeUrl = link.startsWith("http://") || link.startsWith("https://") ? link : `https://${link}`;
+      const parsed = new URL(safeUrl);
+      const amountParam = parsed.searchParams.get("amount") || parsed.searchParams.get("amount_total") || parsed.searchParams.get("unit_amount");
+      if (!amountParam) return null;
+
+      const numericAmount = Number(amountParam);
+      return Number.isFinite(numericAmount) ? numericAmount : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function markLeadAsClosedDeal() {
+    if (!leadId) return;
+
+    setClosingDeal(true);
+    setCloseDealError("");
+
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
+    const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
+    const closedAtIso = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        status: "Closed Won",
+        source_payload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      })
+      .eq("id", leadId);
+
+    if (error) {
+      setCloseDealError("Unable to mark this lead as closed right now.");
+      setClosingDeal(false);
+      return;
+    }
+
+    setLeadExecutionStatus("Closed Won");
+    setLead((previous) =>
+      previous
+        ? {
+            ...previous,
+            status: "Closed Won",
+            source_payload: {
+              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+              closedDealValue: inferredDealValue,
+              closedAt: closedAtIso,
+              stripeCheckoutLink: checkoutLink || null,
+            },
+          }
+        : previous,
+    );
+    router.push("/closed-deals");
+    router.refresh();
+  }
+
   async function copyCheckoutLink() {
     if (!checkoutLink) return;
 
@@ -542,6 +613,91 @@ export default function LeadExecutionPage() {
     } catch {
       setCheckoutLinkCopied(false);
     }
+  }
+
+  async function persistLeadContacts(nextContacts: LeadContactRecord[]) {
+    if (!leadId) return;
+
+    setSavingContacts(true);
+    setContactsError("");
+
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
+    const payload = {
+      source_payload: {
+        ...sourcePayload,
+        contacts: nextContacts,
+      },
+    };
+
+    const { error } = await supabase.from("leads").update(payload).eq("id", leadId);
+
+    if (error) {
+      setContactsError("Unable to save contact details right now.");
+      setSavingContacts(false);
+      return;
+    }
+
+    setLeadContacts(nextContacts);
+    setLead((previous) =>
+      previous
+        ? {
+            ...previous,
+            source_payload: {
+              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+              contacts: nextContacts,
+            },
+          }
+        : previous,
+    );
+    setSavingContacts(false);
+  }
+
+  async function addContact() {
+    const name = newContactName.trim();
+    if (!name) {
+      setContactsError("Contact name is required.");
+      return;
+    }
+
+    const nextContact: LeadContactRecord = {
+      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `contact-${Date.now()}`,
+      name,
+      role: newContactRole.trim() || "",
+      phones: newContactPhone.trim() ? [newContactPhone.trim()] : [],
+      emails: newContactEmail.trim() ? [newContactEmail.trim()] : [],
+    };
+
+    await persistLeadContacts([...leadContacts, nextContact]);
+    setNewContactName("");
+    setNewContactRole("");
+    setNewContactPhone("");
+    setNewContactEmail("");
+  }
+
+  async function addPhoneToContact(contactId: string, phone: string) {
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId && !contact.phones.includes(trimmedPhone)
+        ? { ...contact, phones: [...contact.phones, trimmedPhone] }
+        : contact,
+    );
+
+    await persistLeadContacts(nextContacts);
+  }
+
+  async function addEmailToContact(contactId: string, email: string) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId && !contact.emails.includes(trimmedEmail)
+        ? { ...contact, emails: [...contact.emails, trimmedEmail] }
+        : contact,
+    );
+
+    await persistLeadContacts(nextContacts);
   }
 
   async function saveOmniNote() {
@@ -941,6 +1097,15 @@ export default function LeadExecutionPage() {
             <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
               {leadExecutionStatus}
             </span>
+            <button
+              type="button"
+              onClick={markLeadAsClosedDeal}
+              disabled={closingDeal}
+              className="mt-3 w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
+            </button>
+            {closeDealError ? <p className="mt-2 text-xs text-rose-300">{closeDealError}</p> : null}
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">

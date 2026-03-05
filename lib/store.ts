@@ -168,6 +168,20 @@ async function getSafeFirstUser(userId: string) {
   }
 }
 
+
+function normalizeLeadStatus(rawStatus: unknown): Lead["status"] {
+  if (rawStatus === "CLOSED" || rawStatus === "Closed Won") return "CLOSED";
+  if (rawStatus === "CONTACTED") return "CONTACTED";
+  if (rawStatus === "DISQUALIFIED") return "DISQUALIFIED";
+
+  if (rawStatus === "IN_PROGRESS" || rawStatus === "Pitched" || rawStatus === "Awaiting Approval" || rawStatus === "Payment Pending") {
+    return "IN_PROGRESS";
+  }
+
+  if (rawStatus === "NEW" || rawStatus === "New") return "NEW";
+  return "NEW";
+}
+
 function leadToMemory(lead: any): Lead {
   return {
     id: lead.id,
@@ -178,7 +192,7 @@ function leadToMemory(lead: any): Lead {
     email: lead.email,
     websiteUrl: lead.websiteUrl ?? lead.website_url,
     websiteStatus: lead.websiteStatus ?? lead.website_status,
-    status: lead.status,
+    status: normalizeLeadStatus(lead.status),
     deployedUrl: lead.deployedUrl ?? lead.deployed_url,
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
     ownerId: lead.ownerId ?? lead.owner_id,
@@ -186,6 +200,9 @@ function leadToMemory(lead: any): Lead {
     socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
     aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
     sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
+    closedDealValue: typeof (lead.sourcePayload ?? lead.source_payload)?.closedDealValue === "number" ? (lead.sourcePayload ?? lead.source_payload).closedDealValue : null,
+    closedAt: typeof (lead.sourcePayload ?? lead.source_payload)?.closedAt === "string" ? (lead.sourcePayload ?? lead.source_payload).closedAt : null,
+    stripeCheckoutLink: typeof (lead.sourcePayload ?? lead.source_payload)?.stripeCheckoutLink === "string" ? (lead.sourcePayload ?? lead.source_payload).stripeCheckoutLink : null,
     transferRequests: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.transferRequests)
       ? (lead.sourcePayload ?? lead.source_payload).transferRequests.filter((request: any) =>
           request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",
