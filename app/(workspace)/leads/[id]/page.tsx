@@ -313,23 +313,26 @@ export default function LeadExecutionPage() {
 
     setNotesLoading(true);
     setNotesError("");
-    const { data, error } = await supabase.from("lead_notes").insert([
-      {
-        lead_id: leadId,
+    const response = await fetch("/api/lead-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
         content,
         channel: activeTab.toLowerCase(),
-        activity_type: activeTab.toUpperCase(),
-        contact_id: currentContactId,
-      },
-    ]);
+        contactId: currentContactId,
+      }),
+    });
 
-    if (error || !data?.[0]) {
-      setNotesError(error?.message || "Unable to save note.");
+    const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.note) {
+      setNotesError(payload?.error || "Unable to save note.");
       setNotesLoading(false);
       return;
     }
 
-    const inserted = data[0] as LeadNoteRecord;
+    const inserted = payload.note;
     setNotesDraft("");
     setNotes((previous) => [
       {
@@ -802,6 +805,12 @@ export default function LeadExecutionPage() {
               <input
                 value={notesDraft}
                 onChange={(event) => setNotesDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void saveOmniNote();
+                  }
+                }}
                 className="h-9 flex-1 bg-transparent px-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
                 placeholder={`Draft ${activeTab === "NOTES" ? "note" : activeTab === "EMAIL" ? "email" : "SMS"} content for ${leadName}...`}
               />
