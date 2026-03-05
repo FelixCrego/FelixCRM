@@ -5,6 +5,19 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { BriefcaseBusiness, Loader2, MapPin, RefreshCcw, Search, Sparkles } from "lucide-react";
 
+type ApiPayload = Record<string, unknown>;
+
+async function readJsonResponse(response: Response): Promise<{ payload: ApiPayload; rawText: string }> {
+  const rawText = await response.text();
+  if (!rawText) return { payload: {}, rawText };
+
+  try {
+    return { payload: JSON.parse(rawText) as ApiPayload, rawText };
+  } catch {
+    return { payload: {}, rawText };
+  }
+}
+
 type Lead = {
   id: string;
   businessName: string;
@@ -55,9 +68,12 @@ export default function ScrapePage() {
     setError(null);
     try {
       const response = await fetch("/api/leads?scope=all", { cache: "no-store" });
-      if (!response.ok) throw new Error("Failed to load leads.");
-      const data = await response.json();
-      setLeads(Array.isArray(data.leads) ? data.leads : []);
+      const { payload, rawText } = await readJsonResponse(response);
+      if (!response.ok) {
+        const message = typeof payload.error === "string" ? payload.error : rawText || "Failed to load leads.";
+        throw new Error(message);
+      }
+      setLeads(Array.isArray(payload.leads) ? (payload.leads as Lead[]) : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load leads.");
     } finally {
@@ -100,18 +116,11 @@ export default function ScrapePage() {
         body: JSON.stringify({ city, businessType: niche, minRating, includeNoWebsiteOnly }),
       });
 
-      const responseText = await response.text();
-      let payload: Record<string, unknown> = {};
-      if (responseText) {
-        try {
-          payload = JSON.parse(responseText) as Record<string, unknown>;
-        } catch {
-          payload = {};
-        }
-      }
+      const { payload, rawText } = await readJsonResponse(response);
 
       if (!response.ok) {
-        const errorMessage = typeof payload.error === "string" ? payload.error : `Scrape failed with status ${response.status}.`;
+        const fallback = rawText || `Scrape failed with status ${response.status}.`;
+        const errorMessage = typeof payload.error === "string" ? payload.error : fallback;
         throw new Error(errorMessage);
       }
 
