@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { createClientComponentClient } from "@/lib/supabase-client";
+import FollowUpEngine from "./FollowUpEngine";
 
 type LeadRecord = {
   id: string;
@@ -1959,77 +1960,7 @@ export default function LeadExecutionPage() {
             ) : null}
           </div>
 
-          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-semibold">Follow-up Tasks & Reminders</h2>
-                <p className="mt-1 text-xs text-zinc-400">
-                  Monthly touchpoints: <span className="font-semibold text-zinc-100">{monthlyTouchpointCount}/7</span>
-                  {remainingTouchpoints > 0 ? ` • ${remainingTouchpoints} more needed this month` : " • Goal reached"}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_140px_220px_auto]">
-              <input
-                type="text"
-                value={taskTitle}
-                onChange={(event) => setTaskTitle(event.target.value)}
-                className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-3 text-xs text-zinc-100 outline-none"
-                placeholder="Task title (Call back, follow up, check-in...)"
-              />
-              <select
-                value={taskType}
-                onChange={(event) => setTaskType(event.target.value as LeadTaskRecord["type"])}
-                className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
-              >
-                <option value="CALLBACK">Callback</option>
-                <option value="FOLLOW_UP">Follow Up</option>
-                <option value="CHECK_IN">Check-in</option>
-                <option value="CUSTOM">Custom</option>
-              </select>
-              <input
-                type="datetime-local"
-                value={taskReminderAt}
-                onChange={(event) => setTaskReminderAt(event.target.value)}
-                className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none"
-              />
-              <button
-                type="button"
-                onClick={createTask}
-                disabled={tasksLoading || !taskTitle.trim() || !taskReminderAt}
-                className="rounded-md bg-indigo-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
-              >
-                Add Task
-              </button>
-            </div>
-
-            {tasksError ? <p className="mt-2 text-xs text-rose-300">{tasksError}</p> : null}
-            {tasksLoading ? <p className="mt-2 text-xs text-zinc-500">Loading tasks...</p> : null}
-
-            <div className="mt-3 space-y-2">
-              {tasks.length === 0 && !tasksLoading ? (
-                <p className="text-xs text-zinc-500">No follow-up tasks yet.</p>
-              ) : null}
-              {tasks.map((task) => (
-                <div key={task.id} className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2">
-                  <div>
-                    <p className={`text-xs font-medium ${task.completed ? "text-zinc-500 line-through" : "text-zinc-100"}`}>{task.title}</p>
-                    <p className="text-[11px] text-zinc-400">
-                      {task.type.replaceAll("_", " ")} • Reminder: {new Date(task.reminderAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleTaskCompletion(task)}
-                    className={`rounded-md px-2 py-1 text-[11px] font-semibold ${task.completed ? "bg-zinc-700 text-zinc-200" : "bg-emerald-500 text-emerald-950"}`}
-                  >
-                    {task.completed ? "Completed" : "Mark Done"}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+          <FollowUpEngine />
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between gap-2">
