@@ -138,6 +138,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GitHub repository creation succeeded but did not return repository metadata (name/id)." }, { status: 500 });
     }
 
+    const deploymentEnv = {
+      TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
+      TEMPLATE_CONFIG_VERSION,
+      BUSINESS_NAME: templateConfig.business.name,
+      CONTACT_PHONE: templateConfig.content.contact.phone,
+      CONTACT_EMAIL: templateConfig.content.contact.email,
+      SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
+    };
+
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
     const createProjectResponse = await fetch("https://api.vercel.com/v10/projects", {
       method: "POST",
@@ -161,6 +170,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Vercel project creation failed: ${errorText || createProjectResponse.statusText}` }, { status: 500 });
     }
 
+    for (const [key, value] of Object.entries(deploymentEnv)) {
+      const upsertEnvResponse = await fetch(`https://api.vercel.com/v10/projects/${vercelProjectName}/env?upsert=true`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          key,
+          value,
+          target: ["production"],
+          type: "encrypted",
+        }),
+      });
+
+      if (!upsertEnvResponse.ok) {
+        await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+        const errorText = await upsertEnvResponse.text();
+        return NextResponse.json({ error: `Vercel env upsert failed for ${key}: ${errorText || upsertEnvResponse.statusText}` }, { status: 500 });
+      }
+    }
+
     const response = await fetch("https://api.vercel.com/v13/deployments", {
       method: "POST",
       headers: {
@@ -177,14 +208,7 @@ export async function POST(request: Request) {
           ref: repoDefaultBranch,
         },
         target: "production",
-        env: {
-          TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
-          TEMPLATE_CONFIG_VERSION,
-          BUSINESS_NAME: templateConfig.business.name,
-          CONTACT_PHONE: templateConfig.content.contact.phone,
-          CONTACT_EMAIL: templateConfig.content.contact.email,
-          SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
-        },
+        env: deploymentEnv,
       }),
     });
 
