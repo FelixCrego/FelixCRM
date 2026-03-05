@@ -169,6 +169,26 @@ async function getSafeFirstUser(userId: string) {
 }
 
 function leadToMemory(lead: any): Lead {
+  const sourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
+  const closedDealValueFromPayload =
+    typeof sourcePayload.closedDealValue === "number"
+      ? sourcePayload.closedDealValue
+      : typeof sourcePayload.closed_deal_value === "number"
+        ? sourcePayload.closed_deal_value
+        : null;
+  const closedAtFromPayload =
+    typeof sourcePayload.closedAt === "string"
+      ? sourcePayload.closedAt
+      : typeof sourcePayload.closed_at === "string"
+        ? sourcePayload.closed_at
+        : null;
+  const stripeCheckoutLinkFromPayload =
+    typeof sourcePayload.stripeCheckoutLink === "string"
+      ? sourcePayload.stripeCheckoutLink
+      : typeof sourcePayload.stripe_checkout_link === "string"
+        ? sourcePayload.stripe_checkout_link
+        : null;
+
   return {
     id: lead.id,
     businessName: lead.businessName ?? lead.business_name,
@@ -183,14 +203,23 @@ function leadToMemory(lead: any): Lead {
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
     ownerId: lead.ownerId ?? lead.owner_id,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
-    socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
-    aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
-    sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
-    closedDealValue: typeof (lead.sourcePayload ?? lead.source_payload)?.closedDealValue === "number" ? (lead.sourcePayload ?? lead.source_payload).closedDealValue : null,
-    closedAt: typeof (lead.sourcePayload ?? lead.source_payload)?.closedAt === "string" ? (lead.sourcePayload ?? lead.source_payload).closedAt : null,
-    stripeCheckoutLink: typeof (lead.sourcePayload ?? lead.source_payload)?.stripeCheckoutLink === "string" ? (lead.sourcePayload ?? lead.source_payload).stripeCheckoutLink : null,
-    transferRequests: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.transferRequests)
-      ? (lead.sourcePayload ?? lead.source_payload).transferRequests.filter((request: any) =>
+    socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
+    aiResearchSummary: typeof sourcePayload.aiResearchSummary === "string" ? sourcePayload.aiResearchSummary : null,
+    sourceQuery: typeof sourcePayload.sourceQuery === "string" ? sourcePayload.sourceQuery : null,
+    closedDealValue:
+      (typeof lead.closedDealValue === "number" ? lead.closedDealValue : null) ??
+      (typeof lead.closed_deal_value === "number" ? lead.closed_deal_value : null) ??
+      closedDealValueFromPayload,
+    closedAt:
+      (typeof lead.closedAt === "string" ? lead.closedAt : null) ??
+      (typeof lead.closed_at === "string" ? lead.closed_at : null) ??
+      closedAtFromPayload,
+    stripeCheckoutLink:
+      (typeof lead.stripeCheckoutLink === "string" ? lead.stripeCheckoutLink : null) ??
+      (typeof lead.stripe_checkout_link === "string" ? lead.stripe_checkout_link : null) ??
+      stripeCheckoutLinkFromPayload,
+    transferRequests: Array.isArray(sourcePayload.transferRequests)
+      ? sourcePayload.transferRequests.filter((request: any) =>
           request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",
         )
       : [],

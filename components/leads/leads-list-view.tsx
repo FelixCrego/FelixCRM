@@ -134,6 +134,12 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
+  const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
+  const [calculatorCallToDemoRate, setCalculatorCallToDemoRate] = useState(20);
+  const [calculatorShowRate, setCalculatorShowRate] = useState(70);
+  const [calculatorCloseRate, setCalculatorCloseRate] = useState(25);
+  const [calculatorIncomeGoal, setCalculatorIncomeGoal] = useState(10000);
+  const [calculatorCommissionRate, setCalculatorCommissionRate] = useState(10);
 
   const normalizedServerLeads = useMemo(() => ((leads || []).map(normalizeLead).filter((lead): lead is Lead => Boolean(lead))), [leads]);
 
@@ -207,6 +213,24 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   }, [displayLeads, search, status, lastContacted, viewMode, closedDateRange]);
 
   const cumulativeClosedValue = useMemo(() => filteredLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [filteredLeads]);
+  const averageClosedDealValue = useMemo(
+    () => (filteredLeads.length > 0 ? cumulativeClosedValue / filteredLeads.length : 0),
+    [cumulativeClosedValue, filteredLeads.length],
+  );
+  const demosBookedPerDay = useMemo(() => calculatorCallsPerDay * (calculatorCallToDemoRate / 100), [calculatorCallToDemoRate, calculatorCallsPerDay]);
+  const demosCompletedPerDay = useMemo(() => demosBookedPerDay * (calculatorShowRate / 100), [calculatorShowRate, demosBookedPerDay]);
+  const closedDealsPerDay = useMemo(() => demosCompletedPerDay * (calculatorCloseRate / 100), [calculatorCloseRate, demosCompletedPerDay]);
+  const projectedRevenuePerDay = useMemo(() => closedDealsPerDay * averageClosedDealValue, [averageClosedDealValue, closedDealsPerDay]);
+  const projectedCommissionPerDay = useMemo(() => projectedRevenuePerDay * (calculatorCommissionRate / 100), [calculatorCommissionRate, projectedRevenuePerDay]);
+  const incomeGoalPerDay = useMemo(() => calculatorIncomeGoal / 20, [calculatorIncomeGoal]);
+  const revenueNeededPerDay = useMemo(
+    () => (calculatorCommissionRate > 0 ? incomeGoalPerDay / (calculatorCommissionRate / 100) : 0),
+    [calculatorCommissionRate, incomeGoalPerDay],
+  );
+  const closesNeededPerDay = useMemo(
+    () => (averageClosedDealValue > 0 ? revenueNeededPerDay / averageClosedDealValue : 0),
+    [averageClosedDealValue, revenueNeededPerDay],
+  );
 
   return (
     <div className="space-y-4">
@@ -244,6 +268,64 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Closed Deals Count</p>
             <p className="mt-2 text-3xl font-semibold text-zinc-100">{filteredLeads.length}</p>
+          </div>
+        </section>
+      ) : null}
+
+      {viewMode === "closed" ? (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-zinc-100">Deal Calculator + Daily Plan</h2>
+            <p className="mt-1 text-sm text-zinc-400">Model your funnel math and see the daily activity needed to hit your income target.</p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {[
+              ["Calls / day", calculatorCallsPerDay, setCalculatorCallsPerDay],
+              ["Call → Demo Booked %", calculatorCallToDemoRate, setCalculatorCallToDemoRate],
+              ["Demo Show Rate %", calculatorShowRate, setCalculatorShowRate],
+              ["Demo Close Rate %", calculatorCloseRate, setCalculatorCloseRate],
+              ["Monthly Income Goal ($)", calculatorIncomeGoal, setCalculatorIncomeGoal],
+              ["Commission Rate %", calculatorCommissionRate, setCalculatorCommissionRate],
+            ].map(([label, value, setter]) => (
+              <label key={label as string} className="rounded-xl border border-zinc-700 bg-zinc-950/70 p-3 text-sm text-zinc-300">
+                <span className="block text-xs uppercase tracking-[0.14em] text-zinc-500">{label as string}</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={value as number}
+                  onChange={(event) => (setter as (value: number) => void)(Math.max(0, Number(event.target.value) || 0))}
+                  className="mt-2 w-full bg-transparent text-lg font-semibold text-zinc-100 outline-none"
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Demos Booked / Day</p>
+              <p className="mt-1 text-2xl font-semibold text-zinc-100">{demosBookedPerDay.toFixed(1)}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Demos Completed / Day</p>
+              <p className="mt-1 text-2xl font-semibold text-zinc-100">{demosCompletedPerDay.toFixed(1)}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Projected Closes / Day</p>
+              <p className="mt-1 text-2xl font-semibold text-emerald-200">{closedDealsPerDay.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl border border-zinc-700/70 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Projected Commission / Day</p>
+              <p className="mt-1 text-2xl font-semibold text-emerald-200">{formatCurrency(projectedCommissionPerDay)}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-sm text-indigo-100">
+            <p>
+              Daily plan target: <span className="font-semibold">{formatCurrency(incomeGoalPerDay)}</span> commission/day requires about{" "}
+              <span className="font-semibold">{closesNeededPerDay.toFixed(2)}</span> closes/day ({formatCurrency(revenueNeededPerDay)} in revenue/day at current average deal value of{" "}
+              {formatCurrency(averageClosedDealValue)}).
+            </p>
           </div>
         </section>
       ) : null}

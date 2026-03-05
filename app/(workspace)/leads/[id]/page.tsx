@@ -616,7 +616,7 @@ export default function LeadExecutionPage() {
 
     if (checkoutAmount >= 500) {
       setApprovalPending(false);
-      setCheckoutLink("buy.stripe.com/test_123");
+      setCheckoutLink(`buy.stripe.com/test_123?amount=${Math.round(checkoutAmount * 100)}`);
       setLeadExecutionStatus("Payment Pending");
       setCheckoutLoading(false);
       return;
@@ -632,11 +632,17 @@ export default function LeadExecutionPage() {
     try {
       const safeUrl = link.startsWith("http://") || link.startsWith("https://") ? link : `https://${link}`;
       const parsed = new URL(safeUrl);
-      const amountParam = parsed.searchParams.get("amount") || parsed.searchParams.get("amount_total") || parsed.searchParams.get("unit_amount");
+      const amount = parsed.searchParams.get("amount");
+      const amountTotal = parsed.searchParams.get("amount_total");
+      const unitAmount = parsed.searchParams.get("unit_amount");
+      const amountParam = amount ?? amountTotal ?? unitAmount;
       if (!amountParam) return null;
 
       const numericAmount = Number(amountParam);
-      return Number.isFinite(numericAmount) ? numericAmount : null;
+      if (!Number.isFinite(numericAmount)) return null;
+
+      const shouldTreatAsCents = amountTotal !== null || unitAmount !== null || amountParam.includes(".") === false;
+      return shouldTreatAsCents ? numericAmount / 100 : numericAmount;
     } catch {
       return null;
     }
