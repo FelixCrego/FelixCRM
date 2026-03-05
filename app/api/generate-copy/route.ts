@@ -36,6 +36,30 @@ class GeminiModelFallbackError extends Error {
   }
 }
 
+function parseConfiguredGeminiModels(rawModels: string | undefined): string[] {
+  if (!rawModels) return [];
+
+  const normalizedInput = rawModels.trim();
+  if (!normalizedInput) return [];
+
+  try {
+    const parsed = JSON.parse(normalizedInput);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((model): model is string => typeof model === "string")
+        .map((model) => model.trim().replace(/^['"]|['"]$/g, ""))
+        .filter(Boolean);
+    }
+  } catch {
+    // Fall back to delimiter-based parsing.
+  }
+
+  return normalizedInput
+    .split(/[\n,]+/)
+    .map((model) => model.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
+}
+
 function normalizePlaybookPayload(raw: unknown): PlaybookPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const candidate = raw as Partial<PlaybookPayload>;
@@ -138,10 +162,7 @@ function buildFallbackPlaybook(leadName: string, researchContext?: string): Play
 async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt: string) {
   const modelErrors: GeminiFallbackError[] = [];
 
-  const configuredModels = process.env.GEMINI_MODELS
-    ?.split(",")
-    .map((model) => model.trim().replace(/^['"]|['"]$/g, ""))
-    .filter(Boolean);
+  const configuredModels = parseConfiguredGeminiModels(process.env.GEMINI_MODELS);
   const modelsToTry = Array.from(new Set([...(configuredModels || []), ...GEMINI_MODELS]));
 
   for (const modelName of modelsToTry) {
@@ -264,11 +285,16 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       return NextResponse.json({ draft: text, model: generation.modelName });
     } catch (generationError) {
       if (activeTab === "PLAYBOOK") {
-        const fallbackMessage = generationError instanceof GeminiModelFallbackError
-          ? "Gemini request failed across available models. Check GEMINI_API_KEY/GEMINI_MODELS configuration. Showing fallback playbook."
-          : "Gemini request failed across available models. Showing fallback playbook.";
+        const fallbackMessage = "Gemini is temporarily unavailable. Showing fallback playbook.";
 
-        console.error("Gemini Playbook Generation Error:", generationError);
+        if (generationError instanceof GeminiModelFallbackError) {
+          console.error("Gemini Playbook Generation Error (all models failed):", {
+            attemptedModels: generationError.attemptedModels,
+            modelErrors: generationError.modelErrors,
+          });
+        } else {
+          console.error("Gemini Playbook Generation Error:", generationError);
+        }
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
           warning: fallbackMessage,
