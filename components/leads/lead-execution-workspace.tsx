@@ -14,6 +14,14 @@ import {
   UserCircle2,
 } from "lucide-react";
 
+type LeadContact = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
+
 type LeadExecutionWorkspaceProps = {
   lead: {
     id: string;
@@ -93,6 +101,17 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const [meetLink, setMeetLink] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
+  const [contacts, setContacts] = useState<LeadContact[]>([{
+    id: "primary",
+    name: "Primary Contact",
+    role: "Owner",
+    phones: lead.phone ? [lead.phone] : [],
+    emails: lead.email ? [lead.email] : [],
+  }]);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactRole, setNewContactRole] = useState("");
+  const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactEmail, setNewContactEmail] = useState("");
   const activeTab = commsTab;
 
   const siteUrl = useMemo(
@@ -171,15 +190,104 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-sm">
           <p className="mb-2 font-medium text-zinc-200">Contact Info</p>
-          <p className="flex items-center gap-2 text-zinc-400">
-            <Phone className="h-3.5 w-3.5" /> {lead.phone || "No phone"}
-          </p>
-          <p className="mt-1 flex items-center gap-2 text-zinc-400">
-            <Mail className="h-3.5 w-3.5" /> {lead.email || "No email"}
-          </p>
-          <p className="mt-1 flex items-center gap-2 text-zinc-400">
+          <p className="mb-2 flex items-center gap-2 text-zinc-400">
             <MapPin className="h-3.5 w-3.5" /> {lead.city || "Unknown city"}
           </p>
+          <div className="space-y-2">
+            {contacts.map((contact) => (
+              <div key={contact.id} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2">
+                <p className="text-xs font-semibold text-zinc-200">{contact.name}</p>
+                <p className="text-[11px] text-zinc-500">{contact.role || "No role"}</p>
+                <p className="mt-1 flex items-center gap-2 text-zinc-400">
+                  <Phone className="h-3.5 w-3.5" /> {contact.phones.length ? contact.phones.join(" • ") : "No phone on file"}
+                </p>
+                <p className="mt-1 flex items-center gap-2 text-zinc-400">
+                  <Mail className="h-3.5 w-3.5" /> {contact.emails.length ? contact.emails.join(" • ") : "No email on file"}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => {
+                      const value = window.prompt("Add phone number");
+                      if (!value?.trim()) return;
+                      setContacts((previous) => previous.map((item) =>
+                        item.id === contact.id && !item.phones.includes(value.trim())
+                          ? { ...item, phones: [...item.phones, value.trim()] }
+                          : item,
+                      ));
+                    }}
+                    className="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300"
+                  >
+                    + Phone
+                  </button>
+                  <button
+                    onClick={() => {
+                      const value = window.prompt("Add email");
+                      if (!value?.trim()) return;
+                      setContacts((previous) => previous.map((item) =>
+                        item.id === contact.id && !item.emails.includes(value.trim())
+                          ? { ...item, emails: [...item.emails, value.trim()] }
+                          : item,
+                      ));
+                    }}
+                    className="rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300"
+                  >
+                    + Email
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/70 p-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Add contact</p>
+            <div className="mt-2 grid gap-2">
+              <input
+                value={newContactName}
+                onChange={(event) => setNewContactName(event.target.value)}
+                placeholder="Name"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <input
+                value={newContactRole}
+                onChange={(event) => setNewContactRole(event.target.value)}
+                placeholder="Role (Owner, Manager, etc)"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <input
+                value={newContactPhone}
+                onChange={(event) => setNewContactPhone(event.target.value)}
+                placeholder="Phone"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <input
+                value={newContactEmail}
+                onChange={(event) => setNewContactEmail(event.target.value)}
+                placeholder="Email"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+              />
+              <button
+                onClick={() => {
+                  if (!newContactName.trim() && !newContactPhone.trim() && !newContactEmail.trim()) return;
+                  setContacts((previous) => [
+                    ...previous,
+                    {
+                      id: crypto.randomUUID(),
+                      name: newContactName.trim() || "Untitled Contact",
+                      role: newContactRole.trim(),
+                      phones: newContactPhone.trim() ? [newContactPhone.trim()] : [],
+                      emails: newContactEmail.trim() ? [newContactEmail.trim()] : [],
+                    },
+                  ]);
+                  setNewContactName("");
+                  setNewContactRole("");
+                  setNewContactPhone("");
+                  setNewContactEmail("");
+                }}
+                className="rounded bg-indigo-500 px-2 py-1 text-xs font-semibold text-white"
+              >
+                Add Contact
+              </button>
+            </div>
+          </div>
         </div>
 
         <label className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3">
