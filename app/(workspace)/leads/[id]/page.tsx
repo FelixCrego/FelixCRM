@@ -1034,6 +1034,11 @@ export default function LeadExecutionPage() {
                     </button>
                   );
                 })}
+                {selectedMeetingDay && !leadDayOptions.some((day) => day.value === selectedMeetingDay) ? (
+                  <span className="rounded-full border border-indigo-400/40 bg-indigo-500/15 px-3 py-2 text-xs font-medium text-indigo-200">
+                    Custom Day: {selectedMeetingDay}
+                  </span>
+                ) : null}
               </div>
             </div>
 
