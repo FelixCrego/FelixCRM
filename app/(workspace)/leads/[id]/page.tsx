@@ -25,10 +25,22 @@ type LeadRecord = {
   source_payload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
+    templateBranding?: {
+      logoUrl?: string;
+      heroImageUrl?: string;
+      primaryColor?: string;
+      secondaryColor?: string;
+    };
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
+    templateBranding?: {
+      logoUrl?: string;
+      heroImageUrl?: string;
+      primaryColor?: string;
+      secondaryColor?: string;
+    };
   } | null;
   aiResearchSummary?: string | null;
   contacts?: LeadContactRecord[];
@@ -282,6 +294,12 @@ export default function LeadExecutionPage() {
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
   const [researchError, setResearchError] = useState<string>("");
+  const [deployLoading, setDeployLoading] = useState(false);
+  const [deployError, setDeployError] = useState("");
+  const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
+  const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
+  const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
+  const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
   const [callIntel, setCallIntel] = useState<CallIntelRecord | null>(null);
@@ -588,6 +606,15 @@ export default function LeadExecutionPage() {
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
   const leadCity = lead?.city || "Unknown city";
 
+  useEffect(() => {
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload;
+    const branding = sourcePayload?.templateBranding;
+    setBrandingLogoUrl(branding?.logoUrl || "");
+    setBrandingHeroImageUrl(branding?.heroImageUrl || "");
+    setBrandingPrimaryColor(branding?.primaryColor || "#0f172a");
+    setBrandingSecondaryColor(branding?.secondaryColor || "#2563eb");
+  }, [lead?.id, lead?.sourcePayload, lead?.source_payload]);
+
   const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
     () => ({
       scripts: [
@@ -715,6 +742,15 @@ export default function LeadExecutionPage() {
     await persistContacts(nextContacts);
   };
 
+  function readFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(new Error("Failed to read file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function runResearch() {
     if (!leadId) {
       setResearchError("This lead is missing an id, so analysis cannot be run.");
@@ -753,6 +789,91 @@ export default function LeadExecutionPage() {
       setResearchError(message);
     } finally {
       setResearchLoading(false);
+    }
+  }
+
+  async function handleDeploySite() {
+    if (!leadId) {
+      setDeployError("This lead is missing an id, so deployment cannot be started.");
+      return;
+    }
+
+    setDeployLoading(true);
+    setDeployError("");
+
+    const templateConfigOverrides = {
+      business: {
+        name: leadName,
+        city: leadCity,
+      },
+      branding: {
+        logoUrl: brandingLogoUrl.trim(),
+        heroImageUrl: brandingHeroImageUrl.trim(),
+        primaryColor: brandingPrimaryColor,
+        secondaryColor: brandingSecondaryColor,
+      },
+      research: {
+        summary: researchInsight.trim(),
+      },
+    };
+
+    try {
+      const response = await fetch("/api/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId,
+          researchOutput: researchInsight.trim() || undefined,
+          templateConfigOverrides,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Deployment failed.");
+      }
+
+      if (payload?.url) {
+        setLead((previous) =>
+          previous
+            ? {
+                ...previous,
+                deployed_url: payload.url,
+                deployedUrl: payload.url,
+                source_payload: {
+                  ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+                  templateBranding: {
+                    logoUrl: brandingLogoUrl.trim(),
+                    heroImageUrl: brandingHeroImageUrl.trim(),
+                    primaryColor: brandingPrimaryColor,
+                    secondaryColor: brandingSecondaryColor,
+                  },
+                },
+              }
+            : previous,
+        );
+        window.open(payload.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      setDeployError(error instanceof Error ? error.message : "Unable to deploy this lead right now.");
+    } finally {
+      setDeployLoading(false);
+    }
+  }
+
+  async function handleBrandingFileUpload(file: File | undefined, target: "logo" | "hero") {
+    if (!file) return;
+
+    try {
+      const fileData = await readFileAsDataUrl(file);
+      if (target === "logo") {
+        setBrandingLogoUrl(fileData);
+      } else {
+        setBrandingHeroImageUrl(fileData);
+      }
+    } catch (error) {
+      setDeployError(error instanceof Error ? error.message : "Unable to process the uploaded image.");
     }
   }
 
@@ -1607,18 +1728,82 @@ export default function LeadExecutionPage() {
             </div>
           </div>
 
-          <a
-            href={deployedUrl}
-            className="group block rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-4 shadow-lg shadow-indigo-900/40 transition hover:scale-[1.01]"
-          >
+          <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-4 shadow-lg shadow-indigo-900/40">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-white">Deploy Vercel Site</p>
-                <p className="mt-1 text-xs text-indigo-100/90">Push this lead from conversation to live site with one click.</p>
+                <p className="mt-1 text-xs text-indigo-100/90">Clone the master template, create a new repo/project, and deploy this lead with custom branding.</p>
               </div>
               <span className="rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-sm text-white">🚀</span>
             </div>
-          </a>
+
+            <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-indigo-100/90">
+              <label className="space-y-1">
+                <span className="block">Logo URL or upload</span>
+                <input
+                  value={brandingLogoUrl}
+                  onChange={(event) => setBrandingLogoUrl(event.target.value)}
+                  placeholder="https://..."
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => void handleBrandingFileUpload(event.target.files?.[0], "logo")}
+                  className="w-full text-[11px] text-indigo-100 file:mr-2 file:rounded file:border-0 file:bg-white/20 file:px-2 file:py-1 file:text-[11px] file:text-white"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="block">Hero image URL or upload</span>
+                <input
+                  value={brandingHeroImageUrl}
+                  onChange={(event) => setBrandingHeroImageUrl(event.target.value)}
+                  placeholder="https://..."
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => void handleBrandingFileUpload(event.target.files?.[0], "hero")}
+                  className="w-full text-[11px] text-indigo-100 file:mr-2 file:rounded file:border-0 file:bg-white/20 file:px-2 file:py-1 file:text-[11px] file:text-white"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-2">
+                <label className="space-y-1">
+                  <span className="block">Primary color</span>
+                  <input type="color" value={brandingPrimaryColor} onChange={(event) => setBrandingPrimaryColor(event.target.value)} className="h-9 w-full rounded border border-indigo-300/40 bg-black/20" />
+                </label>
+                <label className="space-y-1">
+                  <span className="block">Secondary color</span>
+                  <input type="color" value={brandingSecondaryColor} onChange={(event) => setBrandingSecondaryColor(event.target.value)} className="h-9 w-full rounded border border-indigo-300/40 bg-black/20" />
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={handleDeploySite}
+                disabled={deployLoading}
+                className="rounded-md border border-white/40 bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deployLoading ? "Deploying..." : "Deploy Vercel Site"}
+              </button>
+              {deployedUrl ? (
+                <a
+                  href={deployedUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-md border border-white/30 px-3 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/20"
+                >
+                  View Live Site
+                </a>
+              ) : null}
+            </div>
+            {deployError ? <p className="mt-2 text-xs text-rose-100">{deployError}</p> : null}
+          </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between">
