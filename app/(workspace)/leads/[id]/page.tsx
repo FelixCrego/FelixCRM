@@ -21,6 +21,12 @@ type LeadRecord = {
   email?: string | null;
   deployed_url?: string | null;
   deployedUrl?: string | null;
+  source_payload?: {
+    aiResearchSummary?: string | null;
+  } | null;
+  sourcePayload?: {
+    aiResearchSummary?: string | null;
+  } | null;
 };
 
 type LeadNoteRecord = {
@@ -166,6 +172,7 @@ export default function LeadExecutionPage() {
 
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
+  const [researchError, setResearchError] = useState<string>("");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("NOTES");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
@@ -245,6 +252,9 @@ export default function LeadExecutionPage() {
 
         if (data) {
           setLead(data);
+          const existingResearch = data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? "";
+          setResearchInsight(existingResearch);
+          setResearchError("");
           const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
           if (
             resolvedStatus === "New" ||
@@ -324,11 +334,44 @@ export default function LeadExecutionPage() {
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
 
   async function runResearch() {
+    if (!leadId) {
+      setResearchError("This lead is missing an id, so analysis cannot be run.");
+      return;
+    }
+
     setResearchLoading(true);
-    setResearchInsight("");
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    setResearchInsight("Analyzed 14 Google Reviews. Weakness: No mobile booking.");
-    setResearchLoading(false);
+    setResearchError("");
+
+    try {
+      const response = await fetch("/api/leads/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { summary?: string; error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Research failed.");
+      }
+
+      const summary = (payload?.summary || "").trim();
+      if (!summary) {
+        throw new Error("Research ran but no summary was returned.");
+      }
+
+      setResearchInsight(summary);
+
+      const { data: refreshedLead } = await supabase.from<LeadRecord>("leads").select("*").eq("id", leadId).single();
+      if (refreshedLead) {
+        setLead(refreshedLead);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to run AI analysis right now.";
+      setResearchError(message);
+    } finally {
+      setResearchLoading(false);
+    }
   }
 
   async function generateMeetingLink() {
@@ -775,6 +818,7 @@ export default function LeadExecutionPage() {
             <p className="mt-4 min-h-14 text-sm text-zinc-300">
               {researchInsight || "Run analysis to generate localized insights and conversion weaknesses."}
             </p>
+            {researchError ? <p className="mt-2 text-xs text-rose-300">{researchError}</p> : null}
           </div>
         </section>
 
