@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Check, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { createClientComponentClient } from "@/lib/supabase-client";
@@ -58,6 +58,14 @@ type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "NOTES" | "SMS" | "EMAIL";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
+
+type AIDynamicPlaybook = {
+  scripts: string[];
+  objections: Array<{ objection: string; counter: string }>;
+  closing: string;
+  roiSnapshot: string;
+  injectedData: string[];
+};
 
 const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
   "206": { timeZone: "America/Los_Angeles", location: "Seattle, WA" },
@@ -215,6 +223,7 @@ function LeadWorkspaceSkeleton() {
 
 export default function LeadExecutionPage() {
   const params = useParams<{ id?: string | string[] }>();
+  const router = useRouter();
   const leadId = useMemo(() => {
     const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
     return typeof rawId === "string" ? rawId.trim() : "";
@@ -225,6 +234,7 @@ export default function LeadExecutionPage() {
 
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchInsight, setResearchInsight] = useState<string>("");
+  const [researchError, setResearchError] = useState<string>("");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("NOTES");
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
@@ -255,6 +265,8 @@ export default function LeadExecutionPage() {
   const [checkoutLink, setCheckoutLink] = useState("");
   const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
+  const [playbookLoading, setPlaybookLoading] = useState(false);
+  const [playbookError, setPlaybookError] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
@@ -314,6 +326,7 @@ export default function LeadExecutionPage() {
           setLeadContacts(normalizeLeadContacts(data));
           const existingResearch = data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? "";
           setResearchInsight(existingResearch);
+          setResearchError("");
           const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
           if (
             resolvedStatus === "New" ||
@@ -394,6 +407,41 @@ export default function LeadExecutionPage() {
     setDialNumber(lead?.phone || "");
   }, [lead?.phone]);
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
+  const leadCity = lead?.city || "Unknown city";
+
+  const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
+    () => ({
+      scripts: [
+        `Hey ${leadName}, I noticed your current site creates friction on mobile when people are trying to book fast. I built a conversion-focused version for you here: ${deployedUrl || "your preview link"}.`,
+        "We can launch this today with no downtime, route calls and form leads directly into your booking flow, and reduce drop-offs from high-intent visitors.",
+        "If even a few missed calls per week convert, this upgrade can pay for itself quickly while adding predictable monthly revenue.",
+      ],
+      objections: [
+        {
+          objection: "I already have a website.",
+          counter: "Totally fair. This offer is about conversion performance, not just design. The goal is more booked jobs from the same traffic.",
+        },
+        {
+          objection: "I need to think about it.",
+          counter: "Absolutely. Let’s do a quick 10-minute walkthrough and map expected lead lift so you can decide with numbers, not guesses.",
+        },
+        {
+          objection: "Can you send details?",
+          counter: "Yes — I’ll send the preview and ROI summary now, then hold your deployment slot for 24 hours so you can move when ready.",
+        },
+      ],
+      closing: "Want me to lock this in and have it live today so your next inbound lead lands on the optimized version?",
+      roiSnapshot: "Most local service sites lose high-intent mobile traffic; even 3-5 recovered bookings/month can mean thousands in missed revenue regained.",
+      injectedData: ["AI deep research summary", "Mobile booking conversion gap", "Live preview + speed-to-launch angle"],
+    }),
+    [leadName, deployedUrl],
+  );
+
+  const [aiPlaybook, setAiPlaybook] = useState<AIDynamicPlaybook>(fallbackPlaybook);
+
+  useEffect(() => {
+    setAiPlaybook(fallbackPlaybook);
+  }, [fallbackPlaybook]);
 
   async function persistContacts(nextContacts: LeadContactRecord[]) {
     if (!leadId) {
@@ -489,8 +537,14 @@ export default function LeadExecutionPage() {
   };
 
   async function runResearch() {
-    if (!leadId) return;
+    if (!leadId) {
+      setResearchError("This lead is missing an id, so analysis cannot be run.");
+      return;
+    }
+
     setResearchLoading(true);
+    setResearchError("");
+
     try {
       const response = await fetch("/api/leads/research", {
         method: "POST",
@@ -499,10 +553,25 @@ export default function LeadExecutionPage() {
       });
 
       const payload = (await response.json().catch(() => null)) as { summary?: string; error?: string } | null;
-      if (!response.ok) throw new Error(payload?.error || "Research failed.");
-      setResearchInsight(payload?.summary || "Research generated, but no summary text was returned.");
-    } catch {
-      setResearchInsight("Unable to run AI analysis right now. Please try again.");
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Research failed.");
+      }
+
+      const summary = (payload?.summary || "").trim();
+      if (!summary) {
+        throw new Error("Research ran but no summary was returned.");
+      }
+
+      setResearchInsight(summary);
+
+      const { data: refreshedLead } = await supabase.from<LeadRecord>("leads").select("*").eq("id", leadId).single();
+      if (refreshedLead) {
+        setLead(refreshedLead);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to run AI analysis right now.";
+      setResearchError(message);
     } finally {
       setResearchLoading(false);
     }
@@ -557,6 +626,68 @@ export default function LeadExecutionPage() {
     setCheckoutLoading(false);
   }
 
+  function extractStripeValueFromLink(link: string) {
+    try {
+      const safeUrl = link.startsWith("http://") || link.startsWith("https://") ? link : `https://${link}`;
+      const parsed = new URL(safeUrl);
+      const amountParam = parsed.searchParams.get("amount") || parsed.searchParams.get("amount_total") || parsed.searchParams.get("unit_amount");
+      if (!amountParam) return null;
+
+      const numericAmount = Number(amountParam);
+      return Number.isFinite(numericAmount) ? numericAmount : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function markLeadAsClosedDeal() {
+    if (!leadId) return;
+
+    setClosingDeal(true);
+    setCloseDealError("");
+
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
+    const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
+    const closedAtIso = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        status: "CLOSED",
+        source_payload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      })
+      .eq("id", leadId);
+
+    if (error) {
+      setCloseDealError("Unable to mark this lead as closed right now.");
+      setClosingDeal(false);
+      return;
+    }
+
+    setLeadExecutionStatus("Closed Won");
+    setLead((previous) =>
+      previous
+        ? {
+            ...previous,
+            status: "CLOSED",
+            source_payload: {
+              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+              closedDealValue: inferredDealValue,
+              closedAt: closedAtIso,
+              stripeCheckoutLink: checkoutLink || null,
+            },
+          }
+        : previous,
+    );
+    router.push("/closed-deals");
+    router.refresh();
+  }
+
   async function copyCheckoutLink() {
     if (!checkoutLink) return;
 
@@ -567,6 +698,91 @@ export default function LeadExecutionPage() {
     } catch {
       setCheckoutLinkCopied(false);
     }
+  }
+
+  async function persistLeadContacts(nextContacts: LeadContactRecord[]) {
+    if (!leadId) return;
+
+    setSavingContacts(true);
+    setContactsError("");
+
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
+    const payload = {
+      source_payload: {
+        ...sourcePayload,
+        contacts: nextContacts,
+      },
+    };
+
+    const { error } = await supabase.from("leads").update(payload).eq("id", leadId);
+
+    if (error) {
+      setContactsError("Unable to save contact details right now.");
+      setSavingContacts(false);
+      return;
+    }
+
+    setLeadContacts(nextContacts);
+    setLead((previous) =>
+      previous
+        ? {
+            ...previous,
+            source_payload: {
+              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+              contacts: nextContacts,
+            },
+          }
+        : previous,
+    );
+    setSavingContacts(false);
+  }
+
+  async function addContact() {
+    const name = newContactName.trim();
+    if (!name) {
+      setContactsError("Contact name is required.");
+      return;
+    }
+
+    const nextContact: LeadContactRecord = {
+      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `contact-${Date.now()}`,
+      name,
+      role: newContactRole.trim() || "",
+      phones: newContactPhone.trim() ? [newContactPhone.trim()] : [],
+      emails: newContactEmail.trim() ? [newContactEmail.trim()] : [],
+    };
+
+    await persistLeadContacts([...leadContacts, nextContact]);
+    setNewContactName("");
+    setNewContactRole("");
+    setNewContactPhone("");
+    setNewContactEmail("");
+  }
+
+  async function addPhoneToContact(contactId: string, phone: string) {
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId && !contact.phones.includes(trimmedPhone)
+        ? { ...contact, phones: [...contact.phones, trimmedPhone] }
+        : contact,
+    );
+
+    await persistLeadContacts(nextContacts);
+  }
+
+  async function addEmailToContact(contactId: string, email: string) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId && !contact.emails.includes(trimmedEmail)
+        ? { ...contact, emails: [...contact.emails, trimmedEmail] }
+        : contact,
+    );
+
+    await persistLeadContacts(nextContacts);
   }
 
   async function saveOmniNote() {
@@ -633,6 +849,72 @@ export default function LeadExecutionPage() {
       setNotesDraft("Error connecting to Gemini AI.");
     } finally {
       setIsDrafting(false);
+    }
+  };
+
+  const handleGeneratePlaybook = async () => {
+    setPlaybookLoading(true);
+    setPlaybookError("");
+
+    try {
+      const response = await fetch("/api/generate-copy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadName,
+          activeTab: "PLAYBOOK",
+          researchContext: [
+            researchInsight || "No AI research summary available.",
+            `Website: ${leadWebsite}`,
+            `City: ${leadCity}`,
+            deployedUrl ? `Preview Link: ${deployedUrl}` : "No preview link available.",
+          ].join("\n"),
+        }),
+      });
+
+      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string; warning?: string } | null;
+
+      if (!data) {
+        setAiPlaybook(fallbackPlaybook);
+        setPlaybookError("Gemini returned an unreadable response. Showing fallback playbook.");
+        return;
+      }
+
+      if (data.playbook) {
+        setAiPlaybook(data.playbook);
+        if (data.warning) {
+          setPlaybookError(data.warning);
+        }
+        return;
+      }
+
+      if (!response.ok) {
+        setAiPlaybook(fallbackPlaybook);
+        if (data.error?.toLowerCase().includes("failed to generate draft")) {
+          setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
+        } else {
+          setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        }
+        return;
+      }
+
+      if (!data.draft) {
+        setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        return;
+      }
+
+      const parsed = JSON.parse(data.draft) as AIDynamicPlaybook;
+      if (!Array.isArray(parsed.scripts) || !Array.isArray(parsed.objections) || !parsed.closing || !parsed.roiSnapshot) {
+        throw new Error("Playbook response missing required fields");
+      }
+
+      setAiPlaybook(parsed);
+    } catch (error) {
+      console.error("Playbook generation failed", error);
+      setPlaybookError("Gemini could not return a valid playbook format. Showing the fallback playbook.");
+      setAiPlaybook(fallbackPlaybook);
+    } finally {
+      setPlaybookLoading(false);
     }
   };
 
@@ -914,6 +1196,15 @@ export default function LeadExecutionPage() {
             <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
               {leadExecutionStatus}
             </span>
+            <button
+              type="button"
+              onClick={markLeadAsClosedDeal}
+              disabled={closingDeal}
+              className="mt-3 w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
+            </button>
+            {closeDealError ? <p className="mt-2 text-xs text-rose-300">{closeDealError}</p> : null}
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -1023,6 +1314,7 @@ export default function LeadExecutionPage() {
             <p className="mt-4 min-h-14 text-sm text-zinc-300">
               {researchInsight || "Run analysis to generate localized insights and conversion weaknesses."}
             </p>
+            {researchError ? <p className="mt-2 text-xs text-rose-300">{researchError}</p> : null}
           </div>
         </section>
 
@@ -1436,7 +1728,14 @@ export default function LeadExecutionPage() {
                 <span>🧠</span>
                 Dynamic AI Playbook
               </h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleGeneratePlaybook}
+                  disabled={playbookLoading}
+                  className="rounded-lg border border-indigo-500/40 px-3 py-1 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {playbookLoading ? "Building..." : "Generate with Gemini"}
+                </button>
                 {(["Scripts", "Objections"] as ScriptTab[]).map((tab) => (
                   <button
                     key={tab}
@@ -1451,21 +1750,30 @@ export default function LeadExecutionPage() {
 
             {scriptTab === "Scripts" ? (
               <div className="space-y-3 text-sm text-zinc-200">
-                <h3 className="text-sm font-semibold text-zinc-100">Context-Aware Script</h3>
-                <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                  Hey {leadName}, I noticed your site makes it hard to book on mobile. I built a faster site for you here: {deployedUrl}.
+                <h3 className="text-sm font-semibold text-zinc-100">Gemini Deep-Research Pitch Sequence</h3>
+                {aiPlaybook.scripts.map((script) => (
+                  <p key={script} className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                    {script}
+                  </p>
+                ))}
+                <p className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 p-3 text-emerald-100">
+                  <span className="font-semibold">ROI Snapshot:</span> {aiPlaybook.roiSnapshot}
                 </p>
-                <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                  We can launch this today and route calls directly into your booking flow.
+                <p className="rounded-lg border border-indigo-600/40 bg-indigo-950/30 p-3 text-indigo-100">
+                  <span className="font-semibold">Close:</span> {aiPlaybook.closing}
                 </p>
                 <span className="inline-flex rounded-md border border-zinc-600 px-2 py-1 text-[11px] text-zinc-300">
-                  Injected data: Google Reviews + Vercel Link + mobile booking gap
+                  Injected data: {aiPlaybook.injectedData.join(" + ")}
                 </span>
+                {playbookError ? <p className="text-xs text-amber-300">{playbookError}</p> : null}
               </div>
             ) : (
               <ul className="space-y-3 text-sm text-zinc-300">
-                <li className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">“I already have a website.” → Totally fair. This version is tuned for speed-to-booking and mobile conversions.</li>
-                <li className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">“Send me details.” → Perfect. I’ll text a preview and hold your deployment slot for 24 hours.</li>
+                {aiPlaybook.objections.map((item) => (
+                  <li key={item.objection} className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                    “{item.objection}” → {item.counter}
+                  </li>
+                ))}
               </ul>
             )}
           </div>

@@ -22,6 +22,7 @@ import {
   Map,
   Gauge,
   CalendarDays,
+  CircleDollarSign,
 } from "lucide-react";
 import { useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -45,6 +46,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
     { href: "/commissions", label: "Commissions", icon: Wallet },
@@ -53,6 +55,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
     { href: "/commissions", label: "Commissions", icon: Wallet },
