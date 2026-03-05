@@ -19,6 +19,23 @@ type PlaybookPayload = {
   injectedData: string[];
 };
 
+type GeminiFallbackError = {
+  attemptedModels: string[];
+  message: string;
+};
+
+class GeminiModelFallbackError extends Error {
+  attemptedModels: string[];
+  modelErrors: GeminiFallbackError[];
+
+  constructor(modelErrors: GeminiFallbackError[]) {
+    super(modelErrors.map((entry) => `${entry.attemptedModels.join("/")}: ${entry.message}`).join(" | "));
+    this.name = "GeminiModelFallbackError";
+    this.modelErrors = modelErrors;
+    this.attemptedModels = modelErrors.flatMap((entry) => entry.attemptedModels);
+  }
+}
+
 function normalizePlaybookPayload(raw: unknown): PlaybookPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const candidate = raw as Partial<PlaybookPayload>;
@@ -119,11 +136,11 @@ function buildFallbackPlaybook(leadName: string, researchContext?: string): Play
 }
 
 async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt: string) {
-  const errors: string[] = [];
+  const modelErrors: GeminiFallbackError[] = [];
 
   const configuredModels = process.env.GEMINI_MODELS
     ?.split(",")
-    .map((model) => model.trim())
+    .map((model) => model.trim().replace(/^['"]|['"]$/g, ""))
     .filter(Boolean);
   const modelsToTry = Array.from(new Set([...(configuredModels || []), ...GEMINI_MODELS]));
 
@@ -135,11 +152,11 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
       return { text: response.text().trim(), modelName };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      errors.push(`${modelName}: ${message}`);
+      modelErrors.push({ attemptedModels: [modelName], message });
     }
   }
 
-  throw new Error(errors.join(" | "));
+  throw new GeminiModelFallbackError(modelErrors);
 }
 
 type GenerateCopyPayload = {
@@ -247,10 +264,14 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       return NextResponse.json({ draft: text, model: generation.modelName });
     } catch (generationError) {
       if (activeTab === "PLAYBOOK") {
+        const fallbackMessage = generationError instanceof GeminiModelFallbackError
+          ? "Gemini request failed across available models. Check GEMINI_API_KEY/GEMINI_MODELS configuration. Showing fallback playbook."
+          : "Gemini request failed across available models. Showing fallback playbook.";
+
         console.error("Gemini Playbook Generation Error:", generationError);
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
-          warning: "Gemini request failed across available models. Showing fallback playbook.",
+          warning: fallbackMessage,
         });
       }
 
