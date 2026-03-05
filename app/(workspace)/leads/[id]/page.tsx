@@ -316,11 +316,13 @@ export default function LeadExecutionPage() {
 
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
+  const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
+  const hasLeadWebsite = leadWebsite !== "No website on file";
+  const leadWebsiteHref = leadWebsite.startsWith("http://") || leadWebsite.startsWith("https://") ? leadWebsite : `https://${leadWebsite}`;
 
   useEffect(() => {
     setDialNumber(lead?.phone || "");
   }, [lead?.phone]);
-  const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
 
   async function runResearch() {
@@ -725,7 +727,16 @@ export default function LeadExecutionPage() {
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Lead Context</p>
             <h1 className="mt-2 text-2xl font-semibold leading-tight text-zinc-100">{leadName}</h1>
-            <p className="mt-2 text-xs uppercase tracking-[0.14em] text-zinc-500">Execution target: {leadWebsite}</p>
+            <p className="mt-2 text-xs uppercase tracking-[0.14em] text-zinc-500">
+              Execution target:{" "}
+              {hasLeadWebsite ? (
+                <a href={leadWebsiteHref} target="_blank" rel="noreferrer" className="underline underline-offset-2 transition hover:text-zinc-300">
+                  {leadWebsite}
+                </a>
+              ) : (
+                leadWebsite
+              )}
+            </p>
             <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
               {leadExecutionStatus}
             </span>
