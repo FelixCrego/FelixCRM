@@ -8,6 +8,7 @@ type ConnectContact = {
   isInbound?: () => boolean;
   onConnected?: (callback: () => void) => void;
   onEnded?: (callback: () => void) => void;
+  sendDigit?: (digit: string) => void;
   getConnections?: () => Array<{ getEndpoint?: () => { phoneNumber?: string } }>;
   getInitialConnection?: () => { destroy?: () => void };
 };
@@ -42,6 +43,7 @@ type AmazonConnectContextValue = {
   callStatus: "idle" | "connecting" | "connected";
   startOutboundCall: (dialNumber: string) => void;
   endActiveCall: () => void;
+  sendCallDigit: (digit: string) => void;
 };
 
 const AmazonConnectContext = createContext<AmazonConnectContextValue | null>(null);
@@ -205,6 +207,10 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     setCallStatus("idle");
   }, []);
 
+  const sendCallDigit = useCallback((digit: string) => {
+    activeContactRef.current?.sendDigit?.(digit);
+  }, []);
+
   const acceptIncomingCall = useCallback(() => {
     setIncomingCall((previous) => ({ ...previous, active: false }));
   }, []);
@@ -223,8 +229,9 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       callStatus,
       startOutboundCall,
       endActiveCall,
+      sendCallDigit,
     }),
-    [callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, startOutboundCall],
+    [callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit, startOutboundCall],
   );
 
   return (
