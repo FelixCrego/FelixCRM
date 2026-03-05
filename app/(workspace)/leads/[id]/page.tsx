@@ -648,12 +648,25 @@ export default function LeadExecutionPage() {
 
   const leadEmail = lead?.email || "No email on file";
   const leadLocation = lead?.city || "Unknown location";
+  const resolveNoteType = (note: LeadNoteRecord) => {
+    const explicitType = (note.activity_type || note.activityType || "").toUpperCase();
+    if (["NOTE", "CALL", "SMS", "EMAIL"].includes(explicitType)) {
+      return explicitType;
+    }
+
+    const channel = note.channel?.toLowerCase() || "";
+    if (channel.startsWith("disposition:")) return "CALL";
+    if (channel.includes("sms")) return "SMS";
+    if (channel.includes("email")) return "EMAIL";
+    return "NOTE";
+  };
+
   const filteredNotes = notes.filter((note) => {
-    const type = (note.activity_type || "NOTE").toUpperCase();
-    if (activeTab.toUpperCase() === "NOTES") {
+    const type = resolveNoteType(note);
+    if (activeTab === "NOTES") {
       return type === "NOTE" || type === "CALL";
     }
-    return type === activeTab.toUpperCase();
+    return type === activeTab;
   });
 
   const getNoteCreatedAt = (note: LeadNoteRecord) => note.created_at || note.createdAt || new Date().toISOString();
