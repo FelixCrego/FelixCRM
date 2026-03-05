@@ -274,14 +274,12 @@ export async function listChatMessages(userId: string, limit?: number, peerId?: 
         const filtered = rows.map(mapStoredMessage).filter((message) => isMessageVisibleToUser(message, userId, peerId));
         if (!limit || limit <= 0) return filtered;
         return filtered.slice(-limit);
-      } catch {
-        // fall through to memory fallback
+      } catch (missingColumnFallbackError) {
+        throw missingColumnFallbackError;
       }
     }
 
-    const filtered = memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId));
-    if (!limit || limit <= 0) return filtered;
-    return filtered.slice(-limit);
+    throw error;
   }
 }
 
