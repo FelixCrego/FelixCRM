@@ -5,8 +5,14 @@ import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION } from "@/lib/template-con
 
 function normalizeRepoSlug(value: string | undefined): { owner: string; repo: string } | null {
   if (!value) return null;
-  const normalized = value.trim().replace(/^https?:\/\/github.com\//i, "").replace(/\.git$/i, "").replace(/^\/+|\/+$/g, "");
-  const [owner, repo] = normalized.split("/");
+  const normalized = value
+    .trim()
+    .replace(/^git@github\.com:/i, "")
+    .replace(/^ssh:\/\/git@github\.com\//i, "")
+    .replace(/^https?:\/\/github.com\//i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const [owner, repo] = normalized.split("/").filter(Boolean);
   if (!owner || !repo) return null;
   return { owner, repo };
 }
@@ -57,35 +63,74 @@ export async function POST(request: Request) {
     );
 
     const repoName = slugify(lead.businessName, `felix-${lead.id.slice(0, 8)}`);
-    const gitRepoCreateResponse = await fetch(
-      `https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          owner: githubOwner,
-          name: repoName,
-          description: `Felix CRM generated site for ${lead.businessName}`,
-          include_all_branches: false,
-          private: true,
-        }),
-      },
-    );
+    const githubHeaders = {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+    };
 
-    if (!gitRepoCreateResponse.ok) {
+    let createdRepo: { full_name?: string; default_branch?: string } | null = null;
+    let repoDefaultBranch = process.env.VERCEL_TEMPLATE_BRANCH || "main";
+
+    const gitRepoCreateResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`, {
+      method: "POST",
+      headers: githubHeaders,
+      body: JSON.stringify({
+        owner: githubOwner,
+        name: repoName,
+        description: `Felix CRM generated site for ${lead.businessName}`,
+        include_all_branches: false,
+        private: true,
+      }),
+    });
+
+    if (gitRepoCreateResponse.ok) {
+      createdRepo = (await gitRepoCreateResponse.json()) as { full_name?: string; default_branch?: string };
+      repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
+    } else if (gitRepoCreateResponse.status === 404) {
+      let forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+        method: "POST",
+        headers: githubHeaders,
+        body: JSON.stringify({
+          name: repoName,
+          organization: githubOwner,
+          default_branch_only: true,
+        }),
+      });
+
+      if (!forkRepoResponse.ok) {
+        forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+          method: "POST",
+          headers: githubHeaders,
+          body: JSON.stringify({
+            name: repoName,
+            default_branch_only: true,
+          }),
+        });
+      }
+
+      if (!forkRepoResponse.ok) {
+        await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+        const templateError = await gitRepoCreateResponse.text();
+        const forkError = await forkRepoResponse.text();
+        return NextResponse.json(
+          {
+            error: `GitHub template clone failed and fork fallback failed: template=${templateError || gitRepoCreateResponse.statusText}; fork=${forkError || forkRepoResponse.statusText}`,
+          },
+          { status: 500 },
+        );
+      }
+
+      createdRepo = (await forkRepoResponse.json()) as { full_name?: string; default_branch?: string };
+      repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
+    } else {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
       const errorText = await gitRepoCreateResponse.text();
       return NextResponse.json({ error: `GitHub template clone failed: ${errorText || gitRepoCreateResponse.statusText}` }, { status: 500 });
     }
 
-    const createdRepo = (await gitRepoCreateResponse.json()) as { full_name?: string; default_branch?: string };
     const clonedRepoFullName = createdRepo.full_name;
-    const repoDefaultBranch = createdRepo.default_branch || process.env.VERCEL_TEMPLATE_BRANCH || "main";
 
     if (!clonedRepoFullName) {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
