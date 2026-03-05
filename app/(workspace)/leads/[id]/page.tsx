@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
@@ -62,6 +62,15 @@ type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "NOTES" | "SMS" | "EMAIL";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
+
+
+
+type AwsActiveContact = {
+  onConnected?: (callback: () => void) => void;
+  onEnded?: (callback: () => void) => void;
+  getContactId?: () => string;
+  sendDigit?: (digit: string) => void;
+};
 
 type AIDynamicPlaybook = {
   scripts: string[];
@@ -247,12 +256,34 @@ export default function LeadExecutionPage() {
   const [showDisposition, setShowDisposition] = useState(false);
   const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
   const [currentContactId, setCurrentContactId] = useState<string | null>(null);
+  const activeContactRef = useRef<AwsActiveContact | null>(null);
   const [selectedDisposition, setSelectedDisposition] = useState("");
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
 
-  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall } = useAmazonConnect();
+  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
+  const [showKeypad, setShowKeypad] = useState(false);
+  const [lastSentDigit, setLastSentDigit] = useState<string | null>(null);
+  const [keypadFeedback, setKeypadFeedback] = useState("");
+  const keypadFeedbackTimeoutRef = useRef<number | null>(null);
+  const keypadDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
+
+  useEffect(() => {
+    if (!callActive) {
+      setShowKeypad(false);
+      setLastSentDigit(null);
+      setKeypadFeedback("");
+    }
+  }, [callActive]);
+
+  useEffect(() => {
+    return () => {
+      if (keypadFeedbackTimeoutRef.current) {
+        window.clearTimeout(keypadFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
   const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
@@ -292,19 +323,23 @@ export default function LeadExecutionPage() {
   useEffect(() => {
     type ConnectWindow = Window & {
       connect?: {
-        contact?: (callback: (contact: { onConnected?: (callback: () => void) => void; onEnded?: (callback: () => void) => void; getContactId?: () => string }) => void) => void;
+        contact?: (callback: (contact: AwsActiveContact) => void) => void;
       };
     };
 
     const windowWithConnect = window as ConnectWindow;
     windowWithConnect.connect?.contact?.((contact) => {
+      activeContactRef.current = contact;
+
       contact.onConnected?.(() => {
+        activeContactRef.current = contact;
         const contactId = contact.getContactId?.() ?? null;
         console.log("AWS Call Connected. Contact ID:", contactId);
         setCurrentContactId(contactId);
       });
 
       contact.onEnded?.(() => {
+        activeContactRef.current = null;
         setShowDisposition(true);
       });
     });
@@ -1037,6 +1072,82 @@ export default function LeadExecutionPage() {
     endActiveCall();
     setCcpStatus("ACW");
     setShowDisposition(true);
+    setShowKeypad(false);
+  };
+
+  const playDialTone = (digit: string) => {
+    const frequencyMap: Record<string, [number, number]> = {
+      "1": [697, 1209], "2": [697, 1336], "3": [697, 1477],
+      "4": [770, 1209], "5": [770, 1336], "6": [770, 1477],
+      "7": [852, 1209], "8": [852, 1336], "9": [852, 1477],
+      "*": [941, 1209], "0": [941, 1336], "#": [941, 1477],
+    };
+
+    const pair = frequencyMap[digit];
+    if (!pair) return;
+
+    const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const audioContext = new AudioCtx();
+    const gain = audioContext.createGain();
+    gain.gain.value = 0.05;
+    gain.connect(audioContext.destination);
+
+    const [f1, f2] = pair;
+    const osc1 = audioContext.createOscillator();
+    const osc2 = audioContext.createOscillator();
+    osc1.frequency.value = f1;
+    osc2.frequency.value = f2;
+    osc1.type = "sine";
+    osc2.type = "sine";
+    osc1.connect(gain);
+    osc2.connect(gain);
+
+    const now = audioContext.currentTime;
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 0.14);
+    osc2.stop(now + 0.14);
+
+    window.setTimeout(() => {
+      void audioContext.close();
+    }, 180);
+  };
+
+  const setDigitFeedback = (message: string, digit: string) => {
+    setLastSentDigit(digit);
+    setKeypadFeedback(message);
+
+    if (keypadFeedbackTimeoutRef.current) {
+      window.clearTimeout(keypadFeedbackTimeoutRef.current);
+    }
+
+    keypadFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setKeypadFeedback("");
+    }, 1500);
+  };
+
+  // Amazon Connect DTMF Handler
+  const handleSendDigit = (digit: string) => {
+    const activeContact = activeContactRef.current;
+
+    if (activeContact?.sendDigit) {
+      activeContact.sendDigit(digit);
+      playDialTone(digit);
+      setDigitFeedback(`Sent ${digit} to active call`, digit);
+      return;
+    }
+
+    if (callActive) {
+      sendCallDigit(digit);
+      playDialTone(digit);
+      setDigitFeedback(`Sent ${digit} via fallback`, digit);
+      return;
+    }
+
+    setKeypadFeedback("No active contact to send digit to.");
+    console.warn("No active contact to send digit to.");
   };
 
   const softphoneStatusLabel =
@@ -1429,12 +1540,20 @@ export default function LeadExecutionPage() {
                 </button>
               </div>
               {callActive ? (
-                <button
-                  onClick={handleEndCall}
-                  className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-rose-950 hover:bg-rose-400"
-                >
-                  <Phone className="h-4 w-4" /> End Call
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowKeypad((previous) => !previous)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500"
+                  >
+                    {showKeypad ? "Hide keypad" : "Show keypad"}
+                  </button>
+                  <button
+                    onClick={handleEndCall}
+                    className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-rose-950 hover:bg-rose-400"
+                  >
+                    <Phone className="h-4 w-4" /> End Call
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={handleCall}
@@ -1445,6 +1564,26 @@ export default function LeadExecutionPage() {
                 </button>
               )}
             </div>
+            {callActive && showKeypad ? (
+              <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
+                <p className="mb-2 min-h-4 text-[11px] text-emerald-300/90">
+                  {keypadFeedback || (lastSentDigit ? `Last digit: ${lastSentDigit}` : "Press a key to send tone") }
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {keypadDigits.map((digit) => (
+                    <button
+                      key={digit}
+                      type="button"
+                      onClick={() => handleSendDigit(digit)}
+                      className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-indigo-500 hover:text-indigo-300"
+                    >
+                      {digit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Queue</p>
