@@ -658,9 +658,9 @@ export default function LeadExecutionPage() {
     const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
     const closedAtIso = new Date().toISOString();
 
-    const { error } = await supabase
-      .from("leads")
-      .update({
+    const tableCandidates = ["leads", "Lead", "lead"];
+    const payloadCandidates = [
+      {
         status: "CLOSED",
         source_payload: {
           ...sourcePayload,
@@ -668,10 +668,56 @@ export default function LeadExecutionPage() {
           closedAt: closedAtIso,
           stripeCheckoutLink: checkoutLink || null,
         },
-      })
-      .eq("id", leadId);
+      },
+      {
+        status: "CLOSED",
+        sourcePayload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      },
+      {
+        status: "CLOSED",
+        closed_deal_value: inferredDealValue,
+        closed_at: closedAtIso,
+        stripe_checkout_link: checkoutLink || null,
+        source_payload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      },
+      {
+        status: "CLOSED",
+        closedDealValue: inferredDealValue,
+        closedAt: closedAtIso,
+        stripeCheckoutLink: checkoutLink || null,
+        sourcePayload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      },
+    ];
 
-    if (error) {
+    let updateSucceeded = false;
+
+    for (const table of tableCandidates) {
+      for (const payload of payloadCandidates) {
+        const { error } = await supabase.from(table).update(payload).eq("id", leadId);
+        if (!error) {
+          updateSucceeded = true;
+          break;
+        }
+      }
+      if (updateSucceeded) break;
+    }
+
+    if (!updateSucceeded) {
       setCloseDealError("Unable to mark this lead as closed right now.");
       setClosingDeal(false);
       return;
