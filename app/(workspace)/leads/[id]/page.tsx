@@ -631,15 +631,23 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string } | null;
+      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string; warning?: string } | null;
 
-      if (!response.ok || !data) {
-        setPlaybookError(data?.error || "Could not generate playbook with Gemini.");
+      if (!data) {
+        setPlaybookError("Could not generate playbook with Gemini.");
         return;
       }
 
       if (data.playbook) {
         setAiPlaybook(data.playbook);
+        if (data.warning) {
+          setPlaybookError(data.warning);
+        }
+        return;
+      }
+
+      if (!response.ok) {
+        setPlaybookError(data.error || "Could not generate playbook with Gemini.");
         return;
       }
 

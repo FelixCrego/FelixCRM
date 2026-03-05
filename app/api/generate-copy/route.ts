@@ -65,6 +65,38 @@ function parsePlaybookFromText(text: string): PlaybookPayload | null {
   return null;
 }
 
+
+function buildFallbackPlaybook(leadName: string, researchContext?: string): PlaybookPayload {
+  const contextSnippet = (researchContext || "").split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 2).join(" • ");
+
+  return {
+    scripts: [
+      `Hey ${leadName}, quick note — your current site is likely leaking high-intent mobile leads before they book.`,
+      "I already built a faster, conversion-focused version we can launch today with no downtime and direct booking/call routing.",
+      contextSnippet
+        ? `Based on research (${contextSnippet}), this upgrade can recover missed inquiries and turn existing traffic into booked jobs.`
+        : "This is designed to recover missed inquiries and turn existing traffic into booked jobs quickly.",
+    ],
+    objections: [
+      {
+        objection: "We already have a website.",
+        counter: "Totally fair — this is a conversion upgrade, not just a redesign. Same traffic, more booked jobs.",
+      },
+      {
+        objection: "I need to think about it.",
+        counter: "Makes sense. Let’s do a 10-minute ROI walkthrough so you can decide with numbers, not guesses.",
+      },
+      {
+        objection: "Send me details.",
+        counter: "Absolutely. I’ll send the preview + ROI snapshot and hold a deployment window for 24 hours.",
+      },
+    ],
+    closing: "Want me to lock your deployment slot so this can go live today?",
+    roiSnapshot: "Even a few recovered mobile bookings per month can add meaningful recurring revenue.",
+    injectedData: ["AI research context", "Mobile conversion gap", "Fast deployment offer"],
+  };
+}
+
 export async function POST(req: Request) {
   try {
     if (!apiKey) {
@@ -120,19 +152,37 @@ RULES FOR FORMATTING:
 
 Output ONLY the draft text. No robotic greetings, no filler.`;
 
-    const result = await model.generateContent(systemPrompt);
-    const response = await result.response;
-    const text = response.text().trim();
+    try {
+      const result = await model.generateContent(systemPrompt);
+      const response = await result.response;
+      const text = response.text().trim();
 
-    if (activeTab === "PLAYBOOK") {
-      const parsedPlaybook = parsePlaybookFromText(text);
-      if (parsedPlaybook) {
-        return NextResponse.json({ playbook: parsedPlaybook, draft: text });
+      if (activeTab === "PLAYBOOK") {
+        const parsedPlaybook = parsePlaybookFromText(text);
+        if (parsedPlaybook) {
+          return NextResponse.json({ playbook: parsedPlaybook, draft: text });
+        }
+
+        const fallbackPlaybook = buildFallbackPlaybook(leadName, researchContext);
+        return NextResponse.json({
+          playbook: fallbackPlaybook,
+          draft: text,
+          warning: "Gemini returned an unexpected format. Showing fallback playbook.",
+        });
       }
-      return NextResponse.json({ error: "Gemini response could not be parsed into a playbook.", draft: text }, { status: 502 });
-    }
 
-    return NextResponse.json({ draft: text });
+      return NextResponse.json({ draft: text });
+    } catch (generationError) {
+      if (activeTab === "PLAYBOOK") {
+        console.error("Gemini Playbook Generation Error:", generationError);
+        return NextResponse.json({
+          playbook: buildFallbackPlaybook(leadName, researchContext),
+          warning: "Gemini unavailable right now. Showing fallback playbook.",
+        });
+      }
+
+      throw generationError;
+    }
   } catch (error) {
     console.error("Gemini Draft Error:", error);
     return NextResponse.json({ error: "Failed to generate draft" }, { status: 500 });
