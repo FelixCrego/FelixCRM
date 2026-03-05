@@ -89,6 +89,11 @@ function isSchemaCacheColumnError(error: unknown) {
   return code === "PGRST204" || (message.includes("Could not find the") && message.includes("column") && message.includes("schema cache"));
 }
 
+function isMissingColumnError(error: unknown, column: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  return isSchemaCacheColumnError(error) && message.includes(`'${column}'`);
+}
+
 async function withTableFallback<T>(cacheKey: string, candidates: string[], requester: (table: string) => Promise<T>): Promise<T> {
   const cached = resolvedTableCache.get(cacheKey);
   if (cached) return requester(cached);
@@ -691,21 +696,14 @@ export async function createLeadNote(leadId: string, content: string, channel: s
 
   const cleanContent = content.trim();
   if (!cleanContent) throw new Error("Note content is required.");
+  const createdAt = new Date().toISOString();
 
-  try {
+  const insertNote = async (record: Record<string, unknown>) => {
     const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
       supabaseRequest<any[]>(table, {
         method: "POST",
         headers: { Prefer: "return=representation" },
-        body: JSON.stringify([
-          {
-            lead_id: leadId,
-            content: cleanContent,
-            channel,
-            contact_id: contactId,
-            created_at: new Date().toISOString(),
-          },
-        ]),
+        body: JSON.stringify([record]),
       }),
     );
 
@@ -714,33 +712,62 @@ export async function createLeadNote(leadId: string, content: string, channel: s
     }
 
     return normalizeLeadNote(rows[0]);
-  } catch (error) {
-    if (isSchemaCacheColumnError(error)) {
-      try {
-        const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
-          supabaseRequest<any[]>(table, {
-            method: "POST",
-            headers: { Prefer: "return=representation" },
-            body: JSON.stringify([
-              {
-                leadId,
-                content: cleanContent,
-                channel,
-                contactId,
-                createdAt: new Date().toISOString(),
-              },
-            ]),
-          }),
-        );
-        if (rows[0]) return normalizeLeadNote(rows[0]);
-      } catch {
+  };
+
+  try {
+    return await insertNote({
+      lead_id: leadId,
+      content: cleanContent,
+      channel,
+      contact_id: contactId,
+      created_at: createdAt,
+    });
+  } catch (snakeError) {
+    if (!isSchemaCacheColumnError(snakeError)) {
+      if (isMissingTableError(snakeError)) {
         return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
       }
-      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
+      throw snakeError;
     }
-    if (isMissingTableError(error)) {
-      return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
+
+    const snakeWithoutChannel = {
+      lead_id: leadId,
+      content: cleanContent,
+      contact_id: contactId,
+      created_at: createdAt,
+    };
+
+    try {
+      if (isMissingColumnError(snakeError, "channel")) {
+        return await insertNote(snakeWithoutChannel);
+      }
+
+      return await insertNote({
+        leadId,
+        content: cleanContent,
+        channel,
+        contactId,
+        createdAt,
+      });
+    } catch (camelError) {
+      if (isSchemaCacheColumnError(camelError) && isMissingColumnError(camelError, "channel")) {
+        try {
+          return await insertNote({
+            leadId,
+            content: cleanContent,
+            contactId,
+            createdAt,
+          });
+        } catch {
+          return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
+        }
+      }
+
+      if (isMissingTableError(camelError) || isSchemaCacheColumnError(camelError)) {
+        return appendLeadNoteToPayload(leadId, { leadId, content: cleanContent, channel, contactId });
+      }
+
+      throw camelError;
     }
-    throw error;
   }
 }
