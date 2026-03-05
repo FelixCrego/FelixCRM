@@ -251,8 +251,16 @@ export default function LeadExecutionPage() {
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
 
-  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall } = useAmazonConnect();
+  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
+  const [showKeypad, setShowKeypad] = useState(false);
+  const keypadDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
+
+  useEffect(() => {
+    if (!callActive) {
+      setShowKeypad(false);
+    }
+  }, [callActive]);
 
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
   const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
@@ -1037,6 +1045,17 @@ export default function LeadExecutionPage() {
     endActiveCall();
     setCcpStatus("ACW");
     setShowDisposition(true);
+    setShowKeypad(false);
+  };
+
+  // Amazon Connect DTMF Handler
+  const handleSendDigit = (digit: string) => {
+    // NOTE: activeContact is tracked in the AmazonConnectProvider and exposed via sendCallDigit.
+    if (callActive) {
+      sendCallDigit(digit);
+    } else {
+      console.warn("No active contact to send digit to.");
+    }
   };
 
   const softphoneStatusLabel =
@@ -1429,12 +1448,20 @@ export default function LeadExecutionPage() {
                 </button>
               </div>
               {callActive ? (
-                <button
-                  onClick={handleEndCall}
-                  className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-rose-950 hover:bg-rose-400"
-                >
-                  <Phone className="h-4 w-4" /> End Call
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowKeypad((previous) => !previous)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500"
+                  >
+                    {showKeypad ? "Hide keypad" : "Show keypad"}
+                  </button>
+                  <button
+                    onClick={handleEndCall}
+                    className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-rose-950 hover:bg-rose-400"
+                  >
+                    <Phone className="h-4 w-4" /> End Call
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={handleCall}
@@ -1445,6 +1472,23 @@ export default function LeadExecutionPage() {
                 </button>
               )}
             </div>
+            {callActive && showKeypad ? (
+              <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {keypadDigits.map((digit) => (
+                    <button
+                      key={digit}
+                      type="button"
+                      onClick={() => handleSendDigit(digit)}
+                      className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-indigo-500 hover:text-indigo-300"
+                    >
+                      {digit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Queue</p>
