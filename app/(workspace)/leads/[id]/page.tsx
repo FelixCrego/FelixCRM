@@ -59,7 +59,7 @@ type LeadNoteRecord = {
 };
 
 type FetchStatus = "loading" | "ready" | "error";
-type ActivityTab = "NOTES" | "SMS" | "EMAIL";
+type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
@@ -78,6 +78,26 @@ type AIDynamicPlaybook = {
   closing: string;
   roiSnapshot: string;
   injectedData: string[];
+};
+
+type CallIntelTranscriptLine = {
+  time?: string;
+  speaker?: string;
+  sentiment?: string;
+  text?: string;
+};
+
+type CallIntelRecord = {
+  lead_id?: string;
+  created_at?: string;
+  duration_seconds?: number | string | null;
+  overall_sentiment?: string | null;
+  recording_url?: string | null;
+  ai_summary?: string | null;
+  agent_talk_time_pct?: number | string | null;
+  customer_talk_time_pct?: number | string | null;
+  interruptions?: number | string | null;
+  transcript_json?: CallIntelTranscriptLine[] | null;
 };
 
 const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
@@ -251,7 +271,9 @@ export default function LeadExecutionPage() {
   const [researchInsight, setResearchInsight] = useState<string>("");
   const [researchError, setResearchError] = useState<string>("");
 
-  const [activeTab, setActiveTab] = useState<ActivityTab>("NOTES");
+  const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
+  const [callIntel, setCallIntel] = useState<CallIntelRecord | null>(null);
+  const [isLoadingIntel, setIsLoadingIntel] = useState(false);
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
   const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
@@ -404,6 +426,41 @@ export default function LeadExecutionPage() {
       alive = false;
     };
   }, [leadId]);
+
+  useEffect(() => {
+    if (activeTab !== "Call Audio & AI" || !leadId) return;
+
+    let mounted = true;
+
+    const fetchCallIntel = async () => {
+      setIsLoadingIntel(true);
+
+      const { data, error } = await supabase
+        .from("call_analytics")
+        .select("*")
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!mounted) return;
+
+      if (error) {
+        setCallIntel(null);
+        setIsLoadingIntel(false);
+        return;
+      }
+
+      setCallIntel(data as CallIntelRecord | null);
+      setIsLoadingIntel(false);
+    };
+
+    fetchCallIntel();
+
+    return () => {
+      mounted = false;
+    };
+  }, [activeTab, leadId, supabase]);
 
   useEffect(() => {
     if (!researchStorageKey || typeof window === "undefined") return;
@@ -868,7 +925,7 @@ export default function LeadExecutionPage() {
       body: JSON.stringify({
         leadId,
         content,
-        channel: activeTab.toLowerCase(),
+        channel: activeTab === "Notes" ? "notes" : activeTab === "Email" ? "email" : activeTab === "SMS" ? "sms" : "notes",
         contactId: currentContactId,
       }),
     });
@@ -1211,10 +1268,16 @@ export default function LeadExecutionPage() {
 
   const filteredNotes = notes.filter((note) => {
     const type = resolveNoteType(note);
-    if (activeTab === "NOTES") {
+    if (activeTab === "Notes") {
       return type === "NOTE" || type === "CALL";
     }
-    return type === activeTab;
+    if (activeTab === "SMS") {
+      return type === "SMS";
+    }
+    if (activeTab === "Email") {
+      return type === "EMAIL";
+    }
+    return false;
   });
 
   const getNoteCreatedAt = (note: LeadNoteRecord) => note.created_at || note.createdAt || new Date().toISOString();
@@ -1528,21 +1591,133 @@ export default function LeadExecutionPage() {
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <div className="mb-3 flex gap-4 border-b border-zinc-800 pb-2">
-              {(["NOTES", "SMS", "EMAIL"] as ActivityTab[]).map((tab) => (
+            {/* THE TABS */}
+            <div className="mb-4 flex items-center gap-6 border-b border-zinc-800 px-2">
+              {(["Notes", "SMS", "Email", "Call Audio & AI"] as ActivityTab[]).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`relative px-1 pb-1 text-xs font-medium transition ${activeTab === tab ? "text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+                  className={`relative pb-3 text-sm font-bold transition-all ${
+                    activeTab === tab ? "text-indigo-400" : "text-zinc-500 hover:text-zinc-300"
+                  }`}
                 >
-                  {tab === "NOTES" ? "Notes" : tab === "EMAIL" ? "Email" : tab}
-                  {activeTab === tab ? <span className="absolute inset-x-0 -bottom-[9px] h-0.5 rounded bg-blue-500" /> : null}
+                  {tab}
+                  {activeTab === tab && (
+                    <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-t-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]"></span>
+                  )}
                 </button>
               ))}
             </div>
 
-            <div className="space-y-2">
-              {filteredNotes.map((note) => {
+            {/* TAB CONTENT: CALL AUDIO & AI */}
+            {activeTab === "Call Audio & AI" ? (
+              <div className="flex min-h-[400px] flex-col gap-4 animate-in fade-in duration-300">
+                {isLoadingIntel ? (
+                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-zinc-800/50 bg-zinc-900/20 p-8">
+                    <span className="relative mb-4 flex h-6 w-6">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75"></span>
+                      <span className="relative inline-flex h-6 w-6 rounded-full bg-indigo-500"></span>
+                    </span>
+                    <p className="text-sm font-bold uppercase tracking-widest text-zinc-400">Querying AWS Contact Lens...</p>
+                  </div>
+                ) : !callIntel ? (
+                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-zinc-800/50 bg-zinc-900/20 p-8">
+                    <svg className="mb-4 h-12 w-12 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                    <p className="text-sm font-bold uppercase tracking-widest text-zinc-500">No Call Intel Found</p>
+                    <p className="mt-1 text-xs text-zinc-600">Make an outbound call to generate AI transcripts and sentiment data.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+                      <div className="mb-3 flex items-start justify-between">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-bold text-white">
+                            <svg className="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                            Outbound Connect
+                          </h3>
+                          <p className="text-xs text-zinc-500">
+                            {callIntel.created_at ? new Date(callIntel.created_at).toLocaleString() : "Unknown time"} • Duration: {callIntel.duration_seconds || "00:00"}s
+                          </p>
+                        </div>
+                        {callIntel.overall_sentiment && (
+                          <div className={`rounded border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
+                            callIntel.overall_sentiment === "POSITIVE"
+                              ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                              : callIntel.overall_sentiment === "NEGATIVE"
+                                ? "border border-red-500/20 bg-red-500/10 text-red-400"
+                                : "border border-zinc-700 bg-zinc-800 text-zinc-400"
+                          }`}>
+                            Sentiment: {callIntel.overall_sentiment}
+                          </div>
+                        )}
+                      </div>
+
+                      {callIntel.recording_url && (
+                        <div className="mt-2 w-full rounded-lg border border-zinc-800/80 bg-zinc-950 p-2">
+                          <audio controls className="h-8 w-full" src={callIntel.recording_url}>
+                            Your browser does not support the audio element.
+                          </audio>
+                        </div>
+                      )}
+                    </div>
+
+                    {callIntel.ai_summary && (
+                      <div className="relative overflow-hidden rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+                        <div className="pointer-events-none absolute right-0 top-0 h-32 w-32 rounded-full bg-indigo-500/10 blur-[40px]"></div>
+                        <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-indigo-400">
+                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                          Contact Lens AI Summary
+                        </h4>
+                        <p className="relative z-10 text-sm leading-relaxed text-zinc-300">{callIntel.ai_summary}</p>
+                      </div>
+                    )}
+
+                    <div className="flex max-h-[400px] flex-col rounded-xl border border-zinc-800 bg-zinc-900">
+                      <div className="grid grid-cols-3 divide-x divide-zinc-800 border-b border-zinc-800 text-center">
+                        <div className="py-2">
+                          <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Rep Talk</p>
+                          <p className="text-sm font-bold text-white">{callIntel.agent_talk_time_pct || "0"}%</p>
+                        </div>
+                        <div className="py-2">
+                          <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Cust Talk</p>
+                          <p className="text-sm font-bold text-white">{callIntel.customer_talk_time_pct || "0"}%</p>
+                        </div>
+                        <div className="py-2">
+                          <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Interrupts</p>
+                          <p className="text-sm font-bold text-orange-400">{callIntel.interruptions || "0"}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+                        {callIntel.transcript_json && Array.isArray(callIntel.transcript_json) ? (
+                          callIntel.transcript_json.map((line, index) => (
+                            <div key={index} className="flex gap-3">
+                              <div className="w-12 shrink-0 pt-0.5 text-right">
+                                <span className="font-mono text-[9px] text-zinc-600">{line.time || "00:00"}</span>
+                              </div>
+                              <div className="flex-1">
+                                <div className="mb-0.5 flex items-center gap-2">
+                                  <span className={`text-[10px] font-black uppercase tracking-widest ${line.speaker === "AGENT" ? "text-indigo-400" : "text-emerald-400"}`}>
+                                    {line.speaker}
+                                  </span>
+                                  {line.sentiment === "NEGATIVE" && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.5)]" title="Negative Sentiment detected"></span>}
+                                  {line.sentiment === "POSITIVE" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]" title="Positive Sentiment detected"></span>}
+                                </div>
+                                <p className="text-sm leading-snug text-zinc-300">{line.text}</p>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="py-4 text-center text-xs italic text-zinc-500">Transcript data unavailable or processing.</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredNotes.map((note) => {
                 const isCall = note.activity_type === "CALL" || note.aws_contact_id;
                 const createdAt = getNoteCreatedAt(note);
 
@@ -1618,9 +1793,11 @@ export default function LeadExecutionPage() {
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
               {notesError ? <div className="text-xs text-rose-300">{notesError}</div> : null}
-            </div>
+              </div>
+            )}
 
-            <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
+            {activeTab !== "Call Audio & AI" ? (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
               <button
                 onClick={handleAIDraft}
                 disabled={isDrafting}
@@ -1638,7 +1815,7 @@ export default function LeadExecutionPage() {
                   }
                 }}
                 className="h-9 flex-1 bg-transparent px-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-500"
-                placeholder={`Draft ${activeTab === "NOTES" ? "note" : activeTab === "EMAIL" ? "email" : "SMS"} content for ${leadName}...`}
+                placeholder={`Draft ${activeTab === "Notes" ? "note" : activeTab === "Email" ? "email" : "SMS"} content for ${leadName}...`}
               />
               <button
                 onClick={saveOmniNote}
@@ -1647,7 +1824,8 @@ export default function LeadExecutionPage() {
               >
                 Send
               </button>
-            </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
