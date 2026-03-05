@@ -24,16 +24,10 @@ type LeadRecord = {
   source_payload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
-    closedDealValue?: number | null;
-    closedAt?: string | null;
-    stripeCheckoutLink?: string | null;
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
-    closedDealValue?: number | null;
-    closedAt?: string | null;
-    stripeCheckoutLink?: string | null;
   } | null;
 };
 
@@ -285,8 +279,6 @@ export default function LeadExecutionPage() {
   const [newContactEmail, setNewContactEmail] = useState("");
   const [savingContacts, setSavingContacts] = useState(false);
   const [contactsError, setContactsError] = useState("");
-  const [closingDeal, setClosingDeal] = useState(false);
-  const [closeDealError, setCloseDealError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   useEffect(() => {
@@ -450,6 +442,99 @@ export default function LeadExecutionPage() {
   useEffect(() => {
     setAiPlaybook(fallbackPlaybook);
   }, [fallbackPlaybook]);
+
+  async function persistContacts(nextContacts: LeadContactRecord[]) {
+    if (!leadId) {
+      setLeadContacts(nextContacts);
+      return true;
+    }
+
+    setSavingContacts(true);
+    setContactsError("");
+    try {
+      const response = await fetch("/api/leads/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId, contacts: nextContacts }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { contacts?: LeadContactRecord[]; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error || "Unable to save contact updates right now.");
+
+      const savedContacts = Array.isArray(payload?.contacts) ? payload.contacts : nextContacts;
+      setLeadContacts(savedContacts);
+      setLead((previous) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          source_payload: {
+            ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+            contacts: savedContacts,
+          },
+          sourcePayload: {
+            ...(previous.sourcePayload ?? previous.source_payload ?? {}),
+            contacts: savedContacts,
+          },
+        };
+      });
+      return true;
+    } catch (error) {
+      setContactsError(error instanceof Error ? error.message : "Unable to save contact updates right now.");
+      return false;
+    } finally {
+      setSavingContacts(false);
+    }
+  }
+
+  const handleLeadContactAdd = async () => {
+    const name = newContactName.trim();
+    const role = newContactRole.trim();
+    const phone = newContactPhone.trim();
+    const email = newContactEmail.trim();
+
+    if (!name && !phone && !email) {
+      setContactsError("Add at least a name, phone, or email for the contact.");
+      return;
+    }
+
+    const created: LeadContactRecord = {
+      id: crypto.randomUUID(),
+      name: name || "Untitled Contact",
+      role,
+      phones: phone ? [phone] : [],
+      emails: email ? [email] : [],
+    };
+
+    const success = await persistContacts([...leadContacts, created]);
+    if (!success) return;
+
+    setNewContactName("");
+    setNewContactRole("");
+    setNewContactPhone("");
+    setNewContactEmail("");
+  };
+
+  const handleLeadContactAddPhone = async (contactId: string, phone: string) => {
+    const cleanPhone = phone.trim();
+    if (!cleanPhone) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId ? { ...contact, phones: contact.phones.includes(cleanPhone) ? contact.phones : [...contact.phones, cleanPhone] } : contact,
+    );
+
+    await persistContacts(nextContacts);
+  };
+
+  const handleLeadContactAddEmail = async (contactId: string, email: string) => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId ? { ...contact, emails: contact.emails.includes(cleanEmail) ? contact.emails : [...contact.emails, cleanEmail] } : contact,
+    );
+
+    await persistContacts(nextContacts);
+  };
 
   async function runResearch() {
     if (!leadId) {

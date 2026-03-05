@@ -23,6 +23,14 @@ type WorkspaceLeadContact = {
   emails: string[];
 };
 
+type WorkspaceLeadContact = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
+
 type LeadExecutionWorkspaceProps = {
   lead: {
     id: string;
@@ -156,10 +164,12 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
     let alive = true;
 
     async function loadContacts() {
-      const { data } = await supabase.from<{ source_payload?: { contacts?: unknown }; sourcePayload?: { contacts?: unknown } }>("leads").select("source_payload,sourcePayload").eq("id", lead.id).single();
+      const response = await fetch("/api/leads", { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as { leads?: Array<{ id?: string; source_payload?: { contacts?: unknown }; sourcePayload?: { contacts?: unknown } }>; error?: string } | null;
       if (!alive) return;
 
-      const payloadContacts = data?.source_payload?.contacts ?? data?.sourcePayload?.contacts;
+      const matchingLead = Array.isArray(payload?.leads) ? payload.leads.find((item) => item?.id === lead.id) : null;
+      const payloadContacts = matchingLead?.source_payload?.contacts ?? matchingLead?.sourcePayload?.contacts;
       setContacts(normalizeContacts(payloadContacts, lead.phone, lead.email));
     }
 
@@ -171,27 +181,25 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
     return () => {
       alive = false;
     };
-  }, [lead.id, lead.email, lead.phone, supabase]);
+  }, [lead.id, lead.email, lead.phone]);
 
   const persistContacts = async (nextContacts: WorkspaceLeadContact[]) => {
     setSavingContacts(true);
     setContactsError("");
 
     try {
-      const { data } = await supabase.from<{ source_payload?: Record<string, unknown> | null; sourcePayload?: Record<string, unknown> | null }>("leads").select("source_payload,sourcePayload").eq("id", lead.id).single();
-      const baseSnake = data?.source_payload && typeof data.source_payload === "object" ? data.source_payload : {};
-      const baseCamel = data?.sourcePayload && typeof data.sourcePayload === "object" ? data.sourcePayload : {};
+      const response = await fetch("/api/leads/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId: lead.id, contacts: nextContacts }),
+      });
 
-      let result = await supabase.from("leads").update({ source_payload: { ...baseSnake, contacts: nextContacts } }).eq("id", lead.id);
-      if (result.error) {
-        result = await supabase.from("leads").update({ sourcePayload: { ...baseCamel, contacts: nextContacts } }).eq("id", lead.id);
-      }
+      const payload = (await response.json().catch(() => null)) as { contacts?: WorkspaceLeadContact[]; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error || "Could not save contacts. Please try again.");
 
-      if (result.error) throw result.error;
-
-      setContacts(nextContacts);
-    } catch {
-      setContactsError("Could not save contacts. Please try again.");
+      setContacts(Array.isArray(payload?.contacts) ? payload.contacts : nextContacts);
+    } catch (error) {
+      setContactsError(error instanceof Error ? error.message : "Could not save contacts. Please try again.");
     } finally {
       setSavingContacts(false);
     }
