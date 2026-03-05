@@ -549,13 +549,14 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
     const sourcePayloadColumn = isSnakeLeadsTable(table) ? "source_payload" : "sourcePayload";
     const filters = {
       id: `eq.${leadId}`,
-      [ownerColumn]: `eq.${ownerId}`,
       select: "id",
+      ...(leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
     } as Record<string, string>;
 
     const fullPayload = isSnakeLeadsTable(table)
       ? {
           status: "CLOSED",
+          owner_id: ownerId,
           source_payload: {
             ...sourcePayload,
             closedDealValue,
@@ -565,6 +566,7 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
         }
       : {
           status: "CLOSED",
+          ownerId,
           sourcePayload: {
             ...sourcePayload,
             closedDealValue,
@@ -583,7 +585,7 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
       return supabaseRequest<any[]>(table, {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
-        body: JSON.stringify({ status: "CLOSED" }),
+        body: JSON.stringify(isSnakeLeadsTable(table) ? { status: "CLOSED", owner_id: ownerId } : { status: "CLOSED", ownerId }),
       }, filters);
     });
   });
