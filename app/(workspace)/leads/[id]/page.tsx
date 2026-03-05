@@ -49,6 +49,14 @@ type ActivityTab = "NOTES" | "SMS" | "EMAIL";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
+type AIDynamicPlaybook = {
+  scripts: string[];
+  objections: Array<{ objection: string; counter: string }>;
+  closing: string;
+  roiSnapshot: string;
+  injectedData: string[];
+};
+
 const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
   "206": { timeZone: "America/Los_Angeles", location: "Seattle, WA" },
   "213": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
@@ -203,6 +211,8 @@ export default function LeadExecutionPage() {
   const [checkoutLink, setCheckoutLink] = useState("");
   const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
+  const [playbookLoading, setPlaybookLoading] = useState(false);
+  const [playbookError, setPlaybookError] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
@@ -334,6 +344,41 @@ export default function LeadExecutionPage() {
     setDialNumber(lead?.phone || "");
   }, [lead?.phone]);
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
+  const leadCity = lead?.city || "Unknown city";
+
+  const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
+    () => ({
+      scripts: [
+        `Hey ${leadName}, I noticed your current site creates friction on mobile when people are trying to book fast. I built a conversion-focused version for you here: ${deployedUrl || "your preview link"}.`,
+        "We can launch this today with no downtime, route calls and form leads directly into your booking flow, and reduce drop-offs from high-intent visitors.",
+        "If even a few missed calls per week convert, this upgrade can pay for itself quickly while adding predictable monthly revenue.",
+      ],
+      objections: [
+        {
+          objection: "I already have a website.",
+          counter: "Totally fair. This offer is about conversion performance, not just design. The goal is more booked jobs from the same traffic.",
+        },
+        {
+          objection: "I need to think about it.",
+          counter: "Absolutely. Let’s do a quick 10-minute walkthrough and map expected lead lift so you can decide with numbers, not guesses.",
+        },
+        {
+          objection: "Can you send details?",
+          counter: "Yes — I’ll send the preview and ROI summary now, then hold your deployment slot for 24 hours so you can move when ready.",
+        },
+      ],
+      closing: "Want me to lock this in and have it live today so your next inbound lead lands on the optimized version?",
+      roiSnapshot: "Most local service sites lose high-intent mobile traffic; even 3-5 recovered bookings/month can mean thousands in missed revenue regained.",
+      injectedData: ["AI deep research summary", "Mobile booking conversion gap", "Live preview + speed-to-launch angle"],
+    }),
+    [leadName, deployedUrl],
+  );
+
+  const [aiPlaybook, setAiPlaybook] = useState<AIDynamicPlaybook>(fallbackPlaybook);
+
+  useEffect(() => {
+    setAiPlaybook(fallbackPlaybook);
+  }, [fallbackPlaybook]);
 
   async function runResearch() {
     if (!leadId) {
@@ -501,6 +546,58 @@ export default function LeadExecutionPage() {
       setNotesDraft("Error connecting to Gemini AI.");
     } finally {
       setIsDrafting(false);
+    }
+  };
+
+  const handleGeneratePlaybook = async () => {
+    setPlaybookLoading(true);
+    setPlaybookError("");
+
+    try {
+      const response = await fetch("/api/generate-copy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadName,
+          activeTab: "PLAYBOOK",
+          researchContext: [
+            researchInsight || "No AI research summary available.",
+            `Website: ${leadWebsite}`,
+            `City: ${leadCity}`,
+            deployedUrl ? `Preview Link: ${deployedUrl}` : "No preview link available.",
+          ].join("\n"),
+        }),
+      });
+
+      const data = (await response.json().catch(() => null)) as { playbook?: AIDynamicPlaybook; draft?: string; error?: string } | null;
+
+      if (!response.ok || !data) {
+        setPlaybookError(data?.error || "Could not generate playbook with Gemini.");
+        return;
+      }
+
+      if (data.playbook) {
+        setAiPlaybook(data.playbook);
+        return;
+      }
+
+      if (!data.draft) {
+        setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        return;
+      }
+
+      const parsed = JSON.parse(data.draft) as AIDynamicPlaybook;
+      if (!Array.isArray(parsed.scripts) || !Array.isArray(parsed.objections) || !parsed.closing || !parsed.roiSnapshot) {
+        throw new Error("Playbook response missing required fields");
+      }
+
+      setAiPlaybook(parsed);
+    } catch (error) {
+      console.error("Playbook generation failed", error);
+      setPlaybookError("Gemini could not return a valid playbook format. Showing the fallback playbook.");
+      setAiPlaybook(fallbackPlaybook);
+    } finally {
+      setPlaybookLoading(false);
     }
   };
 
@@ -1243,7 +1340,14 @@ export default function LeadExecutionPage() {
                 <span>🧠</span>
                 Dynamic AI Playbook
               </h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleGeneratePlaybook}
+                  disabled={playbookLoading}
+                  className="rounded-lg border border-indigo-500/40 px-3 py-1 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {playbookLoading ? "Building..." : "Generate with Gemini"}
+                </button>
                 {(["Scripts", "Objections"] as ScriptTab[]).map((tab) => (
                   <button
                     key={tab}
@@ -1258,21 +1362,30 @@ export default function LeadExecutionPage() {
 
             {scriptTab === "Scripts" ? (
               <div className="space-y-3 text-sm text-zinc-200">
-                <h3 className="text-sm font-semibold text-zinc-100">Context-Aware Script</h3>
-                <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                  Hey {leadName}, I noticed your site makes it hard to book on mobile. I built a faster site for you here: {deployedUrl}.
+                <h3 className="text-sm font-semibold text-zinc-100">Gemini Deep-Research Pitch Sequence</h3>
+                {aiPlaybook.scripts.map((script) => (
+                  <p key={script} className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                    {script}
+                  </p>
+                ))}
+                <p className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 p-3 text-emerald-100">
+                  <span className="font-semibold">ROI Snapshot:</span> {aiPlaybook.roiSnapshot}
                 </p>
-                <p className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                  We can launch this today and route calls directly into your booking flow.
+                <p className="rounded-lg border border-indigo-600/40 bg-indigo-950/30 p-3 text-indigo-100">
+                  <span className="font-semibold">Close:</span> {aiPlaybook.closing}
                 </p>
                 <span className="inline-flex rounded-md border border-zinc-600 px-2 py-1 text-[11px] text-zinc-300">
-                  Injected data: Google Reviews + Vercel Link + mobile booking gap
+                  Injected data: {aiPlaybook.injectedData.join(" + ")}
                 </span>
+                {playbookError ? <p className="text-xs text-amber-300">{playbookError}</p> : null}
               </div>
             ) : (
               <ul className="space-y-3 text-sm text-zinc-300">
-                <li className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">“I already have a website.” → Totally fair. This version is tuned for speed-to-booking and mobile conversions.</li>
-                <li className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">“Send me details.” → Perfect. I’ll text a preview and hold your deployment slot for 24 hours.</li>
+                {aiPlaybook.objections.map((item) => (
+                  <li key={item.objection} className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
+                    “{item.objection}” → {item.counter}
+                  </li>
+                ))}
               </ul>
             )}
           </div>
