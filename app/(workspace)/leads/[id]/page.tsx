@@ -29,8 +29,11 @@ type LeadRecord = {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
   } | null;
+  aiResearchSummary?: string | null;
   contacts?: LeadContactRecord[];
 };
+
+const LEAD_RESEARCH_CACHE_KEY = "leadResearchSummary";
 
 type LeadContactRecord = {
   id: string;
@@ -229,6 +232,7 @@ export default function LeadExecutionPage() {
     const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
     return typeof rawId === "string" ? rawId.trim() : "";
   }, [params]);
+  const researchStorageKey = leadId ? `${LEAD_RESEARCH_CACHE_KEY}:${leadId}` : "";
 
   const [status, setStatus] = useState<FetchStatus>("loading");
   const [lead, setLead] = useState<LeadRecord | null>(null);
@@ -339,7 +343,8 @@ export default function LeadExecutionPage() {
         if (data) {
           setLead(data);
           setLeadContacts(normalizeLeadContacts(data));
-          const existingResearch = data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? "";
+          const existingResearch =
+            data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? data.aiResearchSummary ?? "";
           setResearchInsight(existingResearch);
           setResearchError("");
           const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
@@ -374,6 +379,22 @@ export default function LeadExecutionPage() {
       alive = false;
     };
   }, [leadId]);
+
+  useEffect(() => {
+    if (!researchStorageKey || typeof window === "undefined") return;
+
+    const cachedResearch = window.localStorage.getItem(researchStorageKey);
+    if (!cachedResearch) return;
+
+    setResearchInsight((currentSummary) => (currentSummary.trim() ? currentSummary : cachedResearch));
+  }, [researchStorageKey]);
+
+  useEffect(() => {
+    if (!researchStorageKey || typeof window === "undefined") return;
+    if (!researchInsight.trim()) return;
+
+    window.localStorage.setItem(researchStorageKey, researchInsight);
+  }, [researchInsight, researchStorageKey]);
 
   useEffect(() => {
     let alive = true;
@@ -1333,7 +1354,7 @@ export default function LeadExecutionPage() {
                 disabled={researchLoading}
                 className="rounded-lg border border-zinc-600 px-3 py-1 text-xs transition hover:border-zinc-300 disabled:opacity-50"
               >
-                {researchLoading ? "Running..." : "Run Analysis"}
+                {researchLoading ? "Running..." : researchInsight ? "Rerun Analysis" : "Run Analysis"}
               </button>
             </div>
             <p className="mt-4 min-h-14 text-sm text-zinc-300">
