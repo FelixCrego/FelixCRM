@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
 const apiKey = process.env.GEMINI_API_KEY;
+const GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"] as const;
 
 type PlaybookPayload = {
   scripts: string[];
@@ -14,26 +15,35 @@ type PlaybookPayload = {
 function normalizePlaybookPayload(raw: unknown): PlaybookPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const candidate = raw as Partial<PlaybookPayload>;
-  if (!Array.isArray(candidate.scripts) || !Array.isArray(candidate.objections) || typeof candidate.closing !== "string" || typeof candidate.roiSnapshot !== "string" || !Array.isArray(candidate.injectedData)) {
+
+  if (
+    !Array.isArray(candidate.scripts) ||
+    !Array.isArray(candidate.objections) ||
+    typeof candidate.closing !== "string" ||
+    typeof candidate.roiSnapshot !== "string" ||
+    !Array.isArray(candidate.injectedData)
+  ) {
     return null;
   }
-
-  const objections = candidate.objections
-    .filter((item): item is { objection: string; counter: string } => Boolean(item && typeof item === "object" && typeof item.objection === "string" && typeof item.counter === "string"))
-    .slice(0, 5);
 
   const scripts = candidate.scripts.filter((line): line is string => typeof line === "string" && line.trim().length > 0);
+  const objections = candidate.objections
+    .filter(
+      (item): item is { objection: string; counter: string } =>
+        Boolean(item && typeof item === "object" && typeof item.objection === "string" && typeof item.counter === "string"),
+    )
+    .slice(0, 5);
+  const closing = candidate.closing.trim();
+  const roiSnapshot = candidate.roiSnapshot.trim();
   const injectedData = candidate.injectedData.filter((line): line is string => typeof line === "string" && line.trim().length > 0);
 
-  if (!scripts.length || !objections.length || !candidate.closing.trim() || !candidate.roiSnapshot.trim()) {
-    return null;
-  }
+  if (!scripts.length || !objections.length || !closing || !roiSnapshot) return null;
 
   return {
     scripts,
     objections,
-    closing: candidate.closing.trim(),
-    roiSnapshot: candidate.roiSnapshot.trim(),
+    closing,
+    roiSnapshot,
     injectedData,
   };
 }
@@ -58,16 +68,20 @@ function parsePlaybookFromText(text: string): PlaybookPayload | null {
       const normalized = normalizePlaybookPayload(parsed);
       if (normalized) return normalized;
     } catch {
-      // continue trying other variants
+      // try next variant
     }
   }
 
   return null;
 }
 
-
 function buildFallbackPlaybook(leadName: string, researchContext?: string): PlaybookPayload {
-  const contextSnippet = (researchContext || "").split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 2).join(" • ");
+  const contextSnippet = (researchContext || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" • ");
 
   return {
     scripts: [
@@ -97,18 +111,50 @@ function buildFallbackPlaybook(leadName: string, researchContext?: string): Play
   };
 }
 
+async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt: string) {
+  const errors: string[] = [];
+
+  for (const modelName of GEMINI_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      return { text: response.text().trim(), modelName };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${modelName}: ${message}`);
+    }
+  }
+
+  throw new Error(errors.join(" | "));
+}
+
 export async function POST(req: Request) {
   let leadName = "this business";
   let activeTab = "";
   let researchContext = "";
+  let rawBody = "";
 
   try {
-    const payload = await req.json();
-    leadName = payload?.leadName || "this business";
-    activeTab = payload?.activeTab || "";
-    researchContext = payload?.researchContext || "";
+    rawBody = await req.text();
 
-    if (!leadName || !activeTab) {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+    } catch {
+      payload = {};
+    }
+  }
+
+  return null;
+}
+
+
+    leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
+    activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
+    researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
+
+    if (!activeTab) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
@@ -124,10 +170,10 @@ export async function POST(req: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    const systemPrompt = activeTab === "PLAYBOOK"
-      ? `You are an elite sales strategist helping close pre-built website deals for local service businesses.
+    const systemPrompt =
+      activeTab === "PLAYBOOK"
+        ? `You are an elite sales strategist helping close pre-built website deals for local service businesses.
 Create a highly persuasive, context-aware playbook for ${leadName}.
 
 CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on mobile booking, speed-to-lead, and conversion lift."}
@@ -154,7 +200,7 @@ Rules:
 - Mention website/mobile performance, missed lead capture, and fast deployment.
 - Include objection handling and close-ready language.
 - Do not include placeholders like [Your Name].`
-      : `You are an elite, high-converting tech sales copywriter.
+        : `You are an elite, high-converting tech sales copywriter.
 Write a draft for a ${activeTab} to a prospect named ${leadName}.
 
 CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on web optimization and speed-to-lead."}
@@ -167,31 +213,30 @@ RULES FOR FORMATTING:
 Output ONLY the draft text. No robotic greetings, no filler.`;
 
     try {
-      const result = await model.generateContent(systemPrompt);
-      const response = await result.response;
-      const text = response.text().trim();
+      const generation = await generateWithGeminiModelFallback(genAI, systemPrompt);
+      const text = generation.text;
 
       if (activeTab === "PLAYBOOK") {
         const parsedPlaybook = parsePlaybookFromText(text);
         if (parsedPlaybook) {
-          return NextResponse.json({ playbook: parsedPlaybook, draft: text });
+          return NextResponse.json({ playbook: parsedPlaybook, draft: text, model: generation.modelName });
         }
 
-        const fallbackPlaybook = buildFallbackPlaybook(leadName, researchContext);
         return NextResponse.json({
-          playbook: fallbackPlaybook,
+          playbook: buildFallbackPlaybook(leadName, researchContext),
           draft: text,
+          model: generation.modelName,
           warning: "Gemini returned an unexpected format. Showing fallback playbook.",
         });
       }
 
-      return NextResponse.json({ draft: text });
+      return NextResponse.json({ draft: text, model: generation.modelName });
     } catch (generationError) {
       if (activeTab === "PLAYBOOK") {
         console.error("Gemini Playbook Generation Error:", generationError);
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
-          warning: "Gemini unavailable right now. Showing fallback playbook.",
+          warning: "Gemini request failed across available models. Showing fallback playbook.",
         });
       }
 
@@ -200,7 +245,7 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
   } catch (error) {
     console.error("Gemini Draft Error:", error);
 
-    if (activeTab === "PLAYBOOK") {
+    if (activeTab === "PLAYBOOK" || rawBody.toUpperCase().includes("PLAYBOOK")) {
       return NextResponse.json({
         playbook: buildFallbackPlaybook(leadName, researchContext),
         warning: "Unexpected AI error. Showing fallback playbook.",
