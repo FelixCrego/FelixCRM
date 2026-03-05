@@ -84,6 +84,9 @@ function normalizeLead(raw: unknown): Lead | null {
     deployedUrl: typeof lead.deployedUrl === "string" ? lead.deployedUrl : null,
     siteStatus,
     ownerId: typeof lead.ownerId === "string" ? lead.ownerId : null,
+    closedDealValue: typeof lead.closedDealValue === "number" ? lead.closedDealValue : null,
+    closedAt: typeof lead.closedAt === "string" ? lead.closedAt : null,
+    stripeCheckoutLink: typeof lead.stripeCheckoutLink === "string" ? lead.stripeCheckoutLink : null,
     updatedAt,
   };
 }
@@ -98,6 +101,27 @@ function safelyBucketLastContact(updatedAt?: string | null) {
   return "30d+" as const;
 }
 
+function isClosedWithinRange(closedAt: string | null | undefined, range: "ALL" | "7D" | "30D" | "90D" | "YTD") {
+  if (range === "ALL") return true;
+
+  const closedTime = new Date(closedAt ?? "").getTime();
+  if (Number.isNaN(closedTime)) return false;
+
+  const now = new Date();
+  const diffDays = (Date.now() - closedTime) / (1000 * 60 * 60 * 24);
+
+  if (range === "7D") return diffDays <= 7;
+  if (range === "30D") return diffDays <= 30;
+  if (range === "90D") return diffDays <= 90;
+
+  const startOfYear = new Date(now.getFullYear(), 0, 1).getTime();
+  return closedTime >= startOfYear;
+}
+
+function formatCurrency(value?: number | null) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value ?? 0);
+}
+
 export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsListViewProps) {
   const router = useRouter();
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
@@ -107,6 +131,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
+  const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
 
@@ -176,9 +201,12 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       const matchesSearch = safeSearchBlob.includes(search.toLowerCase());
       const matchesStatus = status === "ALL" || lead?.status === status;
       const matchesLastContacted = lastContacted === "ALL" || safelyBucketLastContact(lead?.updatedAt) === lastContacted;
-      return matchesSearch && matchesStatus && matchesLastContacted;
+      const matchesClosedDate = viewMode === "closed" ? isClosedWithinRange(lead?.closedAt, closedDateRange) : true;
+      return matchesSearch && matchesStatus && matchesLastContacted && matchesClosedDate;
     });
-  }, [displayLeads, search, status, lastContacted]);
+  }, [displayLeads, search, status, lastContacted, viewMode, closedDateRange]);
+
+  const cumulativeClosedValue = useMemo(() => filteredLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [filteredLeads]);
 
   return (
     <div className="space-y-4">
@@ -207,6 +235,19 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
         </div>
       </header>
 
+      {viewMode === "closed" ? (
+        <section className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Cumulative Closed Value</p>
+            <p className="mt-2 text-3xl font-semibold text-emerald-200">{formatCurrency(cumulativeClosedValue)}</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Closed Deals Count</p>
+            <p className="mt-2 text-3xl font-semibold text-zinc-100">{filteredLeads.length}</p>
+          </div>
+        </section>
+      ) : null}
+
       <AddLeadModal
         isOpen={isAddLeadOpen}
         isSubmitting={isSubmitting}
@@ -227,7 +268,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
         </section>
       )}
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(220px,2fr)_1fr_1fr]">
+        <div className={`grid gap-3 ${viewMode === "closed" ? "lg:grid-cols-[minmax(220px,2fr)_1fr_1fr_1fr]" : "lg:grid-cols-[minmax(220px,2fr)_1fr_1fr]"}`}>
           <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-zinc-400 focus-within:border-zinc-500">
             <Search className="h-4 w-4" />
             <input
@@ -259,6 +300,19 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
               <option value="30d+">30+ days ago</option>
             </select>
           </label>
+
+          {viewMode === "closed" ? (
+            <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
+              <SlidersHorizontal className="h-4 w-4 text-zinc-500" />
+              <select value={closedDateRange} onChange={(event) => setClosedDateRange(event.target.value as "ALL" | "7D" | "30D" | "90D" | "YTD")} className="w-full bg-transparent outline-none">
+                <option value="ALL">Closed Date: Any Time</option>
+                <option value="7D">Last 7 days</option>
+                <option value="30D">Last 30 days</option>
+                <option value="90D">Last 90 days</option>
+                <option value="YTD">Year to Date</option>
+              </select>
+            </label>
+          ) : null}
         </div>
       </section>
 
@@ -270,6 +324,8 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
               <th className="px-4 py-3">Phone</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Vercel Status</th>
+              {viewMode === "closed" ? <th className="px-4 py-3">Deal Value</th> : null}
+              {viewMode === "closed" ? <th className="px-4 py-3">Closed Date</th> : null}
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -296,6 +352,8 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                     {vercelStatusMap[lead?.siteStatus ?? "UNBUILT"]}
                   </span>
                 </td>
+                {viewMode === "closed" ? <td className="px-4 py-3 font-medium text-emerald-200">{formatCurrency(lead?.closedDealValue)}</td> : null}
+                {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.closedAt ? new Date(lead.closedAt).toLocaleDateString() : "—"}</td> : null}
                 <td className="px-4 py-3 text-right">
                   <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 bg-zinc-900/40 px-2.5 py-1.5 text-xs text-zinc-300 opacity-0 transition group-hover:opacity-100">
                     Open Workspace → <ArrowRight className="h-3.5 w-3.5" />
