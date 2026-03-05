@@ -186,6 +186,9 @@ function leadToMemory(lead: any): Lead {
     socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
     aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
     sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
+    closedDealValue: typeof (lead.sourcePayload ?? lead.source_payload)?.closedDealValue === "number" ? (lead.sourcePayload ?? lead.source_payload).closedDealValue : null,
+    closedAt: typeof (lead.sourcePayload ?? lead.source_payload)?.closedAt === "string" ? (lead.sourcePayload ?? lead.source_payload).closedAt : null,
+    stripeCheckoutLink: typeof (lead.sourcePayload ?? lead.source_payload)?.stripeCheckoutLink === "string" ? (lead.sourcePayload ?? lead.source_payload).stripeCheckoutLink : null,
     transferRequests: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.transferRequests)
       ? (lead.sourcePayload ?? lead.source_payload).transferRequests.filter((request: any) =>
           request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",
@@ -482,6 +485,58 @@ export async function setLeadResearchSummary(leadId: string, summary: string) {
           },
         }),
   }, { id: `eq.${leadId}` }));
+}
+
+
+export type LeadContactRecord = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+};
+
+function normalizeLeadContactsInput(contacts: LeadContactRecord[]): LeadContactRecord[] {
+  return contacts
+    .filter((contact) => contact && typeof contact === "object")
+    .map((contact) => ({
+      id: typeof contact.id === "string" && contact.id ? contact.id : crypto.randomUUID(),
+      name: typeof contact.name === "string" && contact.name.trim() ? contact.name.trim() : "Untitled Contact",
+      role: typeof contact.role === "string" ? contact.role.trim() : "",
+      phones: Array.isArray(contact.phones) ? contact.phones.map((value) => String(value).trim()).filter(Boolean) : [],
+      emails: Array.isArray(contact.emails) ? contact.emails.map((value) => String(value).trim()).filter(Boolean) : [],
+    }));
+}
+
+export async function setLeadContacts(leadId: string, ownerId: string, contacts: LeadContactRecord[]) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save lead contacts.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
+  if (leadOwnerId && leadOwnerId !== ownerId) {
+    throw new Error("Forbidden");
+  }
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const nextContacts = normalizeLeadContactsInput(contacts);
+
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? { source_payload: { ...payload, contacts: nextContacts } }
+      : { sourcePayload: { ...payload, contacts: nextContacts } }),
+  }, { id: `eq.${leadId}` }));
+
+  return nextContacts;
 }
 
 export async function claimLeads(leadIds: string[], ownerId: string) {
