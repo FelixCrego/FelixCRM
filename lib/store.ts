@@ -186,6 +186,9 @@ function leadToMemory(lead: any): Lead {
     socialLinks: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.socialLinks) ? (lead.sourcePayload ?? lead.source_payload).socialLinks : [],
     aiResearchSummary: typeof (lead.sourcePayload ?? lead.source_payload)?.aiResearchSummary === "string" ? (lead.sourcePayload ?? lead.source_payload).aiResearchSummary : null,
     sourceQuery: typeof (lead.sourcePayload ?? lead.source_payload)?.sourceQuery === "string" ? (lead.sourcePayload ?? lead.source_payload).sourceQuery : null,
+    closedDealValue: typeof (lead.sourcePayload ?? lead.source_payload)?.closedDealValue === "number" ? (lead.sourcePayload ?? lead.source_payload).closedDealValue : null,
+    closedAt: typeof (lead.sourcePayload ?? lead.source_payload)?.closedAt === "string" ? (lead.sourcePayload ?? lead.source_payload).closedAt : null,
+    stripeCheckoutLink: typeof (lead.sourcePayload ?? lead.source_payload)?.stripeCheckoutLink === "string" ? (lead.sourcePayload ?? lead.source_payload).stripeCheckoutLink : null,
     transferRequests: Array.isArray((lead.sourcePayload ?? lead.source_payload)?.transferRequests)
       ? (lead.sourcePayload ?? lead.source_payload).transferRequests.filter((request: any) =>
           request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",

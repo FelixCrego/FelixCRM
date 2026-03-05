@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Check, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { createClientComponentClient } from "@/lib/supabase-client";
@@ -23,10 +23,26 @@ type LeadRecord = {
   deployedUrl?: string | null;
   source_payload?: {
     aiResearchSummary?: string | null;
+    contacts?: LeadContactRecord[];
+    closedDealValue?: number | null;
+    closedAt?: string | null;
+    stripeCheckoutLink?: string | null;
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
+    contacts?: LeadContactRecord[];
+    closedDealValue?: number | null;
+    closedAt?: string | null;
+    stripeCheckoutLink?: string | null;
   } | null;
+};
+
+type LeadContactRecord = {
+  id: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
 };
 
 type LeadNoteRecord = {
@@ -142,6 +158,49 @@ const FALLBACK_LEAD: LeadRecord = {
   deployed_url: "",
 };
 
+function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord[] {
+  const payloadContacts = leadRecord?.source_payload?.contacts ?? leadRecord?.sourcePayload?.contacts;
+
+  if (Array.isArray(payloadContacts)) {
+    const sanitized = payloadContacts
+      .filter((contact) => contact && typeof contact === "object")
+      .map((contact) => {
+        const name = typeof contact.name === "string" ? contact.name.trim() : "";
+        const role = typeof contact.role === "string" ? contact.role.trim() : "";
+        const phones = Array.isArray(contact.phones)
+          ? contact.phones.map((phone) => String(phone).trim()).filter(Boolean)
+          : [];
+        const emails = Array.isArray(contact.emails)
+          ? contact.emails.map((email) => String(email).trim()).filter(Boolean)
+          : [];
+
+        return {
+          id: typeof contact.id === "string" && contact.id ? contact.id : crypto.randomUUID(),
+          name: name || "Primary Contact",
+          role,
+          phones,
+          emails,
+        };
+      })
+      .filter((contact) => contact.name || contact.phones.length || contact.emails.length);
+
+    if (sanitized.length) return sanitized;
+  }
+
+  const fallbackPhones = leadRecord?.phone ? [leadRecord.phone] : [];
+  const fallbackEmails = leadRecord?.email ? [leadRecord.email] : [];
+
+  return [
+    {
+      id: "primary-contact",
+      name: "Primary Contact",
+      role: "",
+      phones: fallbackPhones,
+      emails: fallbackEmails,
+    },
+  ];
+}
+
 function LeadWorkspaceSkeleton() {
   return (
     <div className="min-h-screen bg-zinc-950 p-6 text-zinc-100">
@@ -170,6 +229,7 @@ function LeadWorkspaceSkeleton() {
 
 export default function LeadExecutionPage() {
   const params = useParams<{ id?: string | string[] }>();
+  const router = useRouter();
   const leadId = useMemo(() => {
     const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
     return typeof rawId === "string" ? rawId.trim() : "";
@@ -218,6 +278,15 @@ export default function LeadExecutionPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
   const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
+  const [leadContacts, setLeadContacts] = useState<LeadContactRecord[]>([]);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactRole, setNewContactRole] = useState("");
+  const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactEmail, setNewContactEmail] = useState("");
+  const [savingContacts, setSavingContacts] = useState(false);
+  const [contactsError, setContactsError] = useState("");
+  const [closingDeal, setClosingDeal] = useState(false);
+  const [closeDealError, setCloseDealError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   useEffect(() => {
@@ -262,6 +331,7 @@ export default function LeadExecutionPage() {
 
         if (data) {
           setLead(data);
+          setLeadContacts(normalizeLeadContacts(data));
           const existingResearch = data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? "";
           setResearchInsight(existingResearch);
           setResearchError("");
@@ -286,6 +356,7 @@ export default function LeadExecutionPage() {
       if (!alive) return;
 
       setLead(FALLBACK_LEAD);
+      setLeadContacts(normalizeLeadContacts(FALLBACK_LEAD));
       setLeadExecutionStatus("New");
       setStatus("ready");
     }
@@ -470,6 +541,68 @@ export default function LeadExecutionPage() {
     setCheckoutLoading(false);
   }
 
+  function extractStripeValueFromLink(link: string) {
+    try {
+      const safeUrl = link.startsWith("http://") || link.startsWith("https://") ? link : `https://${link}`;
+      const parsed = new URL(safeUrl);
+      const amountParam = parsed.searchParams.get("amount") || parsed.searchParams.get("amount_total") || parsed.searchParams.get("unit_amount");
+      if (!amountParam) return null;
+
+      const numericAmount = Number(amountParam);
+      return Number.isFinite(numericAmount) ? numericAmount : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function markLeadAsClosedDeal() {
+    if (!leadId) return;
+
+    setClosingDeal(true);
+    setCloseDealError("");
+
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
+    const inferredDealValue = extractStripeValueFromLink(checkoutLink) ?? checkoutAmount;
+    const closedAtIso = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        status: "CLOSED",
+        source_payload: {
+          ...sourcePayload,
+          closedDealValue: inferredDealValue,
+          closedAt: closedAtIso,
+          stripeCheckoutLink: checkoutLink || null,
+        },
+      })
+      .eq("id", leadId);
+
+    if (error) {
+      setCloseDealError("Unable to mark this lead as closed right now.");
+      setClosingDeal(false);
+      return;
+    }
+
+    setLeadExecutionStatus("Closed Won");
+    setLead((previous) =>
+      previous
+        ? {
+            ...previous,
+            status: "CLOSED",
+            source_payload: {
+              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+              closedDealValue: inferredDealValue,
+              closedAt: closedAtIso,
+              stripeCheckoutLink: checkoutLink || null,
+            },
+          }
+        : previous,
+    );
+    router.push("/closed-deals");
+    router.refresh();
+  }
+
   async function copyCheckoutLink() {
     if (!checkoutLink) return;
 
@@ -480,6 +613,91 @@ export default function LeadExecutionPage() {
     } catch {
       setCheckoutLinkCopied(false);
     }
+  }
+
+  async function persistLeadContacts(nextContacts: LeadContactRecord[]) {
+    if (!leadId) return;
+
+    setSavingContacts(true);
+    setContactsError("");
+
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? {};
+    const payload = {
+      source_payload: {
+        ...sourcePayload,
+        contacts: nextContacts,
+      },
+    };
+
+    const { error } = await supabase.from("leads").update(payload).eq("id", leadId);
+
+    if (error) {
+      setContactsError("Unable to save contact details right now.");
+      setSavingContacts(false);
+      return;
+    }
+
+    setLeadContacts(nextContacts);
+    setLead((previous) =>
+      previous
+        ? {
+            ...previous,
+            source_payload: {
+              ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+              contacts: nextContacts,
+            },
+          }
+        : previous,
+    );
+    setSavingContacts(false);
+  }
+
+  async function addContact() {
+    const name = newContactName.trim();
+    if (!name) {
+      setContactsError("Contact name is required.");
+      return;
+    }
+
+    const nextContact: LeadContactRecord = {
+      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `contact-${Date.now()}`,
+      name,
+      role: newContactRole.trim() || "",
+      phones: newContactPhone.trim() ? [newContactPhone.trim()] : [],
+      emails: newContactEmail.trim() ? [newContactEmail.trim()] : [],
+    };
+
+    await persistLeadContacts([...leadContacts, nextContact]);
+    setNewContactName("");
+    setNewContactRole("");
+    setNewContactPhone("");
+    setNewContactEmail("");
+  }
+
+  async function addPhoneToContact(contactId: string, phone: string) {
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId && !contact.phones.includes(trimmedPhone)
+        ? { ...contact, phones: [...contact.phones, trimmedPhone] }
+        : contact,
+    );
+
+    await persistLeadContacts(nextContacts);
+  }
+
+  async function addEmailToContact(contactId: string, email: string) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) return;
+
+    const nextContacts = leadContacts.map((contact) =>
+      contact.id === contactId && !contact.emails.includes(trimmedEmail)
+        ? { ...contact, emails: [...contact.emails, trimmedEmail] }
+        : contact,
+    );
+
+    await persistLeadContacts(nextContacts);
   }
 
   async function saveOmniNote() {
@@ -802,7 +1020,6 @@ export default function LeadExecutionPage() {
 
   if (!lead) return <LeadWorkspaceSkeleton />;
 
-  const leadEmail = lead?.email || "No email on file";
   const leadLocation = lead?.city || "Unknown location";
   const resolveNoteType = (note: LeadNoteRecord) => {
     const explicitType = (note.activity_type || note.activityType || "").toUpperCase();
@@ -894,20 +1111,92 @@ export default function LeadExecutionPage() {
             <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
               {leadExecutionStatus}
             </span>
+            <button
+              type="button"
+              onClick={markLeadAsClosedDeal}
+              disabled={closingDeal}
+              className="mt-3 w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
+            </button>
+            {closeDealError ? <p className="mt-2 text-xs text-rose-300">{closeDealError}</p> : null}
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-            <div className="flex items-center gap-2 text-sm text-zinc-300">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">📞</span>
-              <span>{leadPhone}</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-zinc-300">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">✉️</span>
-              <span>{leadEmail}</span>
-            </div>
+            <p className="text-xs uppercase tracking-[0.15em] text-zinc-500">Lead Contacts</p>
             <div className="flex items-center gap-2 text-sm text-zinc-300">
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 text-zinc-400">📍</span>
               <span>{leadLocation}</span>
+            </div>
+            {leadContacts.map((contact) => (
+              <div key={contact.id} className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+                <p className="text-sm font-medium text-zinc-100">{contact.name}</p>
+                <p className="text-xs text-zinc-500">{contact.role || "No role specified"}</p>
+                <div className="mt-2 space-y-1 text-xs text-zinc-300">
+                  <p>📞 {contact.phones.length ? contact.phones.join(" • ") : "No phone on file"}</p>
+                  <p>✉️ {contact.emails.length ? contact.emails.join(" • ") : "No email on file"}</p>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={async () => {
+                      const value = window.prompt("Add a phone number");
+                      if (!value) return;
+                      await handleLeadContactAddPhone(contact.id, value);
+                    }}
+                    className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500"
+                  >
+                    + Phone
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const value = window.prompt("Add an email");
+                      if (!value) return;
+                      await handleLeadContactAddEmail(contact.id, value);
+                    }}
+                    className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-500"
+                  >
+                    + Email
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <div className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Add Contact</p>
+              <div className="mt-2 grid grid-cols-1 gap-2">
+                <input
+                  value={newContactName}
+                  onChange={(event) => setNewContactName(event.target.value)}
+                  placeholder="Contact name"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+                <input
+                  value={newContactRole}
+                  onChange={(event) => setNewContactRole(event.target.value)}
+                  placeholder="Role (Owner, Manager, etc)"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+                <input
+                  value={newContactPhone}
+                  onChange={(event) => setNewContactPhone(event.target.value)}
+                  placeholder="Phone"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+                <input
+                  value={newContactEmail}
+                  onChange={(event) => setNewContactEmail(event.target.value)}
+                  placeholder="Email"
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
+                />
+              </div>
+              <button
+                onClick={handleLeadContactAdd}
+                disabled={savingContacts}
+                className="mt-2 w-full rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-indigo-50 transition hover:bg-indigo-400 disabled:opacity-60"
+              >
+                {savingContacts ? "Saving..." : "Add Contact"}
+              </button>
+              {contactsError ? <p className="mt-2 text-xs text-rose-300">{contactsError}</p> : null}
             </div>
           </div>
 
