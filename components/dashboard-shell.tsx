@@ -49,6 +49,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
   ],
   TEAM_LEAD: [
@@ -58,6 +59,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/team-overview", label: "Team Overview", icon: Trophy },
   ],
