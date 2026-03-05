@@ -14,16 +14,33 @@ type StoredMessage = {
   id: string;
   sender_id: string;
   sender_name: string;
+  recipient_id?: string | null;
   content: string;
   created_at: string;
+};
+
+type StoredUser = {
+  id: string;
+  name?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  role?: string | null;
 };
 
 export type ChatMessage = {
   id: string;
   senderId: string;
   senderName: string;
+  recipientId: string | null;
   content: string;
   createdAt: string;
+};
+
+export type ChatUser = {
+  id: string;
+  name: string;
+  role: string;
+  isOnline: boolean;
 };
 
 const resolvedTableCache = new Map<string, string>();
@@ -86,6 +103,12 @@ function isMissingTableError(error: unknown) {
   return code === "42P01" || code === "PGRST205" || (message.includes("Could not find the table") && message.includes("schema cache"));
 }
 
+function isMissingColumnError(error: unknown, column: string) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as SupabaseError).code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return code === "PGRST204" && message.includes(`'${column}'`);
+}
+
 async function withTableFallback<T>(cacheKey: string, candidates: string[], requester: (table: string) => Promise<T>): Promise<T> {
   const cached = resolvedTableCache.get(cacheKey);
   if (cached) {
@@ -117,6 +140,7 @@ function mapStoredMessage(row: StoredMessage): ChatMessage {
     id: row.id,
     senderId: row.sender_id,
     senderName: row.sender_name,
+    recipientId: row.recipient_id ?? null,
     content: row.content,
     createdAt: row.created_at,
   };
@@ -130,8 +154,8 @@ async function resolveDisplayName(userId: string) {
   if (!hasDb) return getFallbackName(userId);
 
   try {
-    const userRows = await withTableFallback<any[]>("chat-users", USERS_TABLE_CANDIDATES, (table) =>
-      supabaseRequest<any[]>(table, undefined, { select: "*", id: `eq.${userId}`, limit: "1" }),
+    const userRows = await withTableFallback<StoredUser[]>("chat-users", USERS_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<StoredUser[]>(table, undefined, { select: "id,name,full_name,email,role", id: `eq.${userId}`, limit: "1" }),
     );
     const user = userRows[0];
     const dbName =
@@ -160,32 +184,47 @@ function prunePresence() {
   }
 }
 
-export async function listChatMessages(limit = 100): Promise<ChatMessage[]> {
-  if (!hasDb) return memoryMessages.slice(-limit);
+function isMessageVisibleToUser(message: ChatMessage, userId: string, peerId?: string | null) {
+  if (!peerId) return !message.recipientId;
+  return (
+    (message.senderId === userId && message.recipientId === peerId) ||
+    (message.senderId === peerId && message.recipientId === userId)
+  );
+}
+
+export async function listChatMessages(userId: string, limit = 100, peerId?: string | null): Promise<ChatMessage[]> {
+  if (!hasDb) {
+    return memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+  }
 
   try {
     const rows = await withTableFallback<StoredMessage[]>("chat-messages", CHAT_TABLE_CANDIDATES, (table) =>
       supabaseRequest<StoredMessage[]>(table, undefined, {
-        select: "id,sender_id,sender_name,content,created_at",
+        select: "id,sender_id,sender_name,recipient_id,content,created_at",
         order: "created_at.asc",
-        limit: String(limit),
+        limit: String(Math.max(limit * 2, 200)),
       }),
     );
 
-    return rows.map(mapStoredMessage);
-  } catch {
-    return memoryMessages.slice(-limit);
+    return rows.map(mapStoredMessage).filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+  } catch (error) {
+    if (peerId && isMissingColumnError(error, "recipient_id")) {
+      return memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
+    }
+    return memoryMessages.filter((message) => isMessageVisibleToUser(message, userId, peerId)).slice(-limit);
   }
 }
 
-export async function createChatMessage(userId: string, content: string) {
+export async function createChatMessage(userId: string, content: string, recipientId?: string | null) {
   const senderName = await resolveDisplayName(userId);
+  const normalizedRecipientId = recipientId?.trim() || null;
 
   if (!hasDb) {
     const message: ChatMessage = {
       id: crypto.randomUUID(),
       senderId: userId,
       senderName,
+      recipientId: normalizedRecipientId,
       content,
       createdAt: new Date().toISOString(),
     };
@@ -200,9 +239,9 @@ export async function createChatMessage(userId: string, content: string) {
         {
           method: "POST",
           headers: { Prefer: "return=representation" },
-          body: JSON.stringify([{ sender_id: userId, sender_name: senderName, content }]),
+          body: JSON.stringify([{ sender_id: userId, sender_name: senderName, recipient_id: normalizedRecipientId, content }]),
         },
-        { select: "id,sender_id,sender_name,content,created_at" },
+        { select: "id,sender_id,sender_name,recipient_id,content,created_at" },
       ),
     );
 
@@ -212,11 +251,54 @@ export async function createChatMessage(userId: string, content: string) {
       id: crypto.randomUUID(),
       senderId: userId,
       senderName,
+      recipientId: normalizedRecipientId,
       content,
       createdAt: new Date().toISOString(),
     };
     memoryMessages.push(fallbackMessage);
     return fallbackMessage;
+  }
+}
+
+export async function listChatUsers(currentUserId: string): Promise<ChatUser[]> {
+  prunePresence();
+
+  if (!hasDb) {
+    const users = new Map<string, ChatUser>();
+    for (const message of memoryMessages) {
+      if (message.senderId !== currentUserId && !users.has(message.senderId)) {
+        users.set(message.senderId, {
+          id: message.senderId,
+          name: message.senderName,
+          role: "REP",
+          isOnline: memoryPresence.has(message.senderId),
+        });
+      }
+    }
+
+    return [...users.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  try {
+    const rows = await withTableFallback<StoredUser[]>("chat-users", USERS_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<StoredUser[]>(table, undefined, { select: "id,name,full_name,email,role", limit: "200" }),
+    );
+
+    return rows
+      .filter((user) => user.id && user.id !== currentUserId)
+      .map((user) => ({
+        id: user.id,
+        name:
+          (typeof user.name === "string" && user.name.trim()) ||
+          (typeof user.full_name === "string" && user.full_name.trim()) ||
+          (typeof user.email === "string" && user.email.split("@")[0]) ||
+          getFallbackName(user.id),
+        role: (typeof user.role === "string" && user.role.trim()) || "REP",
+        isOnline: memoryPresence.has(user.id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
   }
 }
 
