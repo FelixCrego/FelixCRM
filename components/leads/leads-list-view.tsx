@@ -54,14 +54,19 @@ function normalizeLead(raw: unknown): Lead | null {
 
   const updatedAtSource = typeof lead.updatedAt === "string" ? lead.updatedAt : new Date().toISOString();
   const updatedAt = Number.isNaN(new Date(updatedAtSource).getTime()) ? new Date().toISOString() : updatedAtSource;
+  const rawStatus = typeof lead["status"] === "string" ? (lead["status"] as string) : "";
   const status =
-    lead.status === "NEW" ||
-    lead.status === "CONTACTED" ||
-    lead.status === "IN_PROGRESS" ||
-    lead.status === "CLOSED" ||
-    lead.status === "DISQUALIFIED"
-      ? lead.status
-      : "NEW";
+    rawStatus === "NEW" || rawStatus === "New"
+      ? "NEW"
+      : rawStatus === "CONTACTED"
+        ? "CONTACTED"
+        : rawStatus === "IN_PROGRESS" || rawStatus === "Pitched" || rawStatus === "Awaiting Approval" || rawStatus === "Payment Pending"
+          ? "IN_PROGRESS"
+          : rawStatus === "CLOSED" || rawStatus === "Closed Won"
+            ? "CLOSED"
+            : rawStatus === "DISQUALIFIED"
+              ? "DISQUALIFIED"
+              : "NEW";
 
   const siteStatus =
     lead.siteStatus === "UNBUILT" || lead.siteStatus === "BUILDING" || lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED"
@@ -132,6 +137,12 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
+  const [dailyCalls, setDailyCalls] = useState(50);
+  const [conversationRate, setConversationRate] = useState(25);
+  const [demoBookedRate, setDemoBookedRate] = useState(35);
+  const [demoShowRate, setDemoShowRate] = useState(70);
+  const [closeRate, setCloseRate] = useState(30);
+  const [monthlyDealGoal, setMonthlyDealGoal] = useState(10);
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
 
@@ -207,6 +218,44 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   }, [displayLeads, search, status, lastContacted, viewMode, closedDateRange]);
 
   const cumulativeClosedValue = useMemo(() => filteredLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [filteredLeads]);
+  const averageDealValue = useMemo(() => {
+    if (filteredLeads.length === 0) return 0;
+    return cumulativeClosedValue / filteredLeads.length;
+  }, [cumulativeClosedValue, filteredLeads.length]);
+
+  const funnelForecast = useMemo(() => {
+    const conversationVolume = dailyCalls * (conversationRate / 100);
+    const demosBooked = conversationVolume * (demoBookedRate / 100);
+    const demosShown = demosBooked * (demoShowRate / 100);
+    const closedDeals = demosShown * (closeRate / 100);
+    const dailyRevenue = closedDeals * averageDealValue;
+
+    return {
+      daily: { calls: dailyCalls, conversations: conversationVolume, demosBooked, demosShown, closedDeals, revenue: dailyRevenue },
+      weekly: {
+        calls: dailyCalls * 5,
+        conversations: conversationVolume * 5,
+        demosBooked: demosBooked * 5,
+        demosShown: demosShown * 5,
+        closedDeals: closedDeals * 5,
+        revenue: dailyRevenue * 5,
+      },
+      monthly: {
+        calls: dailyCalls * 22,
+        conversations: conversationVolume * 22,
+        demosBooked: demosBooked * 22,
+        demosShown: demosShown * 22,
+        closedDeals: closedDeals * 22,
+        revenue: dailyRevenue * 22,
+      },
+    };
+  }, [dailyCalls, conversationRate, demoBookedRate, demoShowRate, closeRate, averageDealValue]);
+
+  const requiredDailyCallsForGoal = useMemo(() => {
+    const conversionChain = (conversationRate / 100) * (demoBookedRate / 100) * (demoShowRate / 100) * (closeRate / 100);
+    if (conversionChain <= 0) return 0;
+    return monthlyDealGoal / (22 * conversionChain);
+  }, [monthlyDealGoal, conversationRate, demoBookedRate, demoShowRate, closeRate]);
 
   return (
     <div className="space-y-4">
@@ -244,6 +293,81 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Closed Deals Count</p>
             <p className="mt-2 text-3xl font-semibold text-zinc-100">{filteredLeads.length}</p>
+          </div>
+        </section>
+      ) : null}
+
+      {viewMode === "closed" ? (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-100">Deal Goal Calculator</h2>
+              <p className="text-sm text-zinc-400">Plan quotas from call volume through conversations, demos, and closes.</p>
+            </div>
+            <div className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-right">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Avg Deal Value</p>
+              <p className="text-sm font-semibold text-emerald-200">{formatCurrency(averageDealValue)}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+            <label className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              Daily Calls
+              <input type="number" min={0} value={dailyCalls} onChange={(event) => setDailyCalls(Number(event.target.value) || 0)} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
+            </label>
+            <label className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              Conversation Rate (%)
+              <input type="number" min={0} max={100} value={conversationRate} onChange={(event) => setConversationRate(Number(event.target.value) || 0)} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
+            </label>
+            <label className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              Demo Booked Rate (%)
+              <input type="number" min={0} max={100} value={demoBookedRate} onChange={(event) => setDemoBookedRate(Number(event.target.value) || 0)} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
+            </label>
+            <label className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              Demo Show Rate (%)
+              <input type="number" min={0} max={100} value={demoShowRate} onChange={(event) => setDemoShowRate(Number(event.target.value) || 0)} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
+            </label>
+            <label className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              Close Rate (%)
+              <input type="number" min={0} max={100} value={closeRate} onChange={(event) => setCloseRate(Number(event.target.value) || 0)} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
+            </label>
+            <label className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-300">
+              Monthly Deal Goal
+              <input type="number" min={0} value={monthlyDealGoal} onChange={(event) => setMonthlyDealGoal(Number(event.target.value) || 0)} className="mt-1 w-full bg-transparent text-sm text-zinc-100 outline-none" />
+            </label>
+            <div className="rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100 md:col-span-2">
+              <p className="uppercase tracking-[0.16em] text-indigo-200/80">Quota Guidance</p>
+              <p className="mt-1 text-sm text-indigo-100">To hit <span className="font-semibold">{monthlyDealGoal.toFixed(0)} closed deals/month</span>, target roughly <span className="font-semibold">{requiredDailyCallsForGoal.toFixed(0)} calls/day</span>.</p>
+            </div>
+          </div>
+
+          <div className="mt-4 overflow-hidden rounded-xl border border-zinc-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-zinc-950/70 text-xs uppercase tracking-[0.14em] text-zinc-500">
+                <tr>
+                  <th className="px-3 py-2">Period</th>
+                  <th className="px-3 py-2">Calls</th>
+                  <th className="px-3 py-2">Conversations</th>
+                  <th className="px-3 py-2">Booked</th>
+                  <th className="px-3 py-2">Shown</th>
+                  <th className="px-3 py-2">Closed</th>
+                  <th className="px-3 py-2">Revenue</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800 text-zinc-200">
+                {(["daily", "weekly", "monthly"] as const).map((period) => (
+                  <tr key={period} className="bg-zinc-900/50">
+                    <td className="px-3 py-2 capitalize text-zinc-100">{period}</td>
+                    <td className="px-3 py-2">{funnelForecast[period].calls.toFixed(0)}</td>
+                    <td className="px-3 py-2">{funnelForecast[period].conversations.toFixed(1)}</td>
+                    <td className="px-3 py-2">{funnelForecast[period].demosBooked.toFixed(1)}</td>
+                    <td className="px-3 py-2">{funnelForecast[period].demosShown.toFixed(1)}</td>
+                    <td className="px-3 py-2 font-medium text-emerald-200">{funnelForecast[period].closedDeals.toFixed(1)}</td>
+                    <td className="px-3 py-2">{formatCurrency(funnelForecast[period].revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       ) : null}

@@ -24,10 +24,16 @@ type LeadRecord = {
   source_payload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
+    closedDealValue?: number | null;
+    closedAt?: string | null;
+    stripeCheckoutLink?: string | null;
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
+    closedDealValue?: number | null;
+    closedAt?: string | null;
+    stripeCheckoutLink?: string | null;
   } | null;
 };
 
@@ -279,6 +285,8 @@ export default function LeadExecutionPage() {
   const [newContactEmail, setNewContactEmail] = useState("");
   const [savingContacts, setSavingContacts] = useState(false);
   const [contactsError, setContactsError] = useState("");
+  const [closingDeal, setClosingDeal] = useState(false);
+  const [closeDealError, setCloseDealError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   useEffect(() => {
@@ -653,7 +661,7 @@ export default function LeadExecutionPage() {
     const { error } = await supabase
       .from("leads")
       .update({
-        status: "CLOSED",
+        status: "Closed Won",
         source_payload: {
           ...sourcePayload,
           closedDealValue: inferredDealValue,
@@ -674,7 +682,7 @@ export default function LeadExecutionPage() {
       previous
         ? {
             ...previous,
-            status: "CLOSED",
+            status: "Closed Won",
             source_payload: {
               ...(previous.source_payload ?? previous.sourcePayload ?? {}),
               closedDealValue: inferredDealValue,
