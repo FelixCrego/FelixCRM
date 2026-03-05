@@ -1277,41 +1277,20 @@ export default function LeadExecutionPage() {
                 leadWebsite
               )}
             </p>
-            <span className="mt-3 inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
-              {leadExecutionStatus}
-            </span>
-            <button
-              type="button"
-              onClick={markLeadAsClosedDeal}
-              disabled={closingDeal}
-              className="mt-3 w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
-            </button>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="mt-3 space-y-3">
+              <span className="inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
+                {leadExecutionStatus}
+              </span>
               <button
                 type="button"
-                onClick={() => goToAdjacentLead(previousLeadId)}
-                disabled={!previousLeadId}
-                className="inline-flex items-center justify-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={markLeadAsClosedDeal}
+                disabled={closingDeal}
+                className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Prev
+                {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
               </button>
-              <button
-                type="button"
-                onClick={() => goToAdjacentLead(nextLeadId)}
-                disabled={!nextLeadId}
-                className="inline-flex items-center justify-center gap-1 rounded-lg border border-indigo-400/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-indigo-100 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+              {closeDealError ? <p className="text-xs text-rose-300">{closeDealError}</p> : null}
             </div>
-            <p className="mt-2 text-[11px] text-zinc-500">
-              {currentLeadIndex >= 0 ? `Lead ${currentLeadIndex + 1} of ${orderedLeadIds.length}` : "Lead order unavailable"}
-            </p>
-            {closeDealError ? <p className="mt-2 text-xs text-rose-300">{closeDealError}</p> : null}
           </div>
 
           <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
