@@ -177,14 +177,14 @@ export async function POST(request: Request) {
           ref: repoDefaultBranch,
         },
         target: "production",
-        env: [
-          { key: "TEMPLATE_CONFIG_JSON", value: JSON.stringify(templateConfig), target: ["production"] },
-          { key: "TEMPLATE_CONFIG_VERSION", value: TEMPLATE_CONFIG_VERSION, target: ["production"] },
-          { key: "BUSINESS_NAME", value: templateConfig.business.name, target: ["production"] },
-          { key: "CONTACT_PHONE", value: templateConfig.content.contact.phone, target: ["production"] },
-          { key: "CONTACT_EMAIL", value: templateConfig.content.contact.email, target: ["production"] },
-          { key: "SOCIAL_LINKS", value: templateConfig.links.socials.map((social) => social.url).join(","), target: ["production"] },
-        ],
+        env: {
+          TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
+          TEMPLATE_CONFIG_VERSION,
+          BUSINESS_NAME: templateConfig.business.name,
+          CONTACT_PHONE: templateConfig.content.contact.phone,
+          CONTACT_EMAIL: templateConfig.content.contact.email,
+          SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
+        },
       }),
     });
 
