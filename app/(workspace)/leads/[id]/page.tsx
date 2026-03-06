@@ -316,13 +316,26 @@ export default function LeadExecutionPage() {
   const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
   const [showKeypad, setShowKeypad] = useState(false);
+  const [lastSentDigit, setLastSentDigit] = useState<string | null>(null);
+  const [keypadFeedback, setKeypadFeedback] = useState("");
+  const keypadFeedbackTimeoutRef = useRef<number | null>(null);
   const keypadDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 
   useEffect(() => {
     if (!callActive) {
       setShowKeypad(false);
+      setLastSentDigit(null);
+      setKeypadFeedback("");
     }
   }, [callActive]);
+
+  useEffect(() => {
+    return () => {
+      if (keypadFeedbackTimeoutRef.current) {
+        window.clearTimeout(keypadFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
   const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
@@ -1306,21 +1319,78 @@ export default function LeadExecutionPage() {
     setShowKeypad(false);
   };
 
+  const playDialTone = (digit: string) => {
+    const frequencyMap: Record<string, [number, number]> = {
+      "1": [697, 1209], "2": [697, 1336], "3": [697, 1477],
+      "4": [770, 1209], "5": [770, 1336], "6": [770, 1477],
+      "7": [852, 1209], "8": [852, 1336], "9": [852, 1477],
+      "*": [941, 1209], "0": [941, 1336], "#": [941, 1477],
+    };
+
+    const pair = frequencyMap[digit];
+    if (!pair) return;
+
+    const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const audioContext = new AudioCtx();
+    const gain = audioContext.createGain();
+    gain.gain.value = 0.05;
+    gain.connect(audioContext.destination);
+
+    const [f1, f2] = pair;
+    const osc1 = audioContext.createOscillator();
+    const osc2 = audioContext.createOscillator();
+    osc1.frequency.value = f1;
+    osc2.frequency.value = f2;
+    osc1.type = "sine";
+    osc2.type = "sine";
+    osc1.connect(gain);
+    osc2.connect(gain);
+
+    const now = audioContext.currentTime;
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 0.14);
+    osc2.stop(now + 0.14);
+
+    window.setTimeout(() => {
+      void audioContext.close();
+    }, 180);
+  };
+
+  const setDigitFeedback = (message: string, digit: string) => {
+    setLastSentDigit(digit);
+    setKeypadFeedback(message);
+
+    if (keypadFeedbackTimeoutRef.current) {
+      window.clearTimeout(keypadFeedbackTimeoutRef.current);
+    }
+
+    keypadFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setKeypadFeedback("");
+    }, 1500);
+  };
+
   // Amazon Connect DTMF Handler
   const handleSendDigit = (digit: string) => {
     const activeContact = activeContactRef.current;
 
-    // Prefer the lead page's live AWS contact subscription, with provider fallback.
     if (activeContact?.sendDigit) {
       activeContact.sendDigit(digit);
+      playDialTone(digit);
+      setDigitFeedback(`Sent ${digit} to active call`, digit);
       return;
     }
 
     if (callActive) {
       sendCallDigit(digit);
+      playDialTone(digit);
+      setDigitFeedback(`Sent ${digit} via fallback`, digit);
       return;
     }
 
+    setKeypadFeedback("No active contact to send digit to.");
     console.warn("No active contact to send digit to.");
   };
 
@@ -1879,7 +1949,10 @@ export default function LeadExecutionPage() {
             </div>
             {callActive && showKeypad ? (
               <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
+                <p className="mb-2 min-h-4 text-[11px] text-emerald-300/90">
+                  {keypadFeedback || (lastSentDigit ? `Last digit: ${lastSentDigit}` : "Press a key to send tone") }
+                </p>
                 <div className="grid grid-cols-3 gap-2">
                   {keypadDigits.map((digit) => (
                     <button
