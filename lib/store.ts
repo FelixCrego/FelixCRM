@@ -105,6 +105,34 @@ function isMissingColumnError(error: unknown, column: string) {
   return isSchemaCacheColumnError(error) && message.includes(`'${column}'`);
 }
 
+function getMissingColumnName(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/Could not find the '([^']+)' column/i);
+  return match?.[1] ?? null;
+}
+
+async function patchLeadDeploymentWithPayload(table: string, leadId: string, payload: Record<string, unknown>) {
+  let currentPayload: Record<string, unknown> = { ...payload };
+
+  while (Object.keys(currentPayload).length > 0) {
+    try {
+      return await supabaseRequest(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(currentPayload),
+      }, { id: `eq.${leadId}` });
+    } catch (error) {
+      if (!isSchemaCacheColumnError(error)) throw error;
+      const missingColumn = getMissingColumnName(error);
+      if (!missingColumn || !(missingColumn in currentPayload)) throw error;
+      const { [missingColumn]: _removed, ...nextPayload } = currentPayload;
+      currentPayload = nextPayload;
+    }
+  }
+
+  throw new Error("No compatible deployment columns found for the resolved leads table schema.");
+}
+
 async function withTableFallback<T>(cacheKey: string, candidates: string[], requester: (table: string) => Promise<T>): Promise<T> {
   const cached = resolvedTableCache.get(cacheKey);
   if (cached) return requester(cached);
@@ -502,25 +530,13 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
 
   await withLeadTableFallback(async (table) => {
     const preferredPayload = isSnakeLeadsTable(table) ? snakePayload : camelPayload;
+    const fallbackPayload = isSnakeLeadsTable(table) ? camelPayload : snakePayload;
 
     try {
-      return await supabaseRequest(table, {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(preferredPayload),
-      }, { id: `eq.${leadId}` });
+      return await patchLeadDeploymentWithPayload(table, leadId, preferredPayload);
     } catch (error) {
-      const shouldTrySnake = !isSnakeLeadsTable(table) && (isMissingColumnError(error, "deployedUrl") || isMissingColumnError(error, "siteStatus") || isMissingColumnError(error, "vercelDeploymentId"));
-      const shouldTryCamel = isSnakeLeadsTable(table) && (isMissingColumnError(error, "deployed_url") || isMissingColumnError(error, "site_status") || isMissingColumnError(error, "vercel_deployment_id"));
-
-      if (!shouldTrySnake && !shouldTryCamel) throw error;
-
-      const fallbackPayload = shouldTrySnake ? snakePayload : camelPayload;
-      return supabaseRequest(table, {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(fallbackPayload),
-      }, { id: `eq.${leadId}` });
+      if (!isSchemaCacheColumnError(error)) throw error;
+      return patchLeadDeploymentWithPayload(table, leadId, fallbackPayload);
     }
   });
 }
