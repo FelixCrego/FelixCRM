@@ -40,6 +40,19 @@ function normalizeSocialPlatform(label: string): "facebook" | "instagram" | "x" 
   return "x";
 }
 
+function escapeForSingleQuotedValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function replaceQuotedKeyValue(source: string, key: string, nextValue: string): string {
+  let updated = source;
+
+  updated = updated.replace(new RegExp(`(["']?${key}["']?\\s*:\\s*)"[^"]*"`, "g"), `$1"${escapeForQuotedValue(nextValue)}"`);
+  updated = updated.replace(new RegExp(`(["']?${key}["']?\\s*:\\s*)'[^']*'`, "g"), `$1'${escapeForSingleQuotedValue(nextValue)}'`);
+
+  return updated;
+}
+
 function applySiteConfigOverrides(source: string, config: TemplateConfig): string {
   let updated = source;
   const businessName = config.business.name;
@@ -73,15 +86,19 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
 
   const primaryLocation = config.geo.primaryLocation || config.business.city;
   if (primaryLocation) {
-    updated = updated.replace(/(["']?city["']?\s*:\s*)"[^"]*"/g, `$1"${escapeForQuotedValue(primaryLocation)}"`);
-    updated = updated.replace(/(["']?location["']?\s*:\s*)"[^"]*"/g, `$1"${escapeForQuotedValue(primaryLocation)}"`);
-    updated = updated.replace(/(["']?primaryLocation["']?\s*:\s*)"[^"]*"/g, `$1"${escapeForQuotedValue(primaryLocation)}"`);
+    updated = replaceQuotedKeyValue(updated, "city", primaryLocation);
+    updated = replaceQuotedKeyValue(updated, "location", primaryLocation);
+    updated = replaceQuotedKeyValue(updated, "primaryLocation", primaryLocation);
   }
 
   if (config.geo.serviceAreas.length > 0) {
-    const serializedAreas = config.geo.serviceAreas.map((area) => `"${escapeForQuotedValue(area)}"`).join(", ");
-    updated = updated.replace(/(["']?serviceAreas["']?\s*:\s*)\[[\s\S]*?\]/g, `$1[${serializedAreas}]`);
-    updated = updated.replace(/(["']?areas["']?\s*:\s*)\[[\s\S]*?\]/g, `$1[${serializedAreas}]`);
+    const serializedAreasDouble = config.geo.serviceAreas.map((area) => `"${escapeForQuotedValue(area)}"`).join(", ");
+    const serializedAreasSingle = config.geo.serviceAreas.map((area) => `'${escapeForSingleQuotedValue(area)}'`).join(", ");
+
+    updated = updated.replace(/(["']?serviceAreas["']?\s*:\s*)\[[\s\S]*?\]/g, `$1[${serializedAreasDouble}]`);
+    updated = updated.replace(/(["']?areas["']?\s*:\s*)\[[\s\S]*?\]/g, `$1[${serializedAreasDouble}]`);
+    updated = updated.replace(/(serviceAreas\s*=\s*)\[[\s\S]*?\]/g, `$1[${serializedAreasSingle}]`);
+    updated = updated.replace(/(areas\s*=\s*)\[[\s\S]*?\]/g, `$1[${serializedAreasSingle}]`);
   }
 
   return updated;
@@ -106,8 +123,8 @@ async function patchGeneratedRepoSiteConfig(params: {
       const path = item.path ?? "";
       if (item.type !== "blob") continue;
       const lower = path.toLowerCase();
-      if (!lower.endsWith(".ts") && !lower.endsWith(".tsx")) continue;
-      if (!lower.includes("site") && !lower.includes("config") && !lower.includes("area") && !lower.includes("location")) continue;
+      if (!lower.endsWith(".ts") && !lower.endsWith(".tsx") && !lower.endsWith(".js") && !lower.endsWith(".jsx") && !lower.endsWith(".mjs") && !lower.endsWith(".cjs") && !lower.endsWith(".json")) continue;
+      if (!lower.includes("site") && !lower.includes("config") && !lower.includes("area") && !lower.includes("location") && !lower.includes("geo")) continue;
       if (allPaths.includes(path)) continue;
       allPaths.push(path);
     }
@@ -126,7 +143,7 @@ async function patchGeneratedRepoSiteConfig(params: {
     if (!sha || !encodedContent || contentPayload.encoding !== "base64") return false;
 
     const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
-    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay") && !source.includes("serviceAreas") && !source.includes("areas") && !source.includes("primaryLocation") && !source.includes("location") && !source.includes("city")) {
+    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay") && !source.includes("serviceAreas") && !source.includes("areas") && !source.includes("primaryLocation") && !source.includes("location") && !source.includes("city") && !source.includes("serviceArea")) {
       return false;
     }
 
