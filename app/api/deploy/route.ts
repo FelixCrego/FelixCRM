@@ -448,13 +448,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Deployment failed: ${errorText || response.statusText}` }, { status: 500 });
     }
 
-    const payload = (await response.json()) as Record<string, unknown>;
-    const projectAliasUrl = toHttpsUrl(`${vercelProjectName}.vercel.app`);
-    const deploymentAliasUrl = firstDeploymentAlias(payload);
-    const fallbackDeploymentUrl = toHttpsUrl(payload.url);
-    const deployedUrl = projectAliasUrl ?? deploymentAliasUrl ?? fallbackDeploymentUrl;
+    const payload = (await response.json()) as { id?: string; url?: string; alias?: string[] };
+    const productionAlias = payload.alias?.find((entry) => typeof entry === "string" && entry.endsWith(".vercel.app"));
+    const deploymentHostname = payload.url;
+    const stableProjectHostname = `${vercelProjectName}.vercel.app`;
+    const resolvedHostname = productionAlias || (vercelPublicDeployments ? stableProjectHostname : deploymentHostname);
+    const url = resolvedHostname ? `https://${resolvedHostname}` : undefined;
 
-    await setLeadDeployment(leadId, { siteStatus: deployedUrl ? "LIVE" : "BUILDING", deployedUrl, vercelDeploymentId: typeof payload.id === "string" ? payload.id : undefined });
+    await setLeadDeployment(leadId, { siteStatus: url ? "LIVE" : "BUILDING", deployedUrl: url, vercelDeploymentId: payload.id });
     return NextResponse.json({
       url: deployedUrl,
       deployedUrl,
@@ -467,6 +468,11 @@ export async function POST(request: Request) {
         teamId: vercelTeamId ?? null,
       },
       protectionMode,
+      deploymentHostnames: {
+        deployment: deploymentHostname ?? null,
+        productionAlias: productionAlias ?? null,
+        stableProject: stableProjectHostname,
+      },
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
