@@ -10,6 +10,22 @@ type Demo = {
   meet_link: string;
 };
 
+function parseDemoDateTime(date: string, time: string) {
+  const normalized = time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
+  if (!normalized) {
+    return new Date(`${date}T00:00:00`);
+  }
+
+  const rawHour = Number(normalized[1]);
+  const minutes = Number(normalized[2]);
+  const period = normalized[3].toUpperCase();
+  const hours24 = rawHour % 12 + (period === "PM" ? 12 : 0);
+
+  const dateTime = new Date(`${date}T00:00:00`);
+  dateTime.setHours(hours24, minutes, 0, 0);
+  return dateTime;
+}
+
 function formatDateTimeLabel(date: string, time: string) {
   const localDate = new Date(`${date}T00:00:00`);
   const today = new Date();
@@ -62,10 +78,16 @@ export default function DemosPage() {
 
   const demosWithMeta = useMemo(
     () =>
-      demos.map((demo) => ({
-        ...demo,
-        ...formatDateTimeLabel(demo.selected_date, demo.selected_time),
-      })),
+      demos
+        .map((demo) => {
+          const scheduledAt = parseDemoDateTime(demo.selected_date, demo.selected_time);
+          return {
+            ...demo,
+            scheduledAt,
+            ...formatDateTimeLabel(demo.selected_date, demo.selected_time),
+          };
+        })
+        .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime()),
     [demos],
   );
 
