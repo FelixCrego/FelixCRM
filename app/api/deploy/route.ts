@@ -158,6 +158,37 @@ function slugify(input: string, fallback: string): string {
   return clean || fallback;
 }
 
+function toHttpsUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function firstDeploymentAlias(payload: Record<string, unknown>): string | undefined {
+  const singleAlias = toHttpsUrl(payload.alias);
+  if (singleAlias) return singleAlias;
+
+  const aliases = payload.aliases;
+  if (!Array.isArray(aliases)) return undefined;
+
+  for (const aliasEntry of aliases) {
+    if (typeof aliasEntry === "string") {
+      const normalized = toHttpsUrl(aliasEntry);
+      if (normalized) return normalized;
+      continue;
+    }
+
+    if (!aliasEntry || typeof aliasEntry !== "object") continue;
+    const objectAlias = aliasEntry as { alias?: unknown; domain?: unknown; url?: unknown };
+    const normalized = toHttpsUrl(objectAlias.alias) ?? toHttpsUrl(objectAlias.domain) ?? toHttpsUrl(objectAlias.url);
+    if (normalized) return normalized;
+  }
+
+  return undefined;
+}
+
 export async function POST(request: Request) {
   try {
     const ownerId = await getAuthenticatedUserId();
@@ -380,7 +411,8 @@ export async function POST(request: Request) {
           target: ["production"],
           type: "encrypted",
         }),
-      });
+        },
+      );
 
       if (!upsertEnvResponse.ok) {
         await setLeadDeployment(leadId, { siteStatus: "FAILED" });
@@ -425,7 +457,8 @@ export async function POST(request: Request) {
 
     await setLeadDeployment(leadId, { siteStatus: url ? "LIVE" : "BUILDING", deployedUrl: url, vercelDeploymentId: payload.id });
     return NextResponse.json({
-      url,
+      url: deployedUrl,
+      deployedUrl,
       deploymentId: payload.id,
       project: vercelProjectName,
       repository: clonedRepoFullName,
