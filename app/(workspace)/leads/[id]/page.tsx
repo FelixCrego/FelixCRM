@@ -702,6 +702,13 @@ export default function LeadExecutionPage() {
   }, [lead?.phone]);
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
   const siteStatus = lead?.site_status || lead?.siteStatus || "UNBUILT";
+
+  useEffect(() => {
+    if (siteStatus !== "BUILDING" || !deployedUrl) return;
+    setDeployProgress(100);
+    setDeployStageLabel("Live link is ready.");
+    setDeployStartedAt(null);
+  }, [deployedUrl, siteStatus]);
   const deployEtaLabel = useMemo(() => {
     if (siteStatus !== "BUILDING" || !deployStartedAt) return "";
     const elapsedSeconds = Math.floor((Date.now() - deployStartedAt) / 1000);
