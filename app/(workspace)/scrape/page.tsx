@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { BriefcaseBusiness, Loader2, MapPin, RefreshCcw, Search, Sparkles } from "lucide-react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { BriefcaseBusiness, Loader2, MapPin, RefreshCcw, Search, Sparkles, Upload } from "lucide-react";
+import { AddLeadModal } from "@/components/leads/add-lead-modal";
 
 type ApiPayload = Record<string, unknown>;
 
@@ -29,6 +30,82 @@ type Lead = {
   ownerId?: string | null;
   transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
 };
+
+type ParsedCsvLead = {
+  businessName: string;
+  phone?: string;
+  websiteUrl?: string;
+};
+
+function parseCsvRows(raw: string): string[][] {
+  const rows: string[][] = [];
+  let currentCell = "";
+  let currentRow: string[] = [];
+  let inQuotes = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    const nextChar = raw[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      currentRow.push(currentCell.trim());
+      currentCell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") index += 1;
+      currentRow.push(currentCell.trim());
+      if (currentRow.some((value) => value.length > 0)) rows.push(currentRow);
+      currentRow = [];
+      currentCell = "";
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    if (currentRow.some((value) => value.length > 0)) rows.push(currentRow);
+  }
+
+  return rows;
+}
+
+function parseLeadsFromCsv(raw: string): ParsedCsvLead[] {
+  const rows = parseCsvRows(raw);
+  if (!rows.length) return [];
+
+  const [headerRow, ...dataRows] = rows;
+  const normalizedHeaders = headerRow.map((header) => header.toLowerCase().replace(/[^a-z0-9]/g, ""));
+
+  const businessNameIndex = normalizedHeaders.findIndex((header) => ["businessname", "name", "company", "business"].includes(header));
+  const phoneIndex = normalizedHeaders.findIndex((header) => ["phone", "phonenumber", "telephone"].includes(header));
+  const websiteIndex = normalizedHeaders.findIndex((header) => ["website", "websiteurl", "url", "domain"].includes(header));
+
+  if (businessNameIndex < 0) {
+    throw new Error("CSV must include a business name column (businessName, name, company, or business).");
+  }
+
+  return dataRows
+    .map((row) => ({
+      businessName: row[businessNameIndex]?.trim() || "",
+      phone: phoneIndex >= 0 ? row[phoneIndex]?.trim() || "" : "",
+      websiteUrl: websiteIndex >= 0 ? row[websiteIndex]?.trim() || "" : "",
+    }))
+    .filter((lead) => lead.businessName.length > 0);
+}
 
 function websitePill(lead: Lead) {
   const hasWebsite = Boolean(lead.websiteUrl);
@@ -61,6 +138,11 @@ export default function ScrapePage() {
   const [stats, setStats] = useState<{ fetched: number; inserted: number } | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
+  const [isAddingLead, setIsAddingLead] = useState(false);
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [newLeadForm, setNewLeadForm] = useState({ businessName: "", phone: "", website: "" });
+  const csvFileInputRef = useRef<HTMLInputElement | null>(null);
   const router = useRouter();
 
   async function refreshLeads() {
@@ -200,6 +282,66 @@ export default function ScrapePage() {
     }
   }
 
+  async function handleAddLead() {
+    if (!newLeadForm.businessName.trim()) return;
+    setIsAddingLead(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessName: newLeadForm.businessName,
+          phone: newLeadForm.phone,
+          websiteUrl: newLeadForm.website,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Failed to add lead.");
+
+      setIsAddLeadOpen(false);
+      setNewLeadForm({ businessName: "", phone: "", website: "" });
+      setClaimSuccessMessage("Lead added successfully.");
+      await refreshLeads();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add lead.");
+    } finally {
+      setIsAddingLead(false);
+    }
+  }
+
+  async function handleCsvFileUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setIsImportingCsv(true);
+    setError(null);
+    setClaimSuccessMessage(null);
+    try {
+      const csvText = await file.text();
+      const leadsToImport = parseLeadsFromCsv(csvText);
+      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.");
+
+      const response = await fetch("/api/leads/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads: leadsToImport }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Failed to import CSV leads.");
+
+      const createdCount = Number(payload.createdCount ?? 0);
+      const skippedCount = Number(payload.skippedCount ?? 0);
+      setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
+      await refreshLeads();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to import CSV leads.");
+    } finally {
+      setIsImportingCsv(false);
+    }
+  }
+
   const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
 
   const selectedCount = selectedLeadIds.length;
@@ -210,9 +352,31 @@ export default function ScrapePage() {
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-zinc-100">CRM Lead Scraper</h2>
-          <button onClick={refreshLeads} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 disabled:opacity-60">
-            <RefreshCcw className="size-3.5" /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setIsAddLeadOpen(true);
+              }}
+              className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-100 transition hover:border-zinc-500"
+            >
+              + Add Lead
+            </button>
+            <button
+              type="button"
+              onClick={() => csvFileInputRef.current?.click()}
+              disabled={isImportingCsv}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 transition hover:bg-zinc-900 disabled:opacity-60"
+            >
+              {isImportingCsv ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+              {isImportingCsv ? "Importing..." : "Import CSV"}
+            </button>
+            <input ref={csvFileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvFileUpload} />
+            <button onClick={refreshLeads} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 disabled:opacity-60">
+              <RefreshCcw className="size-3.5" /> Refresh
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px_auto]">
@@ -371,6 +535,29 @@ export default function ScrapePage() {
           </div>
         </div>
       )}
+
+      <AddLeadModal
+        isOpen={isAddLeadOpen}
+        isSubmitting={isAddingLead}
+        formData={newLeadForm}
+        errorMessage={null}
+        onChange={(field, value) => {
+          if (field === "website") {
+            setNewLeadForm((prev) => ({ ...prev, website: value }));
+            return;
+          }
+          if (field === "phone") {
+            setNewLeadForm((prev) => ({ ...prev, phone: value }));
+            return;
+          }
+          setNewLeadForm((prev) => ({ ...prev, businessName: value }));
+        }}
+        onClose={() => {
+          if (isAddingLead) return;
+          setIsAddLeadOpen(false);
+        }}
+        onSubmit={handleAddLead}
+      />
     </div>
   );
 }
