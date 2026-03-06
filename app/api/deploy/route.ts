@@ -174,6 +174,9 @@ export async function POST(request: Request) {
 
     const token = process.env.VERCEL_TOKEN;
     const project = process.env.VERCEL_TEMPLATE_PROJECT;
+    const vercelTeamId = process.env.VERCEL_TEAM_ID?.trim() || undefined;
+    const vercelPublicDeployments = process.env.VERCEL_PUBLIC_DEPLOYMENTS === "true";
+    const vercelBypassProtection = process.env.VERCEL_BYPASS_DEPLOYMENT_PROTECTION === "true";
     const templateRepo = normalizeRepoSlug(process.env.VERCEL_TEMPLATE_REPO);
     const githubToken = process.env.GITHUB_TOKEN;
     const githubOwner = process.env.GITHUB_OWNER || templateRepo?.owner;
@@ -291,7 +294,26 @@ export async function POST(request: Request) {
     };
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
-    const createProjectResponse = await fetch("https://api.vercel.com/v10/projects", {
+
+    if (vercelPublicDeployments && vercelBypassProtection) {
+      await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+      return NextResponse.json(
+        {
+          error:
+            "Invalid deployment protection configuration: set only one of VERCEL_PUBLIC_DEPLOYMENTS=true or VERCEL_BYPASS_DEPLOYMENT_PROTECTION=true.",
+        },
+        { status: 500 },
+      );
+    }
+
+    const scopeParams = new URLSearchParams();
+    if (vercelTeamId) scopeParams.set("teamId", vercelTeamId);
+    const scopeQuery = scopeParams.toString() ? `?${scopeParams.toString()}` : "";
+    const envScopeParams = new URLSearchParams(scopeParams);
+    envScopeParams.set("upsert", "true");
+    const envScopeQuery = `?${envScopeParams.toString()}`;
+
+    const createProjectResponse = await fetch(`https://api.vercel.com/v10/projects${scopeQuery}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -313,8 +335,40 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Vercel project creation failed: ${errorText || createProjectResponse.statusText}` }, { status: 500 });
     }
 
+    const protectionMode = vercelPublicDeployments ? "public" : vercelBypassProtection ? "bypass-automation" : "private";
+    const projectSettingsBody: Record<string, unknown> = {
+      publicSource: vercelPublicDeployments,
+    };
+
+    if (vercelBypassProtection) {
+      projectSettingsBody.deploymentProtectionSettings = {
+        protectProduction: true,
+        bypassForAutomation: true,
+      };
+    }
+
+    const updateProjectSettingsResponse = await fetch(`https://api.vercel.com/v9/projects/${vercelProjectName}${scopeQuery}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(projectSettingsBody),
+    });
+
+    if (!updateProjectSettingsResponse.ok) {
+      await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+      const errorText = await updateProjectSettingsResponse.text();
+      return NextResponse.json(
+        {
+          error: `Vercel project settings update failed for protection mode '${protectionMode}'. Check VERCEL_PUBLIC_DEPLOYMENTS / VERCEL_BYPASS_DEPLOYMENT_PROTECTION and token permissions. Details: ${errorText || updateProjectSettingsResponse.statusText}`,
+        },
+        { status: 500 },
+      );
+    }
+
     for (const [key, value] of Object.entries(deploymentEnv)) {
-      const upsertEnvResponse = await fetch(`https://api.vercel.com/v10/projects/${vercelProjectName}/env?upsert=true`, {
+      const upsertEnvResponse = await fetch(`https://api.vercel.com/v10/projects/${vercelProjectName}/env${envScopeQuery}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -335,7 +389,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const response = await fetch("https://api.vercel.com/v13/deployments", {
+    const response = await fetch(`https://api.vercel.com/v13/deployments${scopeQuery}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -352,6 +406,7 @@ export async function POST(request: Request) {
         },
         target: "production",
         env: deploymentEnv,
+        public: vercelPublicDeployments,
       }),
     });
 
@@ -361,8 +416,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Deployment failed: ${errorText || response.statusText}` }, { status: 500 });
     }
 
-    const payload = await response.json();
-    const url = payload?.url ? `https://${payload.url}` : undefined;
+    const payload = (await response.json()) as { id?: string; url?: string; alias?: string[] };
+    const productionAlias = payload.alias?.find((entry) => typeof entry === "string" && entry.endsWith(".vercel.app"));
+    const deploymentHostname = payload.url;
+    const stableProjectHostname = `${vercelProjectName}.vercel.app`;
+    const resolvedHostname = productionAlias || (vercelPublicDeployments ? stableProjectHostname : deploymentHostname);
+    const url = resolvedHostname ? `https://${resolvedHostname}` : undefined;
+
     await setLeadDeployment(leadId, { siteStatus: url ? "LIVE" : "BUILDING", deployedUrl: url, vercelDeploymentId: payload.id });
     return NextResponse.json({
       url,
@@ -370,6 +430,16 @@ export async function POST(request: Request) {
       project: vercelProjectName,
       repository: clonedRepoFullName,
       templateProject: project ?? null,
+      scope: {
+        type: vercelTeamId ? "team" : "personal",
+        teamId: vercelTeamId ?? null,
+      },
+      protectionMode,
+      deploymentHostnames: {
+        deployment: deploymentHostname ?? null,
+        productionAlias: productionAlias ?? null,
+        stableProject: stableProjectHostname,
+      },
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
