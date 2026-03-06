@@ -179,12 +179,13 @@ async function patchGeneratedRepoSiteConfig(params: {
       if (patched) patchedAny = true;
     }
 
-    if (patchedAny) return;
+    if (patchedAny) return null;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
-  throw new Error(`Could not find any patchable site or area config files in ${params.repoFullName} on branch ${params.branch}.`);
+  return `Could not find any patchable site or area config files in ${params.repoFullName} on branch ${params.branch}.`;
 }
+
 
 function slugify(input: string, fallback: string): string {
   const clean = input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
@@ -341,12 +342,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GitHub repository creation succeeded but did not return repository metadata (name/id)." }, { status: 500 });
     }
 
-    await patchGeneratedRepoSiteConfig({
-      githubHeaders,
-      repoFullName: clonedRepoFullName,
-      branch: repoDefaultBranch,
-      templateConfig,
-    });
+    let siteConfigPatchWarning: string | null = null;
+    try {
+      siteConfigPatchWarning = await patchGeneratedRepoSiteConfig({
+        githubHeaders,
+        repoFullName: clonedRepoFullName,
+        branch: repoDefaultBranch,
+        templateConfig,
+      });
+    } catch (error) {
+      siteConfigPatchWarning = error instanceof Error ? error.message : "Unable to patch generated repo site config.";
+      console.warn("[deploy] continuing without direct site-config patch", {
+        leadId,
+        repo: clonedRepoFullName,
+        warning: siteConfigPatchWarning,
+      });
+    }
 
     const deploymentEnv = {
       TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
@@ -502,6 +513,7 @@ export async function POST(request: Request) {
         teamId: vercelTeamId ?? null,
       },
       protectionMode,
+      siteConfigPatchWarning,
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
