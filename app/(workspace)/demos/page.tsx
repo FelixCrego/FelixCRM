@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type Demo = {
   id: string;
+  lead_id?: string | null;
   lead_name: string;
   selected_date: string;
   selected_time: string;
@@ -131,7 +133,15 @@ export default function DemosPage() {
                   </div>
                 </div>
 
-                <div className="flex w-full max-w-sm flex-col items-end gap-1 self-end lg:w-auto lg:self-auto">
+                <div className="flex w-full max-w-sm flex-col items-end gap-2 self-end lg:w-auto lg:self-auto">
+                  {demo.lead_id ? (
+                    <Link
+                      href={`/leads/${demo.lead_id}`}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-5 py-2.5 text-center text-sm font-medium text-zinc-200 transition hover:border-zinc-600 hover:bg-zinc-900"
+                    >
+                      Open Lead
+                    </Link>
+                  ) : null}
                   <a
                     href={demo.meet_link.startsWith("http") ? demo.meet_link : `https://${demo.meet_link}`}
                     target="_blank"

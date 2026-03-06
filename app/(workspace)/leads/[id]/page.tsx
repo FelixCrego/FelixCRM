@@ -1039,6 +1039,7 @@ export default function LeadExecutionPage() {
           date: selectedMeetingDay,
           time: selectedMeetingTime,
           timeZone: leadTimeZone,
+          leadId,
           leadName,
           leadEmail: lead?.email || undefined,
         }),

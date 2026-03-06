@@ -10,6 +10,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 type DemoInsertRow = {
+  lead_id?: string;
   lead_name: string;
   selected_date: string;
   selected_time: string;
@@ -22,6 +23,7 @@ const createMeetEventSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   time: z.string().regex(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i),
   timeZone: z.string().min(1),
+  leadId: z.string().uuid().optional(),
   leadName: z.string().trim().optional(),
   leadEmail: z.string().email().optional(),
 });
@@ -178,6 +180,7 @@ export async function POST(request: Request) {
     }
 
     const saveResult = await saveDemoRecord({
+      lead_id: payload.leadId,
       lead_name: payload.leadName?.trim() || "Unknown Lead",
       selected_date: payload.date,
       selected_time: payload.time,
