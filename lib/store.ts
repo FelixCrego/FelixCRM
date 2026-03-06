@@ -495,6 +495,7 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
       ? {
           deployed_url: deployment.deployedUrl,
           site_status: deployment.siteStatus,
+          vercel_deployment_id: deployment.vercelDeploymentId,
         }
       : {
           deployedUrl: deployment.deployedUrl,

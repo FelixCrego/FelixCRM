@@ -302,6 +302,7 @@ export default function LeadExecutionPage() {
   const [deployError, setDeployError] = useState("");
   const [deployProgress, setDeployProgress] = useState(0);
   const [deployStageLabel, setDeployStageLabel] = useState("");
+  const [deployStartedAt, setDeployStartedAt] = useState<number | null>(null);
   const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
   const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
@@ -475,10 +476,10 @@ export default function LeadExecutionPage() {
   useEffect(() => {
     if (!leadId) return;
     const currentStatus = lead?.site_status || lead?.siteStatus;
-    const deploymentId = lead?.vercel_deployment_id || lead?.vercelDeploymentId;
-    if (currentStatus !== "BUILDING" || !deploymentId) return;
+    if (currentStatus !== "BUILDING") return;
 
     let active = true;
+    if (!deployStartedAt) setDeployStartedAt(Date.now());
 
     async function pollDeploymentStatus() {
       try {
@@ -497,6 +498,7 @@ export default function LeadExecutionPage() {
         if (nextStatus === "LIVE") {
           setDeployProgress(100);
           setDeployStageLabel("Build complete. Live site is ready.");
+          setDeployStartedAt(null);
           setLead((previous) =>
             previous
               ? {
@@ -514,6 +516,7 @@ export default function LeadExecutionPage() {
         if (nextStatus === "FAILED") {
           setDeployProgress(100);
           setDeployStageLabel("Build failed.");
+          setDeployStartedAt(null);
           setLead((previous) =>
             previous
               ? {
@@ -527,8 +530,18 @@ export default function LeadExecutionPage() {
           return;
         }
 
-        setDeployProgress((previous) => Math.min(previous < 25 ? 25 : previous + 8, 92));
-        setDeployStageLabel(payload?.readyState ? `Building (${payload.readyState})...` : "Building on Vercel...");
+        const readyState = payload?.readyState || "BUILDING";
+        const elapsedSeconds = deployStartedAt ? Math.floor((Date.now() - deployStartedAt) / 1000) : 0;
+        const estimatedByState: Record<string, number> = {
+          QUEUED: 15,
+          INITIALIZING: 28,
+          BUILDING: 55,
+          DEPLOYING: 78,
+        };
+        const elapsedProgress = Math.min(Math.floor((elapsedSeconds / 180) * 100), 90);
+        const stateProgress = estimatedByState[readyState] ?? 45;
+        setDeployProgress((previous) => Math.min(Math.max(previous, stateProgress, elapsedProgress), 95));
+        setDeployStageLabel(readyState === "QUEUED" ? "Queued in build pipeline..." : `Building (${readyState})...`);
       } catch (error) {
         if (!active) return;
         setDeployError(error instanceof Error ? error.message : "Unable to fetch deployment status.");
@@ -545,7 +558,7 @@ export default function LeadExecutionPage() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [lead?.site_status, lead?.siteStatus, lead?.vercel_deployment_id, lead?.vercelDeploymentId, leadId]);
+  }, [deployStartedAt, lead?.site_status, lead?.siteStatus, leadId]);
 
   useEffect(() => {
     if (activeTab !== "Call Audio & AI" || !leadId) return;
@@ -689,6 +702,15 @@ export default function LeadExecutionPage() {
   }, [lead?.phone]);
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
   const siteStatus = lead?.site_status || lead?.siteStatus || "UNBUILT";
+  const deployEtaLabel = useMemo(() => {
+    if (siteStatus !== "BUILDING" || !deployStartedAt) return "";
+    const elapsedSeconds = Math.floor((Date.now() - deployStartedAt) / 1000);
+    const estimatedTotalSeconds = 180;
+    const remaining = Math.max(estimatedTotalSeconds - elapsedSeconds, 0);
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")} remaining (est.)`;
+  }, [deployStartedAt, siteStatus]);
   const leadCity = lead?.city || "Unknown city";
 
   useEffect(() => {
@@ -885,7 +907,8 @@ export default function LeadExecutionPage() {
 
     setDeployLoading(true);
     setDeployError("");
-    setDeployProgress(10);
+    setDeployStartedAt(Date.now());
+    setDeployProgress(8);
     setDeployStageLabel("Starting deployment...");
 
     const templateConfigOverrides = {
@@ -926,8 +949,8 @@ export default function LeadExecutionPage() {
 
       const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url;
 
-      setDeployProgress(25);
-      setDeployStageLabel("Deployment created. Build in progress on Vercel...");
+      setDeployProgress(20);
+      setDeployStageLabel("Deployment queued. Preparing your live site...");
 
       if (returnedUrl || payload?.deploymentId) {
         setLead((previous) =>
@@ -956,6 +979,7 @@ export default function LeadExecutionPage() {
     } catch (error) {
       setDeployProgress(100);
       setDeployStageLabel("Deployment failed.");
+      setDeployStartedAt(null);
       setDeployError(error instanceof Error ? error.message : "Unable to deploy this lead right now.");
     } finally {
       setDeployLoading(false);
@@ -1930,11 +1954,22 @@ export default function LeadExecutionPage() {
             </div>
 
             {siteStatus === "BUILDING" || deployLoading ? (
-              <div className="mt-3 space-y-2">
-                <div className="h-2 w-full overflow-hidden rounded-full bg-white/20">
-                  <div className="h-full rounded-full bg-white transition-all duration-500" style={{ width: `${Math.max(deployProgress, 8)}%` }} />
+              <div className="mt-3 rounded-lg border border-white/20 bg-black/20 p-3">
+                <div className="mb-2 flex items-center justify-between text-[11px]">
+                  <span className="font-semibold text-white/90">{deployStageLabel || "Build in progress..."}</span>
+                  <span className="rounded-full bg-white/15 px-2 py-0.5 font-semibold text-white">{Math.max(deployProgress, 8)}%</span>
                 </div>
-                <p className="text-[11px] text-indigo-100">{deployStageLabel || "Build in progress..."}</p>
+                <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-white/15">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-indigo-300 to-violet-300 transition-all duration-700"
+                    style={{ width: `${Math.max(deployProgress, 8)}%` }}
+                  />
+                  <div className="pointer-events-none absolute inset-0 -translate-x-full animate-pulse bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-[11px] text-indigo-100/90">
+                  <span>Background deploy running on Vercel</span>
+                  <span>{deployEtaLabel || "Calculating ETA..."}</span>
+                </div>
               </div>
             ) : null}
             {siteStatus === "LIVE" && deployedUrl ? <p className="mt-2 text-[11px] text-emerald-100">Site is live and ready to share.</p> : null}
