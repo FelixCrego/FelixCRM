@@ -2,9 +2,11 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { z } from "zod";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { insertDemoRecord } from "@/lib/demos-store";
 
 export const runtime = "nodejs";
+
 
 const createMeetEventSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -72,8 +74,8 @@ function buildDateTimeInTimeZone(date: string, time: string, timeZone: string): 
 }
 
 export async function POST(request: Request) {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) {
+  const user = await getAuthenticatedUser();
+  if (!user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -99,7 +101,7 @@ export async function POST(request: Request) {
       sendUpdates: "none",
       requestBody: {
         summary: `Sales Demo${payload.leadName ? ` - ${payload.leadName}` : ""}`,
-        description: `Scheduled via Felix CRM by user ${userId}.`,
+        description: `Scheduled via Felix CRM by user ${user.id}.`,
         start: {
           dateTime: startDateTime,
           timeZone: payload.timeZone,
@@ -119,11 +121,27 @@ export async function POST(request: Request) {
     });
 
     const meetEntryPoint = eventResponse.data.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video")?.uri;
+    const meetLink = meetEntryPoint ?? eventResponse.data.hangoutLink ?? "";
+
+    if (!meetLink) {
+      throw new Error("Google Calendar event was created, but no Meet link was returned.");
+    }
+
+    const demoInsertResult = await insertDemoRecord({
+      leadName: payload.leadName?.trim() || "Unknown Lead",
+      selectedDate: payload.date,
+      selectedTime: payload.time,
+      meetLink,
+      repId: user.id,
+      repEmail: user.email ?? null,
+    });
 
     return NextResponse.json(
       {
-        meetLink: meetEntryPoint ?? eventResponse.data.hangoutLink ?? "",
+        meetLink,
         eventId: eventResponse.data.id,
+        demoSaved: demoInsertResult.inserted,
+        demoWarning: demoInsertResult.inserted ? null : demoInsertResult.error,
       },
       { status: 200 },
     );
