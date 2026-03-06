@@ -47,17 +47,21 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 `POST /api/deploy` now builds a single versioned payload and sends it to the template as `TEMPLATE_CONFIG_JSON` plus a few scalar env vars (`TEMPLATE_CONFIG_VERSION`, `BUSINESS_NAME`, `CONTACT_PHONE`, `CONTACT_EMAIL`, `SOCIAL_LINKS`) for compatibility.
 
-### `TEMPLATE_CONFIG_JSON` (v1.0.0)
+### `TEMPLATE_CONFIG_JSON` (v1.1.0)
 
 ```json
 {
-  "templateVersion": "1.0.0",
+  "templateVersion": "1.1.0",
   "leadId": "string",
   "business": {
     "name": "string",
     "city": "string",
     "category": "string",
     "websiteUrl": "string"
+  },
+  "geo": {
+    "primaryLocation": "string",
+    "serviceAreas": ["string"]
   },
   "branding": {
     "logoUrl": "string",
