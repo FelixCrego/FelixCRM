@@ -337,7 +337,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const scopeQuery = vercelTeamId ? `?teamId=${encodeURIComponent(vercelTeamId)}` : "";
+    const scopeParams = new URLSearchParams();
+    if (vercelTeamId) scopeParams.set("teamId", vercelTeamId);
+    const scopeQuery = scopeParams.toString() ? `?${scopeParams.toString()}` : "";
+    const envScopeParams = new URLSearchParams(scopeParams);
+    envScopeParams.set("upsert", "true");
+    const envScopeQuery = `?${envScopeParams.toString()}`;
+
     const createProjectResponse = await fetch(`https://api.vercel.com/v10/projects${scopeQuery}`, {
       method: "POST",
       headers: {
@@ -363,14 +369,11 @@ export async function POST(request: Request) {
     const protectionMode = vercelPublicDeployments ? "public" : vercelBypassProtection ? "bypass-automation" : "private";
     const projectSettingsBody: Record<string, unknown> = {
       publicSource: vercelPublicDeployments,
+      deploymentProtectionSettings: {
+        protectProduction: !vercelPublicDeployments,
+        bypassForAutomation: vercelBypassProtection,
+      },
     };
-
-    if (vercelBypassProtection) {
-      projectSettingsBody.deploymentProtectionSettings = {
-        protectProduction: true,
-        bypassForAutomation: true,
-      };
-    }
 
     const updateProjectSettingsResponse = await fetch(`https://api.vercel.com/v9/projects/${vercelProjectName}${scopeQuery}`, {
       method: "PATCH",
@@ -393,9 +396,7 @@ export async function POST(request: Request) {
     }
 
     for (const [key, value] of Object.entries(deploymentEnv)) {
-      const upsertEnvResponse = await fetch(
-        `https://api.vercel.com/v10/projects/${vercelProjectName}/env?upsert=true${vercelTeamId ? `&teamId=${encodeURIComponent(vercelTeamId)}` : ""}`,
-        {
+      const upsertEnvResponse = await fetch(`https://api.vercel.com/v10/projects/${vercelProjectName}/env${envScopeQuery}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -434,6 +435,7 @@ export async function POST(request: Request) {
         },
         target: "production",
         env: deploymentEnv,
+        public: vercelPublicDeployments,
       }),
     });
 
