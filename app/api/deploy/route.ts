@@ -73,13 +73,15 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
 
   const primaryLocation = config.geo.primaryLocation || config.business.city;
   if (primaryLocation) {
-    updated = updated.replace(/city:\s*"[^"]*"/g, `city: "${escapeForQuotedValue(primaryLocation)}"`);
-    updated = updated.replace(/location:\s*"[^"]*"/g, `location: "${escapeForQuotedValue(primaryLocation)}"`);
+    updated = updated.replace(/(["']?city["']?\s*:\s*)"[^"]*"/g, `$1"${escapeForQuotedValue(primaryLocation)}"`);
+    updated = updated.replace(/(["']?location["']?\s*:\s*)"[^"]*"/g, `$1"${escapeForQuotedValue(primaryLocation)}"`);
+    updated = updated.replace(/(["']?primaryLocation["']?\s*:\s*)"[^"]*"/g, `$1"${escapeForQuotedValue(primaryLocation)}"`);
   }
 
   if (config.geo.serviceAreas.length > 0) {
     const serializedAreas = config.geo.serviceAreas.map((area) => `"${escapeForQuotedValue(area)}"`).join(", ");
-    updated = updated.replace(/serviceAreas:\s*\[[^\]]*\]/gs, `serviceAreas: [${serializedAreas}]`);
+    updated = updated.replace(/(["']?serviceAreas["']?\s*:\s*)\[[\s\S]*?\]/g, `$1[${serializedAreas}]`);
+    updated = updated.replace(/(["']?areas["']?\s*:\s*)\[[\s\S]*?\]/g, `$1[${serializedAreas}]`);
   }
 
   return updated;
@@ -124,13 +126,13 @@ async function patchGeneratedRepoSiteConfig(params: {
     if (!sha || !encodedContent || contentPayload.encoding !== "base64") return false;
 
     const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
-    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay")) {
+    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay") && !source.includes("serviceAreas") && !source.includes("primaryLocation")) {
       return false;
     }
 
     const updated = applySiteConfigOverrides(source, params.templateConfig);
     if (updated === source) {
-      return true;
+      return false;
     }
 
     const putResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/contents/${path}`, {
