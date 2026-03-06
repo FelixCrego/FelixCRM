@@ -333,6 +333,7 @@ export default function LeadExecutionPage() {
   const [customMeetingTimes, setCustomMeetingTimes] = useState<string[]>([]);
   const [meetingLoading, setMeetingLoading] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
+  const [meetingError, setMeetingError] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
 
   const [leadExecutionStatus, setLeadExecutionStatus] = useState<ExecutionLeadStatus>("New");
@@ -885,10 +886,36 @@ export default function LeadExecutionPage() {
   async function generateMeetingLink() {
     setMeetingLoading(true);
     setInviteCopied(false);
+    setMeetingError("");
     setMeetingLink("");
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setMeetingLink("meet.google.com/abc-defg-hij");
-    setMeetingLoading(false);
+
+    try {
+      const response = await fetch("/api/calendar/meet", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          date: selectedMeetingDay,
+          time: selectedMeetingTime,
+          timeZone: leadTimeZone,
+          leadName,
+          leadEmail: lead?.email || undefined,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { meetLink?: string; error?: string } | null;
+
+      if (!response.ok || !payload?.meetLink) {
+        throw new Error(payload?.error || "Unable to generate a Google Meet link.");
+      }
+
+      setMeetingLink(payload.meetLink);
+    } catch (error) {
+      setMeetingError(error instanceof Error ? error.message : "Unable to generate a Google Meet link.");
+    } finally {
+      setMeetingLoading(false);
+    }
   }
 
   async function copyInviteText() {
@@ -2287,13 +2314,22 @@ export default function LeadExecutionPage() {
                   Booking...
                 </>
               ) : meetingLink ? (
-                `Demo Booked! • ${meetingLink}`
+                "Demo Booked! • Meet link generated"
               ) : (
                 "Book & Generate Meet Link"
               )}
             </button>
+            {meetingError ? <p className="mt-2 text-xs text-rose-300">{meetingError}</p> : null}
             {meetingLink ? (
-              <div className="mt-3">
+              <div className="mt-3 space-y-2">
+                <a
+                  href={meetingLink.startsWith("http") ? meetingLink : `https://${meetingLink}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/20"
+                >
+                  {meetingLink}
+                </a>
                 <button
                   onClick={copyInviteText}
                   className="rounded-lg border border-zinc-700 bg-transparent px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
