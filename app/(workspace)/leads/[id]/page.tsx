@@ -828,19 +828,21 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as { url?: string; deployedUrl?: string; error?: string } | null;
 
       if (!response.ok) {
         throw new Error(payload?.error || "Deployment failed.");
       }
 
-      if (payload?.url) {
+      const returnedUrl = payload?.deployedUrl || payload?.url;
+
+      if (returnedUrl) {
         setLead((previous) =>
           previous
             ? {
                 ...previous,
-                deployed_url: payload.url,
-                deployedUrl: payload.url,
+                deployed_url: returnedUrl,
+                deployedUrl: returnedUrl,
                 source_payload: {
                   ...(previous.source_payload ?? previous.sourcePayload ?? {}),
                   templateBranding: {
@@ -853,7 +855,7 @@ export default function LeadExecutionPage() {
               }
             : previous,
         );
-        window.open(payload.url, "_blank", "noopener,noreferrer");
+        window.open(returnedUrl, "_blank", "noopener,noreferrer");
       }
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : "Unable to deploy this lead right now.");
