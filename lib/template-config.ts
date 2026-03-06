@@ -1,6 +1,6 @@
 import type { Lead } from "@/lib/types";
 
-export const TEMPLATE_CONFIG_VERSION = "1.0.0";
+export const TEMPLATE_CONFIG_VERSION = "1.1.0";
 
 type Primitive = string | number | boolean | null;
 type JsonValue = Primitive | JsonValue[] | { [key: string]: JsonValue };
@@ -13,6 +13,10 @@ export type TemplateConfig = {
     city: string;
     category: string;
     websiteUrl: string;
+  };
+  geo: {
+    primaryLocation: string;
+    serviceAreas: string[];
   };
   branding: {
     logoUrl: string;
@@ -99,6 +103,24 @@ function toPartialObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function buildServiceAreas(city: string): string[] {
+  const normalizedCity = city.trim();
+  if (!normalizedCity) return [];
+
+  const directionalAreas = [
+    `North ${normalizedCity}`,
+    `South ${normalizedCity}`,
+    `East ${normalizedCity}`,
+    `West ${normalizedCity}`,
+    `${normalizedCity} Metro`,
+    `${normalizedCity} Downtown`,
+    `${normalizedCity} Heights`,
+    `${normalizedCity} District`,
+  ];
+
+  return [normalizedCity, ...directionalAreas].slice(0, 8);
+}
+
 export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateConfig {
   const safeOverrides = toPartialObject(overrides) as TemplateConfigOverrides;
 
@@ -110,6 +132,10 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
       city: lead.city,
       category: lead.businessType,
       websiteUrl: lead.websiteUrl ?? "",
+    },
+    geo: {
+      primaryLocation: lead.city,
+      serviceAreas: buildServiceAreas(lead.city),
     },
     branding: {
       logoUrl: "",
@@ -146,6 +172,14 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
   const businessOverrides = toPartialObject(safeOverrides.business);
   const brandingOverrides = toPartialObject(safeOverrides.branding);
   const linksOverrides = toPartialObject(safeOverrides.links);
+  const geoOverrides = toPartialObject(safeOverrides.geo);
+  const primaryLocation = asString(geoOverrides.primaryLocation) || defaultConfig.business.city;
+  const serviceAreasOverride = Array.isArray(geoOverrides.serviceAreas)
+    ? (geoOverrides.serviceAreas as unknown[])
+        .map((entry) => asString(entry).trim())
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
 
   return {
     ...defaultConfig,
@@ -156,6 +190,10 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
       city: asString(businessOverrides.city) || defaultConfig.business.city,
       category: asString(businessOverrides.category) || defaultConfig.business.category,
       websiteUrl: asString(businessOverrides.websiteUrl) || defaultConfig.business.websiteUrl,
+    },
+    geo: {
+      primaryLocation,
+      serviceAreas: serviceAreasOverride.length ? serviceAreasOverride : buildServiceAreas(primaryLocation),
     },
     branding: {
       ...defaultConfig.branding,
