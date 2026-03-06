@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
   Bot,
@@ -19,12 +19,12 @@ import {
   Banknote,
   ScrollText,
   Trophy,
-  Map,
+  Map as MapIcon,
   Gauge,
   CalendarDays,
   CircleDollarSign,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
 import type { UserRole } from "@/lib/types";
 
@@ -37,6 +37,13 @@ type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+};
+
+type MagicSuggestion = {
+  id: string;
+  label: string;
+  hint: string;
+  run: () => void | Promise<void>;
 };
 
 const roleOptions: UserRole[] = ["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"];
@@ -65,7 +72,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
   ],
   MANAGER: [
     { href: "/dashboard", label: "Manager Dashboard", icon: Gauge },
-    { href: "/territory-setup", label: "Territory Setup", icon: Map },
+    { href: "/territory-setup", label: "Territory Setup", icon: MapIcon },
     { href: "/rep-performance", label: "Rep Performance", icon: Trophy },
     { href: "/payouts", label: "Payouts", icon: Briefcase },
   ],
@@ -83,8 +90,11 @@ function cn(...classes: Array<string | false | null | undefined>) {
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { activeRole, setActiveRole } = useRole();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [magicBarValue, setMagicBarValue] = useState("");
+  const [magicBarStatus, setMagicBarStatus] = useState("");
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
   const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
     { title: "Cold Openers", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
@@ -110,6 +120,81 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       },
     ]);
     setIsGeneratingPlaybook(false);
+  };
+
+  const navTargets = useMemo(() => {
+    const allNavItems = Object.values(navByRole).flat();
+    const dedupedByHref = new Map(allNavItems.map((item) => [item.href, item]));
+    return Array.from(dedupedByHref.values());
+  }, []);
+
+  const suggestions = useMemo<MagicSuggestion[]>(() => {
+    const normalized = magicBarValue.trim().toLowerCase();
+    if (!normalized) {
+      return [];
+    }
+
+    const items: MagicSuggestion[] = [];
+
+    if (normalized.startsWith("/")) {
+      items.push({
+        id: `path-${normalized}`,
+        label: `Go to ${normalized}`,
+        hint: "Direct route",
+        run: () => router.push(normalized),
+      });
+    }
+
+    if ("playbook".includes(normalized) || normalized.includes("playbook")) {
+      items.push({
+        id: "playbook",
+        label: "Open AI Playbook",
+        hint: "Quick action",
+        run: () => setDrawerOpen(true),
+      });
+    }
+
+    if (["logout", "log out", "sign out"].some((command) => command.includes(normalized) || normalized.includes(command))) {
+      items.push({
+        id: "logout",
+        label: "Sign out",
+        hint: "Quick action",
+        run: async () => {
+          await fetch("/api/auth/logout", { method: "POST" });
+          window.location.href = "/login";
+        },
+      });
+    }
+
+    navTargets.forEach((item) => {
+      const itemLabel = item.label.toLowerCase();
+      const itemPath = item.href.replace("/", "").replaceAll("-", " ").toLowerCase();
+      if (itemLabel.includes(normalized) || itemPath.includes(normalized)) {
+        items.push({
+          id: item.href,
+          label: item.label,
+          hint: item.href,
+          run: () => router.push(item.href),
+        });
+      }
+    });
+
+    const deduped = new Map(items.map((item) => [item.id, item]));
+    return Array.from(deduped.values()).slice(0, 6);
+  }, [magicBarValue, navTargets, router]);
+
+  const runSuggestion = async (suggestion: MagicSuggestion) => {
+    await suggestion.run();
+    setMagicBarStatus(`Ran: ${suggestion.label}`);
+  };
+
+  const executeMagicBarCommand = async () => {
+    if (suggestions.length === 0) {
+      setMagicBarStatus("No matching command.");
+      return;
+    }
+
+    await runSuggestion(suggestions[0]);
   };
 
   return (
@@ -161,14 +246,51 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         <div className="flex min-h-screen flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur md:px-8">
-            <div className="flex items-center gap-3">
-              <div className="flex flex-1 items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-zinc-400">
-                <Sparkles className="h-4 w-4 text-blue-300" />
-                <input
-                  aria-label="Magic Bar"
-                  placeholder="Magic Bar: find leads, notes, or command workflows"
-                  className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
-                />
+            <div className="flex items-start gap-3">
+              <div className="relative flex-1">
+                <div className="flex items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-zinc-400">
+                  <Sparkles className="h-4 w-4 text-blue-300" />
+                  <input
+                    aria-label="Magic Bar"
+                    placeholder="Magic Bar: find leads, notes, or command workflows"
+                    value={magicBarValue}
+                    onChange={(event) => {
+                      setMagicBarValue(event.target.value);
+                      setMagicBarStatus("");
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void executeMagicBarCommand();
+                      }
+                    }}
+                    className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
+                  />
+                </div>
+                {magicBarValue.trim() ? (
+                  <div className="absolute left-0 right-0 z-30 mt-2 rounded-xl border border-zinc-800 bg-zinc-900/95 p-2 shadow-2xl">
+                    {suggestions.length > 0 ? (
+                      <div className="space-y-1">
+                        {suggestions.map((suggestion, index) => (
+                          <button
+                            key={suggestion.id}
+                            onClick={() => void runSuggestion(suggestion)}
+                            className={cn(
+                              "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition",
+                              index === 0 ? "bg-zinc-800 text-zinc-100" : "text-zinc-300 hover:bg-zinc-800/70",
+                            )}
+                          >
+                            <span>{suggestion.label}</span>
+                            <span className="text-xs text-zinc-500">{suggestion.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="px-3 py-2 text-sm text-zinc-400">No results. Try &quot;leads&quot;, &quot;playbook&quot;, &quot;logout&quot;, or a path like &quot;/dashboard&quot;.</p>
+                    )}
+                  </div>
+                ) : null}
+                {magicBarStatus ? <p className="mt-2 text-xs text-zinc-500">{magicBarStatus}</p> : null}
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-2.5 py-1.5">
                 <span className="hidden text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 xl:inline">Role</span>
