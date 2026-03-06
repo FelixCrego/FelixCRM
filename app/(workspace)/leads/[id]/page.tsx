@@ -22,6 +22,10 @@ type LeadRecord = {
   email?: string | null;
   deployed_url?: string | null;
   deployedUrl?: string | null;
+  site_status?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
+  siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
+  vercel_deployment_id?: string | null;
+  vercelDeploymentId?: string | null;
   source_payload?: {
     aiResearchSummary?: string | null;
     contacts?: LeadContactRecord[];
@@ -464,6 +468,8 @@ export default function LeadExecutionPage() {
     };
   }, [leadId]);
 
+
+
   useEffect(() => {
     if (activeTab !== "Call Audio & AI" || !leadId) return;
 
@@ -605,6 +611,8 @@ export default function LeadExecutionPage() {
     setDialNumber(lead?.phone || "");
   }, [lead?.phone]);
   const deployedUrl = lead?.deployed_url || lead?.deployedUrl || "";
+  const siteStatus = lead?.site_status || lead?.siteStatus || "UNBUILT";
+
   const leadCity = lead?.city || "Unknown city";
 
   useEffect(() => {
@@ -832,21 +840,26 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { url?: string; deployedUrl?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as { url?: string; deployedUrl?: string; liveUrl?: string; project?: string; deploymentId?: string; error?: string } | null;
 
       if (!response.ok) {
         throw new Error(payload?.error || "Deployment failed.");
       }
 
-      const returnedUrl = payload?.deployedUrl || payload?.url;
+      const fallbackProjectUrl = payload?.project ? `https://${payload.project}.vercel.app` : undefined;
+      const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url || fallbackProjectUrl;
 
-      if (returnedUrl) {
+      if (returnedUrl || payload?.deploymentId) {
         setLead((previous) =>
           previous
             ? {
                 ...previous,
-                deployed_url: returnedUrl,
-                deployedUrl: returnedUrl,
+                deployed_url: returnedUrl || previous.deployed_url || previous.deployedUrl || "",
+                deployedUrl: returnedUrl || previous.deployedUrl || previous.deployed_url || "",
+                site_status: returnedUrl ? "LIVE" : "BUILDING",
+                siteStatus: returnedUrl ? "LIVE" : "BUILDING",
+                vercel_deployment_id: payload?.deploymentId || previous.vercel_deployment_id || previous.vercelDeploymentId || null,
+                vercelDeploymentId: payload?.deploymentId || previous.vercelDeploymentId || previous.vercel_deployment_id || null,
                 source_payload: {
                   ...(previous.source_payload ?? previous.sourcePayload ?? {}),
                   templateBranding: {
@@ -859,7 +872,6 @@ export default function LeadExecutionPage() {
               }
             : previous,
         );
-        window.open(returnedUrl, "_blank", "noopener,noreferrer");
       }
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : "Unable to deploy this lead right now.");
@@ -1834,6 +1846,8 @@ export default function LeadExecutionPage() {
                 </a>
               ) : null}
             </div>
+
+            {siteStatus === "LIVE" && deployedUrl ? <p className="mt-2 text-[11px] text-emerald-100">Site is live and ready to share.</p> : null}
             {deployError ? <p className="mt-2 text-xs text-rose-100">{deployError}</p> : null}
           </div>
 
