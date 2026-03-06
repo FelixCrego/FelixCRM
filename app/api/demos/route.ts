@@ -40,8 +40,23 @@ export async function GET() {
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    return NextResponse.json({ error: message || "Failed to fetch demos." }, { status: 500 });
+    const rawMessage = await response.text();
+    const parsedMessage = (() => {
+      try {
+        return JSON.parse(rawMessage) as { code?: string; message?: string };
+      } catch {
+        return null;
+      }
+    })();
+
+    if (parsedMessage?.code === "PGRST205") {
+      return NextResponse.json({
+        demos: [],
+        warning: "Upcoming demos are unavailable because the Supabase demos table has not been created yet.",
+      });
+    }
+
+    return NextResponse.json({ error: parsedMessage?.message || rawMessage || "Failed to fetch demos." }, { status: 500 });
   }
 
   const demos = (await response.json().catch(() => [])) as DemoRow[];

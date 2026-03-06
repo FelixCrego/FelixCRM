@@ -83,7 +83,7 @@ function buildDateTimeInTimeZone(date: string, time: string, timeZone: string): 
   return new Date(intendedUtc + offsetMs).toISOString();
 }
 
-async function insertDemoRecord(row: DemoInsertRow) {
+async function saveDemoRecord(row: DemoInsertRow) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     throw new Error("Supabase database configuration is missing.");
   }
@@ -100,9 +100,27 @@ async function insertDemoRecord(row: DemoInsertRow) {
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || "Failed to save scheduled demo.");
+    const rawMessage = await response.text();
+    const parsedMessage = (() => {
+      try {
+        const parsed = JSON.parse(rawMessage) as { code?: string; message?: string };
+        return parsed;
+      } catch {
+        return null;
+      }
+    })();
+
+    if (parsedMessage?.code === "PGRST205") {
+      return {
+        persisted: false as const,
+        warning: "Google Meet created, but scheduled demo persistence is unavailable because the Supabase demos table has not been created yet.",
+      };
+    }
+
+    throw new Error(parsedMessage?.message || rawMessage || "Failed to save scheduled demo.");
   }
+
+  return { persisted: true as const };
 }
 
 export async function POST(request: Request) {
@@ -159,7 +177,7 @@ export async function POST(request: Request) {
       throw new Error("Google Calendar event was created, but no Meet link was returned.");
     }
 
-    await insertDemoRecord({
+    const saveResult = await saveDemoRecord({
       lead_name: payload.leadName?.trim() || "Unknown Lead",
       selected_date: payload.date,
       selected_time: payload.time,
@@ -172,6 +190,7 @@ export async function POST(request: Request) {
       {
         meetLink,
         eventId: eventResponse.data.id,
+        ...(saveResult.persisted ? {} : { warning: saveResult.warning }),
       },
       { status: 200 },
     );
