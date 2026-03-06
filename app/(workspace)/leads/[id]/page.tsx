@@ -300,6 +300,9 @@ export default function LeadExecutionPage() {
   const [researchError, setResearchError] = useState<string>("");
   const [deployLoading, setDeployLoading] = useState(false);
   const [deployError, setDeployError] = useState("");
+  const [deployProgress, setDeployProgress] = useState(0);
+  const [deployStageLabel, setDeployStageLabel] = useState("");
+  const [deployStartedAt, setDeployStartedAt] = useState<number | null>(null);
   const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
   const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
@@ -809,6 +812,9 @@ export default function LeadExecutionPage() {
 
     setDeployLoading(true);
     setDeployError("");
+    setDeployStartedAt(Date.now());
+    setDeployProgress(8);
+    setDeployStageLabel("Starting deployment...");
 
     const templateConfigOverrides = {
       business: {
@@ -874,6 +880,9 @@ export default function LeadExecutionPage() {
         );
       }
     } catch (error) {
+      setDeployProgress(100);
+      setDeployStageLabel("Deployment failed.");
+      setDeployStartedAt(null);
       setDeployError(error instanceof Error ? error.message : "Unable to deploy this lead right now.");
     } finally {
       setDeployLoading(false);
@@ -1830,10 +1839,10 @@ export default function LeadExecutionPage() {
               <button
                 type="button"
                 onClick={handleDeploySite}
-                disabled={deployLoading}
+                disabled={deployLoading || siteStatus === "BUILDING"}
                 className="rounded-md border border-white/40 bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {deployLoading ? "Deploying..." : "Deploy Vercel Site"}
+                {deployLoading ? "Starting..." : siteStatus === "BUILDING" ? "Building..." : "Deploy Vercel Site"}
               </button>
               {deployedUrl ? (
                 <a
