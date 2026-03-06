@@ -46,6 +46,16 @@ function firstDeploymentAlias(payload: Record<string, unknown>): string | undefi
   return undefined;
 }
 
+function resolveDeploymentState(payload: Record<string, unknown>): string {
+  const candidate =
+    (typeof payload.readyState === "string" && payload.readyState) ||
+    (typeof payload.state === "string" && payload.state) ||
+    (typeof payload.status === "string" && payload.status) ||
+    "";
+
+  return candidate.trim().toUpperCase();
+}
+
 export async function GET(request: Request) {
   try {
     const ownerId = await getAuthenticatedUserId();
@@ -99,12 +109,17 @@ export async function GET(request: Request) {
         await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: fallbackUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
         return NextResponse.json({ siteStatus: "LIVE", deployedUrl: fallbackUrl, done: true, readyState: "READY" });
       }
+
+      if (response.status === 404 || response.status === 410) {
+        return NextResponse.json({ siteStatus: "BUILDING", deployedUrl: fallbackUrl, done: false, readyState: "BUILDING" });
+      }
+
       const errorText = await response.text();
       return NextResponse.json({ error: `Unable to fetch deployment status: ${errorText || response.statusText}` }, { status: 500 });
     }
 
     const payload = (await response.json()) as Record<string, unknown>;
-    const readyState = typeof payload.readyState === "string" ? payload.readyState : "";
+    const readyState = resolveDeploymentState(payload);
     const aliasUrl = firstDeploymentAlias(payload);
     const deployedUrl = aliasUrl ?? toHttpsUrl(payload.url) ?? lead.deployedUrl ?? null;
 

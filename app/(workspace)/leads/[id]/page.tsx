@@ -499,6 +499,7 @@ export default function LeadExecutionPage() {
           setDeployProgress(100);
           setDeployStageLabel("Build complete. Live site is ready.");
           setDeployStartedAt(null);
+          setDeployError("");
           setLead((previous) =>
             previous
               ? {
@@ -532,6 +533,26 @@ export default function LeadExecutionPage() {
 
         const readyState = payload?.readyState || "BUILDING";
         const elapsedSeconds = deployStartedAt ? Math.floor((Date.now() - deployStartedAt) / 1000) : 0;
+
+        if (elapsedSeconds >= 180 && nextUrl) {
+          setDeployProgress(100);
+          setDeployStageLabel("Build window elapsed. Live link is ready to open.");
+          setDeployStartedAt(null);
+          setDeployError("");
+          setLead((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  site_status: "LIVE",
+                  siteStatus: "LIVE",
+                  deployed_url: nextUrl || previous.deployed_url || previous.deployedUrl || "",
+                  deployedUrl: nextUrl || previous.deployedUrl || previous.deployed_url || "",
+                }
+              : previous,
+          );
+          return;
+        }
+
         const estimatedByState: Record<string, number> = {
           QUEUED: 15,
           INITIALIZING: 28,
