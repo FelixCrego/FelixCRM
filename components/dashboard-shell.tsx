@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
   Bot,
@@ -19,12 +19,12 @@ import {
   Banknote,
   ScrollText,
   Trophy,
-  Map,
+  Map as MapIcon,
   Gauge,
   CalendarDays,
   CircleDollarSign,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
 import type { UserRole } from "@/lib/types";
 
@@ -65,7 +65,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
   ],
   MANAGER: [
     { href: "/dashboard", label: "Manager Dashboard", icon: Gauge },
-    { href: "/territory-setup", label: "Territory Setup", icon: Map },
+    { href: "/territory-setup", label: "Territory Setup", icon: MapIcon },
     { href: "/rep-performance", label: "Rep Performance", icon: Trophy },
     { href: "/payouts", label: "Payouts", icon: Briefcase },
   ],
@@ -83,8 +83,10 @@ function cn(...classes: Array<string | false | null | undefined>) {
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { activeRole, setActiveRole } = useRole();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [magicBarValue, setMagicBarValue] = useState("");
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
   const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
     { title: "Cold Openers", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
@@ -110,6 +112,45 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       },
     ]);
     setIsGeneratingPlaybook(false);
+  };
+
+  const navTargets = useMemo(() => {
+    const allNavItems = Object.values(navByRole).flat();
+    const dedupedByHref = new Map(allNavItems.map((item) => [item.href, item]));
+    return Array.from(dedupedByHref.values());
+  }, []);
+
+  const executeMagicBarCommand = async () => {
+    const normalized = magicBarValue.trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+
+    if (normalized.startsWith("/")) {
+      router.push(normalized);
+      return;
+    }
+
+    if (normalized.includes("playbook")) {
+      setDrawerOpen(true);
+      return;
+    }
+
+    if (normalized === "logout" || normalized === "log out" || normalized === "sign out") {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.location.href = "/login";
+      return;
+    }
+
+    const matchedNavItem = navTargets.find((item) => {
+      const itemLabel = item.label.toLowerCase();
+      const itemPath = item.href.replace("/", "").replaceAll("-", " ").toLowerCase();
+      return itemLabel.includes(normalized) || itemPath.includes(normalized);
+    });
+
+    if (matchedNavItem) {
+      router.push(matchedNavItem.href);
+    }
   };
 
   return (
@@ -167,6 +208,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 <input
                   aria-label="Magic Bar"
                   placeholder="Magic Bar: find leads, notes, or command workflows"
+                  value={magicBarValue}
+                  onChange={(event) => setMagicBarValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      void executeMagicBarCommand();
+                    }
+                  }}
                   className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                 />
               </div>
