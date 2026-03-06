@@ -488,10 +488,11 @@ export async function POST(request: Request) {
     const projectAliasUrl = toHttpsUrl(`${vercelProjectName}.vercel.app`);
     const deployedUrl = deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl;
 
-    await setLeadDeployment(leadId, { siteStatus: deployedUrl ? "LIVE" : "BUILDING", deployedUrl, vercelDeploymentId: deploymentId });
+    await setLeadDeployment(leadId, { siteStatus: "BUILDING", deployedUrl, vercelDeploymentId: deploymentId });
     return NextResponse.json({
       url: deployedUrl,
       deployedUrl,
+      liveUrl: projectAliasUrl,
       deploymentId,
       project: vercelProjectName,
       repository: clonedRepoFullName,
