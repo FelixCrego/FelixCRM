@@ -76,21 +76,20 @@ export default function DemosPage() {
     loadDemos().catch(() => undefined);
   }, []);
 
-  const demosWithMeta = useMemo(() => {
-    const now = new Date();
-
-    return demos
-      .map((demo) => {
-        const scheduledAt = parseDemoDateTime(demo.selected_date, demo.selected_time);
-        return {
-          ...demo,
-          scheduledAt,
-          ...formatDateTimeLabel(demo.selected_date, demo.selected_time),
-        };
-      })
-      .filter((demo) => demo.scheduledAt.getTime() >= now.getTime())
-      .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime());
-  }, [demos]);
+  const demosWithMeta = useMemo(
+    () =>
+      demos
+        .map((demo) => {
+          const scheduledAt = parseDemoDateTime(demo.selected_date, demo.selected_time);
+          return {
+            ...demo,
+            scheduledAt,
+            ...formatDateTimeLabel(demo.selected_date, demo.selected_time),
+          };
+        })
+        .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime()),
+    [demos],
+  );
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">

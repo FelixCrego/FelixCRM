@@ -15,6 +15,11 @@ type DemoRow = {
   created_at?: string;
 };
 
+function quotePostgrestFilterValue(value: string) {
+  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 export async function GET() {
   const user = await getAuthenticatedUser();
   if (!user?.id) {
@@ -28,7 +33,7 @@ export async function GET() {
   const url = new URL("/rest/v1/demos", supabaseUrl);
   url.searchParams.set("select", "id,lead_name,selected_date,selected_time,meet_link,rep_id,rep_email,created_at");
   if (user.email) {
-    url.searchParams.set("or", `(rep_id.eq.${user.id},rep_email.eq.${user.email})`);
+    url.searchParams.set("or", `(rep_id.eq.${user.id},rep_email.eq.${quotePostgrestFilterValue(user.email)})`);
   } else {
     url.searchParams.set("rep_id", `eq.${user.id}`);
   }
