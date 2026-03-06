@@ -497,7 +497,7 @@ export async function POST(request: Request) {
     const deploymentAliasUrl = firstDeploymentAlias(payload);
     const fallbackDeploymentUrl = toHttpsUrl(payload.url);
     const projectAliasUrl = toHttpsUrl(`${vercelProjectName}.vercel.app`);
-    const deployedUrl = projectAliasUrl ?? deploymentAliasUrl ?? fallbackDeploymentUrl;
+    const deployedUrl = deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl;
 
     await setLeadDeployment(leadId, { siteStatus: "BUILDING", deployedUrl, vercelDeploymentId: deploymentId });
     return NextResponse.json({
