@@ -6,6 +6,7 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 type DemoRow = {
   id: string;
+  lead_id?: string | null;
   lead_name: string;
   selected_date: string;
   selected_time: string;
@@ -17,7 +18,7 @@ type DemoRow = {
 
 function buildDemosUrl(filterField: "rep_id" | "rep_email", filterValue: string) {
   const url = new URL("/rest/v1/demos", supabaseUrl);
-  url.searchParams.set("select", "id,lead_name,selected_date,selected_time,meet_link,rep_id,rep_email,created_at");
+  url.searchParams.set("select", "id,lead_id,lead_name,selected_date,selected_time,meet_link,rep_id,rep_email,created_at");
   url.searchParams.set(filterField, `eq.${filterValue}`);
   url.searchParams.set("order", "selected_date.asc,selected_time.asc");
   return url;
