@@ -449,16 +449,17 @@ export async function POST(request: Request) {
     }
 
     const payload = (await response.json()) as Record<string, unknown>;
-    const projectAliasUrl = toHttpsUrl(`${vercelProjectName}.vercel.app`);
+    const deploymentId = typeof payload.id === "string" ? payload.id : undefined;
     const deploymentAliasUrl = firstDeploymentAlias(payload);
     const fallbackDeploymentUrl = toHttpsUrl(payload.url);
-    const deployedUrl = projectAliasUrl ?? deploymentAliasUrl ?? fallbackDeploymentUrl;
+    const projectAliasUrl = toHttpsUrl(`${vercelProjectName}.vercel.app`);
+    const deployedUrl = deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl;
 
-    await setLeadDeployment(leadId, { siteStatus: deployedUrl ? "LIVE" : "BUILDING", deployedUrl, vercelDeploymentId: typeof payload.id === "string" ? payload.id : undefined });
+    await setLeadDeployment(leadId, { siteStatus: deployedUrl ? "LIVE" : "BUILDING", deployedUrl, vercelDeploymentId: deploymentId });
     return NextResponse.json({
       url: deployedUrl,
       deployedUrl,
-      deploymentId: payload.id,
+      deploymentId,
       project: vercelProjectName,
       repository: clonedRepoFullName,
       templateProject: project ?? null,
