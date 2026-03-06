@@ -71,6 +71,17 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
     );
   }
 
+  const primaryLocation = config.geo.primaryLocation || config.business.city;
+  if (primaryLocation) {
+    updated = updated.replace(/city:\s*"[^"]*"/g, `city: "${escapeForQuotedValue(primaryLocation)}"`);
+    updated = updated.replace(/location:\s*"[^"]*"/g, `location: "${escapeForQuotedValue(primaryLocation)}"`);
+  }
+
+  if (config.geo.serviceAreas.length > 0) {
+    const serializedAreas = config.geo.serviceAreas.map((area) => `"${escapeForQuotedValue(area)}"`).join(", ");
+    updated = updated.replace(/serviceAreas:\s*\[[^\]]*\]/gs, `serviceAreas: [${serializedAreas}]`);
+  }
+
   return updated;
 }
 

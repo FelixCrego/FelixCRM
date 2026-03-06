@@ -806,6 +806,9 @@ export default function LeadExecutionPage() {
         name: leadName,
         city: leadCity,
       },
+      geo: {
+        primaryLocation: leadCity,
+      },
       branding: {
         logoUrl: brandingLogoUrl.trim(),
         heroImageUrl: brandingHeroImageUrl.trim(),
