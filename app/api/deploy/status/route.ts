@@ -109,6 +109,11 @@ export async function GET(request: Request) {
         await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: fallbackUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
         return NextResponse.json({ siteStatus: "LIVE", deployedUrl: fallbackUrl, done: true, readyState: "READY" });
       }
+
+      if (response.status === 404 || response.status === 410) {
+        return NextResponse.json({ siteStatus: "BUILDING", deployedUrl: fallbackUrl, done: false, readyState: "BUILDING" });
+      }
+
       const errorText = await response.text();
       return NextResponse.json({ error: `Unable to fetch deployment status: ${errorText || response.statusText}` }, { status: 500 });
     }
