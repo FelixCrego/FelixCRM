@@ -2148,7 +2148,7 @@ export default function LeadExecutionPage() {
             ) : null}
           </div>
 
-          <FollowUpEngine />
+          <FollowUpEngine leadId={leadId} leadName={leadName} />
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between gap-2">
