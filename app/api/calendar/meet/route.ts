@@ -73,6 +73,28 @@ function buildDateTimeInTimeZone(date: string, time: string, timeZone: string): 
   return new Date(intendedUtc + offsetMs).toISOString();
 }
 
+async function insertDemoRecord(row: DemoInsertRow) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error("Supabase database configuration is missing.");
+  }
+
+  const response = await fetch(new URL("/rest/v1/demos", supabaseUrl), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: supabaseServiceRoleKey,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify([row]),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Failed to save scheduled demo.");
+  }
+}
+
 export async function POST(request: Request) {
   const user = await getAuthenticatedUser();
   if (!user?.id) {
