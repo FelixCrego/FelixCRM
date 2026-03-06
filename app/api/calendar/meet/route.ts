@@ -83,7 +83,7 @@ function buildDateTimeInTimeZone(date: string, time: string, timeZone: string): 
   return new Date(intendedUtc + offsetMs).toISOString();
 }
 
-async function insertDemoRecord(row: DemoInsertRow) {
+async function saveDemoRecord(row: DemoInsertRow) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     throw new Error("Supabase database configuration is missing.");
   }
@@ -159,7 +159,7 @@ export async function POST(request: Request) {
       throw new Error("Google Calendar event was created, but no Meet link was returned.");
     }
 
-    await insertDemoRecord({
+    await saveDemoRecord({
       lead_name: payload.leadName?.trim() || "Unknown Lead",
       selected_date: payload.date,
       selected_time: payload.time,
