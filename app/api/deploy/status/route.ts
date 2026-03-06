@@ -46,6 +46,16 @@ function firstDeploymentAlias(payload: Record<string, unknown>): string | undefi
   return undefined;
 }
 
+function resolveDeploymentState(payload: Record<string, unknown>): string {
+  const candidate =
+    (typeof payload.readyState === "string" && payload.readyState) ||
+    (typeof payload.state === "string" && payload.state) ||
+    (typeof payload.status === "string" && payload.status) ||
+    "";
+
+  return candidate.trim().toUpperCase();
+}
+
 export async function GET(request: Request) {
   try {
     const ownerId = await getAuthenticatedUserId();
@@ -104,7 +114,7 @@ export async function GET(request: Request) {
     }
 
     const payload = (await response.json()) as Record<string, unknown>;
-    const readyState = typeof payload.readyState === "string" ? payload.readyState : "";
+    const readyState = resolveDeploymentState(payload);
     const aliasUrl = firstDeploymentAlias(payload);
     const deployedUrl = aliasUrl ?? toHttpsUrl(payload.url) ?? lead.deployedUrl ?? null;
 
