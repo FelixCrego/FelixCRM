@@ -273,6 +273,7 @@ function leadToMemory(lead: any): Lead {
     status: lead.status,
     deployedUrl: lead.deployedUrl ?? lead.deployed_url,
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
+    vercelDeploymentId: typeof (lead.vercelDeploymentId ?? lead.vercel_deployment_id) === "string" ? (lead.vercelDeploymentId ?? lead.vercel_deployment_id) : null,
     ownerId: lead.ownerId ?? lead.owner_id,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
@@ -487,20 +488,41 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
 
 export async function setLeadDeployment(leadId: string, deployment: { deployedUrl?: string; siteStatus: "BUILDING" | "LIVE" | "FAILED"; vercelDeploymentId?: string }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to update lead deployment.");
-  await withLeadTableFallback((table) => supabaseRequest(table, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify(isSnakeLeadsTable(table)
-      ? {
-          deployed_url: deployment.deployedUrl,
-          site_status: deployment.siteStatus,
-        }
-      : {
-          deployedUrl: deployment.deployedUrl,
-          siteStatus: deployment.siteStatus,
-          vercelDeploymentId: deployment.vercelDeploymentId,
-        }),
-  }, { [isSnakeLeadsTable(table) ? "id" : "id"]: `eq.${leadId}` }));
+
+  const snakePayload = {
+    deployed_url: deployment.deployedUrl,
+    site_status: deployment.siteStatus,
+    vercel_deployment_id: deployment.vercelDeploymentId,
+  };
+  const camelPayload = {
+    deployedUrl: deployment.deployedUrl,
+    siteStatus: deployment.siteStatus,
+    vercelDeploymentId: deployment.vercelDeploymentId,
+  };
+
+  await withLeadTableFallback(async (table) => {
+    const preferredPayload = isSnakeLeadsTable(table) ? snakePayload : camelPayload;
+
+    try {
+      return await supabaseRequest(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(preferredPayload),
+      }, { id: `eq.${leadId}` });
+    } catch (error) {
+      const shouldTrySnake = !isSnakeLeadsTable(table) && (isMissingColumnError(error, "deployedUrl") || isMissingColumnError(error, "siteStatus") || isMissingColumnError(error, "vercelDeploymentId"));
+      const shouldTryCamel = isSnakeLeadsTable(table) && (isMissingColumnError(error, "deployed_url") || isMissingColumnError(error, "site_status") || isMissingColumnError(error, "vercel_deployment_id"));
+
+      if (!shouldTrySnake && !shouldTryCamel) throw error;
+
+      const fallbackPayload = shouldTrySnake ? snakePayload : camelPayload;
+      return supabaseRequest(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(fallbackPayload),
+      }, { id: `eq.${leadId}` });
+    }
+  });
 }
 
 export async function saveScript(ownerId: string, script: Omit<Script, "id" | "upvoteCount">) {
