@@ -130,6 +130,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [addLeadError, setAddLeadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
+  const [industry, setIndustry] = useState("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
   const [locationSortDirection, setLocationSortDirection] = useState<"asc" | "desc">("asc");
@@ -204,14 +205,20 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
 
   const filteredLeads = useMemo(() => {
     return (displayLeads || []).filter((lead) => {
-      const safeSearchBlob = [lead?.businessName ?? "", lead?.phone ?? "", lead?.email ?? ""].join(" ").toLowerCase();
+      const safeSearchBlob = [lead?.businessName ?? "", lead?.businessType ?? "", lead?.phone ?? "", lead?.email ?? ""].join(" ").toLowerCase();
       const matchesSearch = safeSearchBlob.includes(search.toLowerCase());
       const matchesStatus = status === "ALL" || lead?.status === status;
+      const matchesIndustry = industry === "ALL" || lead?.businessType === industry;
       const matchesLastContacted = lastContacted === "ALL" || safelyBucketLastContact(lead?.updatedAt) === lastContacted;
       const matchesClosedDate = viewMode === "closed" ? isClosedWithinRange(lead?.closedAt, closedDateRange) : true;
-      return matchesSearch && matchesStatus && matchesLastContacted && matchesClosedDate;
+      return matchesSearch && matchesStatus && matchesIndustry && matchesLastContacted && matchesClosedDate;
     });
-  }, [displayLeads, search, status, lastContacted, viewMode, closedDateRange]);
+  }, [displayLeads, search, status, industry, lastContacted, viewMode, closedDateRange]);
+
+  const industryOptions = useMemo(() => {
+    const uniqueIndustries = new Set(displayLeads.map((lead) => lead.businessType).filter((value) => value.trim().length > 0));
+    return Array.from(uniqueIndustries).sort((a, b) => a.localeCompare(b));
+  }, [displayLeads]);
 
   const sortedLeads = useMemo(() => {
     return [...filteredLeads].sort((a, b) => {
@@ -477,6 +484,18 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             </select>
           </label>
 
+          <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
+            <SlidersHorizontal className="h-4 w-4 text-zinc-500" />
+            <select value={industry} onChange={(event) => setIndustry(event.target.value)} className="w-full bg-transparent outline-none">
+              <option value="ALL">Industry: All</option>
+              {industryOptions.map((industryOption) => (
+                <option key={industryOption} value={industryOption}>
+                  {industryOption}
+                </option>
+              ))}
+            </select>
+          </label>
+
           {viewMode === "closed" ? (
             <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
               <SlidersHorizontal className="h-4 w-4 text-zinc-500" />
@@ -552,7 +571,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
         </table>
 
         {(sortedLeads || []).length === 0 && (
-          <div className="p-8 text-center text-sm text-zinc-500">No leads match your filters. Try broadening status or last-contacted constraints.</div>
+          <div className="p-8 text-center text-sm text-zinc-500">No leads match your filters. Try broadening status, industry, or last-contacted constraints.</div>
         )}
       </section>
     </div>
