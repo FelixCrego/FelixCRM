@@ -105,6 +105,34 @@ function isMissingColumnError(error: unknown, column: string) {
   return isSchemaCacheColumnError(error) && message.includes(`'${column}'`);
 }
 
+function getMissingColumnName(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/Could not find the '([^']+)' column/i);
+  return match?.[1] ?? null;
+}
+
+async function patchLeadDeploymentWithPayload(table: string, leadId: string, payload: Record<string, unknown>) {
+  let currentPayload: Record<string, unknown> = { ...payload };
+
+  while (Object.keys(currentPayload).length > 0) {
+    try {
+      return await supabaseRequest(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(currentPayload),
+      }, { id: `eq.${leadId}` });
+    } catch (error) {
+      if (!isSchemaCacheColumnError(error)) throw error;
+      const missingColumn = getMissingColumnName(error);
+      if (!missingColumn || !(missingColumn in currentPayload)) throw error;
+      const { [missingColumn]: _removed, ...nextPayload } = currentPayload;
+      currentPayload = nextPayload;
+    }
+  }
+
+  throw new Error("No compatible deployment columns found for the resolved leads table schema.");
+}
+
 async function withTableFallback<T>(cacheKey: string, candidates: string[], requester: (table: string) => Promise<T>): Promise<T> {
   const cached = resolvedTableCache.get(cacheKey);
   if (cached) return requester(cached);
@@ -273,6 +301,7 @@ function leadToMemory(lead: any): Lead {
     status: lead.status,
     deployedUrl: lead.deployedUrl ?? lead.deployed_url,
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
+    vercelDeploymentId: typeof (lead.vercelDeploymentId ?? lead.vercel_deployment_id) === "string" ? (lead.vercelDeploymentId ?? lead.vercel_deployment_id) : null,
     ownerId: lead.ownerId ?? lead.owner_id,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
@@ -487,20 +516,29 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
 
 export async function setLeadDeployment(leadId: string, deployment: { deployedUrl?: string; siteStatus: "BUILDING" | "LIVE" | "FAILED"; vercelDeploymentId?: string }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to update lead deployment.");
-  await withLeadTableFallback((table) => supabaseRequest(table, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify(isSnakeLeadsTable(table)
-      ? {
-          deployed_url: deployment.deployedUrl,
-          site_status: deployment.siteStatus,
-        }
-      : {
-          deployedUrl: deployment.deployedUrl,
-          siteStatus: deployment.siteStatus,
-          vercelDeploymentId: deployment.vercelDeploymentId,
-        }),
-  }, { [isSnakeLeadsTable(table) ? "id" : "id"]: `eq.${leadId}` }));
+
+  const snakePayload = {
+    deployed_url: deployment.deployedUrl,
+    site_status: deployment.siteStatus,
+    vercel_deployment_id: deployment.vercelDeploymentId,
+  };
+  const camelPayload = {
+    deployedUrl: deployment.deployedUrl,
+    siteStatus: deployment.siteStatus,
+    vercelDeploymentId: deployment.vercelDeploymentId,
+  };
+
+  await withLeadTableFallback(async (table) => {
+    const preferredPayload = isSnakeLeadsTable(table) ? snakePayload : camelPayload;
+    const fallbackPayload = isSnakeLeadsTable(table) ? camelPayload : snakePayload;
+
+    try {
+      return await patchLeadDeploymentWithPayload(table, leadId, preferredPayload);
+    } catch (error) {
+      if (!isSchemaCacheColumnError(error)) throw error;
+      return patchLeadDeploymentWithPayload(table, leadId, fallbackPayload);
+    }
+  });
 }
 
 export async function saveScript(ownerId: string, script: Omit<Script, "id" | "upvoteCount">) {
