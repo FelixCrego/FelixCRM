@@ -369,11 +369,14 @@ export async function POST(request: Request) {
     const protectionMode = vercelPublicDeployments ? "public" : vercelBypassProtection ? "bypass-automation" : "private";
     const projectSettingsBody: Record<string, unknown> = {
       publicSource: vercelPublicDeployments,
-      deploymentProtectionSettings: {
-        protectProduction: !vercelPublicDeployments,
-        bypassForAutomation: vercelBypassProtection,
-      },
     };
+
+    if (vercelBypassProtection) {
+      projectSettingsBody.deploymentProtectionSettings = {
+        protectProduction: true,
+        bypassForAutomation: true,
+      };
+    }
 
     const updateProjectSettingsResponse = await fetch(`https://api.vercel.com/v9/projects/${vercelProjectName}${scopeQuery}`, {
       method: "PATCH",
