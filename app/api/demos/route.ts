@@ -27,7 +27,11 @@ export async function GET() {
 
   const url = new URL("/rest/v1/demos", supabaseUrl);
   url.searchParams.set("select", "id,lead_name,selected_date,selected_time,meet_link,rep_id,rep_email,created_at");
-  url.searchParams.set("rep_id", `eq.${user.id}`);
+  if (user.email) {
+    url.searchParams.set("or", `(rep_id.eq.${user.id},rep_email.eq.${user.email})`);
+  } else {
+    url.searchParams.set("rep_id", `eq.${user.id}`);
+  }
   url.searchParams.set("order", "selected_date.asc,selected_time.asc");
 
   const response = await fetch(url, {
