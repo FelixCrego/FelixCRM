@@ -164,3 +164,16 @@ export async function getAuthenticatedUserId() {
   const user = await getSupabaseUserByAccessToken(accessToken);
   return user?.id ?? null;
 }
+
+export async function getAuthenticatedUser() {
+  const accessToken = cookies().get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
+  if (!accessToken) return null;
+
+  const user = await getSupabaseUserByAccessToken(accessToken);
+  if (!user?.id) return null;
+
+  return {
+    id: user.id,
+    email: user.email ?? null,
+  };
+}

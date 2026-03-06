@@ -2,9 +2,21 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { z } from "zod";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { getAuthenticatedUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+type DemoInsertRow = {
+  lead_name: string;
+  selected_date: string;
+  selected_time: string;
+  meet_link: string;
+  rep_id: string;
+  rep_email?: string | null;
+};
 
 const createMeetEventSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -71,9 +83,31 @@ function buildDateTimeInTimeZone(date: string, time: string, timeZone: string): 
   return new Date(intendedUtc + offsetMs).toISOString();
 }
 
+async function insertDemoRecord(row: DemoInsertRow) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error("Supabase database configuration is missing.");
+  }
+
+  const response = await fetch(new URL("/rest/v1/demos", supabaseUrl), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: supabaseServiceRoleKey,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify([row]),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Failed to save scheduled demo.");
+  }
+}
+
 export async function POST(request: Request) {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) {
+  const user = await getAuthenticatedUser();
+  if (!user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -99,7 +133,7 @@ export async function POST(request: Request) {
       sendUpdates: "none",
       requestBody: {
         summary: `Sales Demo${payload.leadName ? ` - ${payload.leadName}` : ""}`,
-        description: `Scheduled via Felix CRM by user ${userId}.`,
+        description: `Scheduled via Felix CRM by user ${user.id}.`,
         start: {
           dateTime: startDateTime,
           timeZone: payload.timeZone,
@@ -119,10 +153,24 @@ export async function POST(request: Request) {
     });
 
     const meetEntryPoint = eventResponse.data.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video")?.uri;
+    const meetLink = meetEntryPoint ?? eventResponse.data.hangoutLink ?? "";
+
+    if (!meetLink) {
+      throw new Error("Google Calendar event was created, but no Meet link was returned.");
+    }
+
+    await insertDemoRecord({
+      lead_name: payload.leadName?.trim() || "Unknown Lead",
+      selected_date: payload.date,
+      selected_time: payload.time,
+      meet_link: meetLink,
+      rep_id: user.id,
+      rep_email: user.email ?? null,
+    });
 
     return NextResponse.json(
       {
-        meetLink: meetEntryPoint ?? eventResponse.data.hangoutLink ?? "",
+        meetLink,
         eventId: eventResponse.data.id,
       },
       { status: 200 },
