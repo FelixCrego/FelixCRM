@@ -107,7 +107,7 @@ async function patchGeneratedRepoSiteConfig(params: {
       if (item.type !== "blob") continue;
       const lower = path.toLowerCase();
       if (!lower.endsWith(".ts") && !lower.endsWith(".tsx")) continue;
-      if (!lower.includes("site") && !lower.includes("config")) continue;
+      if (!lower.includes("site") && !lower.includes("config") && !lower.includes("area") && !lower.includes("location")) continue;
       if (allPaths.includes(path)) continue;
       allPaths.push(path);
     }
@@ -126,7 +126,7 @@ async function patchGeneratedRepoSiteConfig(params: {
     if (!sha || !encodedContent || contentPayload.encoding !== "base64") return false;
 
     const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
-    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay") && !source.includes("serviceAreas") && !source.includes("primaryLocation")) {
+    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay") && !source.includes("serviceAreas") && !source.includes("areas") && !source.includes("primaryLocation") && !source.includes("location") && !source.includes("city")) {
       return false;
     }
 
@@ -155,15 +155,18 @@ async function patchGeneratedRepoSiteConfig(params: {
   };
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
+    let patchedAny = false;
+
     for (const path of allPaths) {
       const patched = await tryPatchPath(path);
-      if (patched) return;
+      if (patched) patchedAny = true;
     }
 
+    if (patchedAny) return;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
-  throw new Error(`Could not find a patchable site config file in ${params.repoFullName} on branch ${params.branch}.`);
+  throw new Error(`Could not find any patchable site or area config files in ${params.repoFullName} on branch ${params.branch}.`);
 }
 
 function slugify(input: string, fallback: string): string {
