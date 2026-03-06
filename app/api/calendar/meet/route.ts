@@ -3,20 +3,10 @@ import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { insertDemoRecord } from "@/lib/demos-store";
 
 export const runtime = "nodejs";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-type DemoInsertRow = {
-  lead_name: string;
-  selected_date: string;
-  selected_time: string;
-  meet_link: string;
-  rep_id: string;
-  rep_email?: string | null;
-};
 
 const createMeetEventSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -159,19 +149,21 @@ export async function POST(request: Request) {
       throw new Error("Google Calendar event was created, but no Meet link was returned.");
     }
 
-    await insertDemoRecord({
-      lead_name: payload.leadName?.trim() || "Unknown Lead",
-      selected_date: payload.date,
-      selected_time: payload.time,
-      meet_link: meetLink,
-      rep_id: user.id,
-      rep_email: user.email ?? null,
+    const demoInsertResult = await insertDemoRecord({
+      leadName: payload.leadName?.trim() || "Unknown Lead",
+      selectedDate: payload.date,
+      selectedTime: payload.time,
+      meetLink,
+      repId: user.id,
+      repEmail: user.email ?? null,
     });
 
     return NextResponse.json(
       {
         meetLink,
         eventId: eventResponse.data.id,
+        demoSaved: demoInsertResult.inserted,
+        demoWarning: demoInsertResult.inserted ? null : demoInsertResult.error,
       },
       { status: 200 },
     );

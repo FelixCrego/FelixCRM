@@ -10,6 +10,13 @@ type Demo = {
   meet_link: string;
 };
 
+type DemosResponse = {
+  demos?: Demo[];
+  setupRequired?: boolean;
+  warning?: string;
+  error?: string;
+};
+
 function formatDateTimeLabel(date: string, time: string) {
   const localDate = new Date(`${date}T00:00:00`);
   const today = new Date();
@@ -35,20 +42,25 @@ export default function DemosPage() {
   const [demos, setDemos] = useState<Demo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [setupWarning, setSetupWarning] = useState("");
 
   useEffect(() => {
     async function loadDemos() {
       setLoading(true);
       setError("");
+      setSetupWarning("");
       try {
         const response = await fetch("/api/demos", { cache: "no-store" });
-        const payload = (await response.json().catch(() => null)) as { demos?: Demo[]; error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as DemosResponse | null;
 
         if (!response.ok) {
           throw new Error(payload?.error || "Failed to load upcoming demos.");
         }
 
         setDemos(payload?.demos ?? []);
+        if (payload?.setupRequired) {
+          setSetupWarning(payload.warning || "No demos table found yet. Run supabase/demos_table.sql to enable this page.");
+        }
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load upcoming demos.");
         setDemos([]);
@@ -80,6 +92,9 @@ export default function DemosPage() {
 
         {loading ? <p className="text-sm text-zinc-400">Loading upcoming demos...</p> : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+        {setupWarning ? (
+          <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">{setupWarning}</p>
+        ) : null}
 
         <section className="space-y-3">
           {!loading && !error && demosWithMeta.length === 0 ? (
