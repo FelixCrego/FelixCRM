@@ -273,6 +273,7 @@ function leadToMemory(lead: any): Lead {
     status: lead.status,
     deployedUrl: lead.deployedUrl ?? lead.deployed_url,
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
+    vercelDeploymentId: typeof (lead.vercelDeploymentId ?? lead.vercel_deployment_id) === "string" ? (lead.vercelDeploymentId ?? lead.vercel_deployment_id) : null,
     ownerId: lead.ownerId ?? lead.owner_id,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
@@ -494,6 +495,7 @@ export async function setLeadDeployment(leadId: string, deployment: { deployedUr
       ? {
           deployed_url: deployment.deployedUrl,
           site_status: deployment.siteStatus,
+          vercel_deployment_id: deployment.vercelDeploymentId,
         }
       : {
           deployedUrl: deployment.deployedUrl,
