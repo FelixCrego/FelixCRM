@@ -1051,6 +1051,8 @@ export default function LeadExecutionPage() {
       }
 
       setMeetingLink(payload.meetLink);
+      router.push("/demos");
+      router.refresh();
     } catch (error) {
       setMeetingError(error instanceof Error ? error.message : "Unable to generate a Google Meet link.");
     } finally {
