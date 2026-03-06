@@ -45,6 +45,7 @@ export type Lead = {
   status: "NEW" | "CONTACTED" | "IN_PROGRESS" | "CLOSED" | "DISQUALIFIED";
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
+  vercelDeploymentId?: string | null;
   ownerId?: string | null;
   closedDealValue?: number | null;
   closedAt?: string | null;
