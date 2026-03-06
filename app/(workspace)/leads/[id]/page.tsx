@@ -941,13 +941,14 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { url?: string; deployedUrl?: string; liveUrl?: string; deploymentId?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as { url?: string; deployedUrl?: string; liveUrl?: string; project?: string; deploymentId?: string; error?: string } | null;
 
       if (!response.ok) {
         throw new Error(payload?.error || "Deployment failed.");
       }
 
-      const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url;
+      const fallbackProjectUrl = payload?.project ? `https://${payload.project}.vercel.app` : undefined;
+      const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url || fallbackProjectUrl;
 
       setDeployProgress(20);
       setDeployStageLabel("Deployment queued. Preparing your live site...");

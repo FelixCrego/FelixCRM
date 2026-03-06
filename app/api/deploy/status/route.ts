@@ -10,6 +10,19 @@ function toHttpsUrl(value: unknown): string | undefined {
   return `https://${trimmed}`;
 }
 
+
+
+async function isDeploymentReachable(url: string | null | undefined): Promise<boolean> {
+  if (!url) return false;
+
+  try {
+    const response = await fetch(url, { method: "GET", redirect: "follow", cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function firstDeploymentAlias(payload: Record<string, unknown>): string | undefined {
   const singleAlias = toHttpsUrl(payload.alias);
   if (singleAlias) return singleAlias;
@@ -50,11 +63,21 @@ export async function GET(request: Request) {
     }
 
     if (!lead.vercelDeploymentId) {
+      const reachableWithoutId = await isDeploymentReachable(lead.deployedUrl ?? null);
+      if (reachableWithoutId) {
+        await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? undefined });
+        return NextResponse.json({ siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? null, done: true, readyState: "READY" });
+      }
       return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl: lead.deployedUrl ?? null, done: false });
     }
 
     const token = process.env.VERCEL_TOKEN;
     if (!token) {
+      const reachableWithoutToken = await isDeploymentReachable(lead.deployedUrl ?? null);
+      if (reachableWithoutToken) {
+        await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
+        return NextResponse.json({ siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? null, done: true, readyState: "READY" });
+      }
       return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl: lead.deployedUrl ?? null, done: false });
     }
 
@@ -70,6 +93,12 @@ export async function GET(request: Request) {
     });
 
     if (!response.ok) {
+      const fallbackUrl = lead.deployedUrl ?? null;
+      const reachableAfterStatusError = await isDeploymentReachable(fallbackUrl);
+      if (reachableAfterStatusError) {
+        await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: fallbackUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
+        return NextResponse.json({ siteStatus: "LIVE", deployedUrl: fallbackUrl, done: true, readyState: "READY" });
+      }
       const errorText = await response.text();
       return NextResponse.json({ error: `Unable to fetch deployment status: ${errorText || response.statusText}` }, { status: 500 });
     }
@@ -79,14 +108,20 @@ export async function GET(request: Request) {
     const aliasUrl = firstDeploymentAlias(payload);
     const deployedUrl = aliasUrl ?? toHttpsUrl(payload.url) ?? lead.deployedUrl ?? null;
 
-    if (readyState === "READY") {
+    if (readyState === "READY" || readyState === "LIVE") {
       await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
       return NextResponse.json({ siteStatus: "LIVE", deployedUrl, done: true, readyState });
     }
 
-    if (readyState === "ERROR" || readyState === "CANCELED") {
+    if (readyState === "ERROR" || readyState === "CANCELED" || readyState === "CANCELLED") {
       await setLeadDeployment(leadId, { siteStatus: "FAILED", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
       return NextResponse.json({ siteStatus: "FAILED", deployedUrl, done: true, readyState });
+    }
+
+    const reachableWhileBuilding = await isDeploymentReachable(deployedUrl);
+    if (reachableWhileBuilding) {
+      await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
+      return NextResponse.json({ siteStatus: "LIVE", deployedUrl, done: true, readyState: readyState || "READY" });
     }
 
     return NextResponse.json({ siteStatus: "BUILDING", deployedUrl, done: false, readyState });
