@@ -258,7 +258,13 @@ function normalizeLeadEnrichmentPayload(value: unknown, fallbackBusinessName: st
 }
 
 function leadToMemory(lead: any): Lead {
-  const sourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
+  const rawSourcePayload = lead.sourcePayload ?? lead.source_payload ?? {};
+  const sourcePayload =
+    rawSourcePayload && typeof rawSourcePayload === "object"
+      ? (rawSourcePayload as Record<string, unknown>)
+      : typeof rawSourcePayload === "string"
+        ? (parseJsonSafely<Record<string, unknown>>(rawSourcePayload) ?? {})
+        : {};
   const contactsFromPayload = Array.isArray(sourcePayload.contacts)
     ? sourcePayload.contacts
         .filter((contact: unknown) => contact && typeof contact === "object")
@@ -304,10 +310,24 @@ function leadToMemory(lead: any): Lead {
     vercelDeploymentId: typeof (lead.vercelDeploymentId ?? lead.vercel_deployment_id) === "string" ? (lead.vercelDeploymentId ?? lead.vercel_deployment_id) : null,
     ownerId: lead.ownerId ?? lead.owner_id,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
-    socialLinks: Array.isArray(sourcePayload.socialLinks) ? sourcePayload.socialLinks : [],
-    aiResearchSummary: typeof sourcePayload.aiResearchSummary === "string" ? sourcePayload.aiResearchSummary : null,
+    socialLinks: Array.isArray(sourcePayload.socialLinks)
+      ? sourcePayload.socialLinks
+      : Array.isArray(sourcePayload.social_links)
+        ? sourcePayload.social_links
+        : [],
+    aiResearchSummary:
+      typeof sourcePayload.aiResearchSummary === "string"
+        ? sourcePayload.aiResearchSummary
+        : typeof sourcePayload.ai_research_summary === "string"
+          ? sourcePayload.ai_research_summary
+          : null,
     enrichment: normalizeLeadEnrichmentPayload(sourcePayload.enrichment, lead.businessName ?? lead.business_name, lead.phone),
-    sourceQuery: typeof sourcePayload.sourceQuery === "string" ? sourcePayload.sourceQuery : null,
+    sourceQuery:
+      typeof sourcePayload.sourceQuery === "string"
+        ? sourcePayload.sourceQuery
+        : typeof sourcePayload.source_query === "string"
+          ? sourcePayload.source_query
+          : null,
     contacts: contactsFromPayload,
     closedDealValue:
       (typeof lead.closedDealValue === "number" ? lead.closedDealValue : null) ??
@@ -385,7 +405,7 @@ export async function listClaimableLeads(limit = 100) {
   return leads.map(leadToMemory);
 }
 
-export async function createLead(ownerId: string, lead: { businessName: string; phone?: string | null; websiteUrl?: string | null }) {
+export async function createLead(ownerId: string, lead: { businessName: string; phone?: string | null; websiteUrl?: string | null; aiResearchSummary?: string | null; sourceQuery?: string | null }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
   const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
@@ -408,9 +428,9 @@ export async function createLead(ownerId: string, lead: { businessName: string; 
           owner_id: ownerId,
           source_payload: {
             socialLinks: [],
-            aiResearchSummary: null,
+            aiResearchSummary: lead.aiResearchSummary ?? null,
             enrichment: null,
-            sourceQuery: "manual_entry",
+            sourceQuery: lead.sourceQuery ?? "manual_entry",
           },
         }
       : {
@@ -428,9 +448,9 @@ export async function createLead(ownerId: string, lead: { businessName: string; 
           ownerId,
           sourcePayload: {
             socialLinks: [],
-            aiResearchSummary: null,
+            aiResearchSummary: lead.aiResearchSummary ?? null,
             enrichment: null,
-            sourceQuery: "manual_entry",
+            sourceQuery: lead.sourceQuery ?? "manual_entry",
           },
         }),
   }));
