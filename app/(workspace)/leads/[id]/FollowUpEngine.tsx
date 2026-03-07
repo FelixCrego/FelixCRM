@@ -171,8 +171,8 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
       <form onSubmit={handleAddTask} className="bg-zinc-950 border border-zinc-800/80 rounded-xl p-4 mb-6 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-[40px] pointer-events-none"></div>
         <div className="flex flex-col gap-4 relative z-10">
-          <div className="flex gap-3">
-            <select value={taskType} onChange={(e) => setTaskType(e.target.value)} className="w-32 bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-indigo-500 appearance-none cursor-pointer">
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <select value={taskType} onChange={(e) => setTaskType(e.target.value)} className="w-full sm:w-32 bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-indigo-500 appearance-none cursor-pointer">
               <option value="Call">📞 Call</option>
               <option value="Email">✉️ Email</option>
               <option value="SMS">💬 SMS</option>
@@ -180,16 +180,16 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
             </select>
             <input type="text" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Objective (e.g., Ask for the close)" className="flex-1 bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-4 py-2.5 focus:outline-none focus:border-indigo-500 placeholder-zinc-500"/>
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex gap-2">
+          <div className="grid gap-3 md:grid-cols-[auto,1fr,auto] md:items-center">
+            <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => setQuickDate(1)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-md border border-zinc-700">Tomorrow</button>
               <button type="button" onClick={() => setQuickDate(3)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-md border border-zinc-700">In 3 Days</button>
             </div>
-            <div className="flex gap-2 flex-1 min-w-0">
-              <input type="date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} required className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
-              <input type="time" value={taskTime} onChange={(e) => setTaskTime(e.target.value)} required className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <input type="date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} required className="w-full min-w-0 bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
+              <input type="time" value={taskTime} onChange={(e) => setTaskTime(e.target.value)} required className="w-full min-w-0 bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-3 py-2 focus:outline-none focus:border-indigo-500 [color-scheme:dark]"/>
             </div>
-            <button type="submit" className="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider px-5 py-2 rounded-md shadow-[0_0_15px_rgba(79,70,229,0.3)]">Lock It In</button>
+            <button type="submit" className="w-full md:w-auto shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider px-5 py-2 rounded-md shadow-[0_0_15px_rgba(79,70,229,0.3)]">Lock It In</button>
           </div>
         </div>
       </form>
