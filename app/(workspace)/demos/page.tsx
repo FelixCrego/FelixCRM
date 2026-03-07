@@ -31,7 +31,12 @@ type PersistedBookedDemo = {
 
 const DEMO_CACHE_KEY = "felix:pending-upcoming-demos";
 const DEMO_PIPELINE_STATUS_CACHE_KEY = "felix:demo-pipeline-stage-overrides";
+const LEAD_ID_FOR_NAME_PREFIX = "lead-for-name:";
 const pipelineStageOptions: PipelineStage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won", "No Show"];
+
+function isPipelineStage(value: string): value is PipelineStage {
+  return pipelineStageOptions.includes(value as PipelineStage);
+}
 
 function parseDemoDateTime(date: string, time: string) {
   const normalized = time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
@@ -150,7 +155,7 @@ export default function DemosPage() {
   const [pendingDemoFromQuery, setPendingDemoFromQuery] = useState<Demo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [pipelineStatusOverrides, setPipelineStatusOverrides] = useState<Record<string, PipelineStage>>({});
+  const [pipelineStatusOverrides, setPipelineStatusOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -161,9 +166,7 @@ export default function DemosPage() {
     try {
       const parsed = JSON.parse(rawOverrides) as Record<string, unknown>;
       const normalized = Object.fromEntries(
-        Object.entries(parsed).filter((entry): entry is [string, PipelineStage] =>
-          pipelineStageOptions.includes(entry[1] as PipelineStage),
-        ),
+        Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
       );
       setPipelineStatusOverrides(normalized);
     } catch {
@@ -301,7 +304,9 @@ export default function DemosPage() {
   const getSelectedPipelineStage = (demo: Demo) => {
     const byLeadId = demo.lead_id ? pipelineStatusOverrides[demo.lead_id] : undefined;
     const byName = pipelineStatusOverrides[`name:${demo.lead_name.trim().toLowerCase()}`];
-    return byLeadId ?? byName ?? "New";
+    if (byLeadId && isPipelineStage(byLeadId)) return byLeadId;
+    if (byName && isPipelineStage(byName)) return byName;
+    return "New";
   };
 
   const setLeadPipelineStatus = (leadId: string | null | undefined, leadName: string, stage: PipelineStage) => {
@@ -309,6 +314,7 @@ export default function DemosPage() {
       ...pipelineStatusOverrides,
       ...(leadId ? { [leadId]: stage } : {}),
       [`name:${leadName.trim().toLowerCase()}`]: stage,
+      ...(leadId ? { [`${LEAD_ID_FOR_NAME_PREFIX}${leadName.trim().toLowerCase()}`]: leadId } : {}),
     };
     setPipelineStatusOverrides(next);
     if (typeof window !== "undefined") {

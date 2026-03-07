@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Mail, Phone, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -9,6 +10,7 @@ type PlaybookTab = "Scripts" | "Objections" | "Tips";
 
 type Deal = {
   id: string;
+  leadId?: string;
   businessName: string;
   contactName: string;
   rep: string;
@@ -25,6 +27,7 @@ type Deal = {
 
 const stages: Stage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won", "No Show"];
 const DEMO_PIPELINE_STATUS_CACHE_KEY = "felix:demo-pipeline-stage-overrides";
+const LEAD_ID_FOR_NAME_PREFIX = "lead-for-name:";
 
 const deals: Deal[] = [
   {
@@ -112,6 +115,7 @@ export default function PipelinePage() {
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
   const [activeTab, setActiveTab] = useState<PlaybookTab>("Scripts");
   const [demoStageOverrides, setDemoStageOverrides] = useState<Record<string, Stage>>({});
+  const [leadIdByNormalizedName, setLeadIdByNormalizedName] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -124,20 +128,31 @@ export default function PipelinePage() {
       const normalized = Object.fromEntries(
         Object.entries(parsed).filter((entry): entry is [string, Stage] => stages.includes(entry[1] as Stage)),
       );
+      const leadLookup = Object.fromEntries(
+        Object.entries(parsed)
+          .filter((entry): entry is [string, string] => entry[0].startsWith(LEAD_ID_FOR_NAME_PREFIX) && typeof entry[1] === "string")
+          .map(([key, leadId]) => [key.slice(LEAD_ID_FOR_NAME_PREFIX.length), leadId]),
+      );
       setDemoStageOverrides(normalized);
+      setLeadIdByNormalizedName(leadLookup);
     } catch {
       window.localStorage.removeItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
     }
   }, []);
+
 
   const dealsWithDemoOverrides = useMemo(
     () =>
       deals.map((deal) => {
         const byId = demoStageOverrides[deal.id];
         const byName = demoStageOverrides[`name:${deal.businessName.trim().toLowerCase()}`];
-        return { ...deal, stage: byId ?? byName ?? deal.stage };
+        return {
+          ...deal,
+          leadId: leadIdByNormalizedName[deal.businessName.trim().toLowerCase()],
+          stage: byId ?? byName ?? deal.stage,
+        };
       }),
-    [demoStageOverrides],
+    [demoStageOverrides, leadIdByNormalizedName],
   );
 
   const injectedDemoDeals = useMemo(() => {
@@ -149,6 +164,7 @@ export default function PipelinePage() {
       .filter(({ normalizedName }) => normalizedName && !existingNames.has(normalizedName))
       .map(({ key, stage, normalizedName }) => ({
         id: `demo-${key}`,
+        leadId: leadIdByNormalizedName[normalizedName],
         businessName: normalizedName
           .split(/\s+/)
           .filter(Boolean)
@@ -166,7 +182,7 @@ export default function PipelinePage() {
         websiteGoal: "",
         history: ["Created from upcoming demo status selector."],
       }));
-  }, [demoStageOverrides]);
+  }, [demoStageOverrides, leadIdByNormalizedName]);
 
   const displayDeals = useMemo(() => [...dealsWithDemoOverrides, ...injectedDemoDeals], [dealsWithDemoOverrides, injectedDemoDeals]);
 
@@ -273,6 +289,16 @@ export default function PipelinePage() {
                         </button>
                       )}
                     </div>
+
+                    {deal.leadId ? (
+                      <Link
+                        href={`/leads/${deal.leadId}`}
+                        onClick={(event) => event.stopPropagation()}
+                        className="mt-3 block rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-center text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-900"
+                      >
+                        Open Lead Workspace
+                      </Link>
+                    ) : null}
 
                     <footer className="mt-3 text-[11px] text-zinc-500">{deal.lastAction}</footer>
                   </article>
