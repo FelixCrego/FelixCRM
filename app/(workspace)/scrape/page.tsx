@@ -135,6 +135,7 @@ export default function ScrapePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isResearchingLeadId, setIsResearchingLeadId] = useState<string | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [claimSuccessMessage, setClaimSuccessMessage] = useState<string | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -265,6 +266,38 @@ export default function ScrapePage() {
       setError(err instanceof Error ? err.message : "Claim failed.");
     } finally {
       setIsClaiming(false);
+    }
+  }
+
+
+  async function handleDeleteLeads(leadIds: string[]) {
+    if (!leadIds.length) return;
+    setIsDeleting(true);
+    setError(null);
+    setClaimSuccessMessage(null);
+
+    try {
+      const response = await fetch("/api/leads", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Delete failed.");
+
+      const deleted = Number(payload.deleted ?? 0);
+      const forbidden = Number(payload.forbidden ?? 0);
+      const missing = Number(payload.missing ?? 0);
+      const fragments = [`Deleted ${deleted} lead${deleted === 1 ? "" : "s"}.`];
+      if (forbidden > 0) fragments.push(`${forbidden} could not be deleted because they are owned by another user.`);
+      if (missing > 0) fragments.push(`${missing} could not be found.`);
+      setClaimSuccessMessage(fragments.join(" "));
+      setSelectedLeadIds((prev) => prev.filter((id) => !leadIds.includes(id)));
+      await refreshLeads();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -499,13 +532,22 @@ export default function ScrapePage() {
                           </button>
                         </>
                       ) : (
-                        <button
-                          onClick={() => handleClaimLeads([lead.id])}
-                          disabled={isClaiming || Boolean(lead.ownerId && currentUserId && lead.ownerId !== currentUserId)}
-                          className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
-                        >
-                          {isClaiming ? "Claiming..." : "Claim Lead"}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handleClaimLeads([lead.id])}
+                            disabled={isClaiming || Boolean(lead.ownerId && currentUserId && lead.ownerId !== currentUserId)}
+                            className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
+                          >
+                            {isClaiming ? "Claiming..." : "Claim Lead"}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLeads([lead.id])}
+                            disabled={isDeleting}
+                            className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-60"
+                          >
+                            {isDeleting ? "Deleting..." : "Delete Lead"}
+                          </button>
+                        </>
                       )}
                       {lead.ownerId === currentUserId ? (
                         <Link href={`/leads/${lead.id}`} className="rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-900">
@@ -528,13 +570,22 @@ export default function ScrapePage() {
         <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,860px)] -translate-x-1/2 rounded-2xl border border-zinc-700 bg-zinc-900/95 p-3 shadow-2xl shadow-black/40 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-zinc-300">{selectedCount} lead{selectedCount > 1 ? "s" : ""} selected</p>
-            <button
-              onClick={() => handleClaimLeads(selectedLeadIds)}
-              disabled={isClaiming}
-              className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
-            >
-              {isClaiming ? "Claiming..." : "Claim Selected Leads"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleDeleteLeads(selectedLeadIds)}
+                disabled={isDeleting}
+                className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:opacity-60"
+              >
+                {isDeleting ? "Deleting..." : "Delete Selected Leads"}
+              </button>
+              <button
+                onClick={() => handleClaimLeads(selectedLeadIds)}
+                disabled={isClaiming}
+                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
+              >
+                {isClaiming ? "Claiming..." : "Claim Selected Leads"}
+              </button>
+            </div>
           </div>
         </div>
       )}

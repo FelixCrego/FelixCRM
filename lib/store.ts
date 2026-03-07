@@ -829,6 +829,45 @@ export async function claimLeads(leadIds: string[], ownerId: string) {
   return { claimed, alreadyOwnedByYou, claimedByOthers, missing };
 }
 
+export async function deleteLeads(leadIds: string[], userId: string) {
+  if (!leadIds.length) return { deleted: 0, forbidden: 0, missing: 0 };
+  if (!hasDb) throw new Error("Supabase environment variables are required to delete leads.");
+
+  const idFilter = `in.(${leadIds.join(",")})`;
+  const existing = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id" : "id,ownerId",
+    id: idFilter,
+  }));
+
+  const deletableLeadIds: string[] = [];
+  let forbidden = 0;
+
+  for (const lead of existing) {
+    const leadOwnerId = lead.ownerId ?? lead.owner_id ?? null;
+    if (!leadOwnerId || leadOwnerId === userId) {
+      deletableLeadIds.push(lead.id);
+      continue;
+    }
+    forbidden += 1;
+  }
+
+  let deleted = 0;
+  if (deletableLeadIds.length) {
+    const deletableIdFilter = `in.(${deletableLeadIds.join(",")})`;
+    const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
+      method: "DELETE",
+      headers: { Prefer: "return=representation" },
+    }, {
+      id: deletableIdFilter,
+      select: "id",
+    }));
+    deleted = rows.length;
+  }
+
+  const missing = leadIds.length - existing.length;
+  return { deleted, forbidden, missing };
+}
+
 export async function requestLeadOwnershipTransfer(leadId: string, requesterId: string) {
   if (!hasDb) throw new Error("Supabase environment variables are required to request transfer.");
 
