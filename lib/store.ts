@@ -385,7 +385,7 @@ export async function listClaimableLeads(limit = 100) {
   return leads.map(leadToMemory);
 }
 
-export async function createLead(ownerId: string, lead: { businessName: string; phone?: string | null; websiteUrl?: string | null }) {
+export async function createLead(ownerId: string, lead: { businessName: string; phone?: string | null; websiteUrl?: string | null; aiResearchSummary?: string | null; sourceQuery?: string | null }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
   const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
@@ -408,9 +408,9 @@ export async function createLead(ownerId: string, lead: { businessName: string; 
           owner_id: ownerId,
           source_payload: {
             socialLinks: [],
-            aiResearchSummary: null,
+            aiResearchSummary: lead.aiResearchSummary ?? null,
             enrichment: null,
-            sourceQuery: "manual_entry",
+            sourceQuery: lead.sourceQuery ?? "manual_entry",
           },
         }
       : {
@@ -428,9 +428,9 @@ export async function createLead(ownerId: string, lead: { businessName: string; 
           ownerId,
           sourcePayload: {
             socialLinks: [],
-            aiResearchSummary: null,
+            aiResearchSummary: lead.aiResearchSummary ?? null,
             enrichment: null,
-            sourceQuery: "manual_entry",
+            sourceQuery: lead.sourceQuery ?? "manual_entry",
           },
         }),
   }));
