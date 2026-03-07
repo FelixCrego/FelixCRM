@@ -514,9 +514,23 @@ export default function LeadExecutionPage() {
     if (currentStatus !== "BUILDING") return;
 
     let active = true;
-    if (!deployStartedAt) setDeployStartedAt(Date.now());
+    const startedAt = deployStartedAt ?? Date.now();
+    if (!deployStartedAt) setDeployStartedAt(startedAt);
+
+    const maxPollingWindowMs = 10 * 60 * 1000;
 
     async function pollDeploymentStatus() {
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
+      if (Date.now() - startedAt > maxPollingWindowMs) {
+        if (!active) return;
+        setDeployError("Deployment status polling timed out. Refresh to check the latest status.");
+        setDeployStageLabel("Build status stale. Refresh to continue tracking.");
+        return;
+      }
+
       try {
         const response = await fetch(`/api/deploy/status?leadId=${encodeURIComponent(leadId)}`, { cache: "no-store" });
         const payload = (await response.json().catch(() => null)) as { siteStatus?: string; deployedUrl?: string | null; readyState?: string; error?: string } | null;
@@ -567,7 +581,7 @@ export default function LeadExecutionPage() {
         }
 
         const readyState = payload?.readyState || "BUILDING";
-        const elapsedSeconds = deployStartedAt ? Math.floor((Date.now() - deployStartedAt) / 1000) : 0;
+        const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
 
         if (elapsedSeconds >= 180 && nextUrl) {
           setDeployProgress(100);
@@ -606,7 +620,7 @@ export default function LeadExecutionPage() {
 
     const interval = window.setInterval(() => {
       void pollDeploymentStatus();
-    }, 4000);
+    }, 15000);
 
     void pollDeploymentStatus();
 
