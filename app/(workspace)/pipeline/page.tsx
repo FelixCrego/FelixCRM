@@ -138,11 +138,13 @@ export default function PipelinePage() {
   const dealsWithDemoOverrides = useMemo(
     () =>
       liveDeals.map((deal) => {
+        const normalizedName = deal.businessName.trim().toLowerCase();
         const byId = demoStageOverrides[deal.id];
-        const byName = demoStageOverrides[`name:${deal.businessName.trim().toLowerCase()}`];
+        const byName = demoStageOverrides[`name:${normalizedName}`];
+
         return {
           ...deal,
-          leadId: leadIdByNormalizedName[deal.businessName.trim().toLowerCase()],
+          leadId: deal.leadId ?? leadIdByNormalizedName[normalizedName],
           stage: byId ?? byName ?? deal.stage,
         };
       }),
@@ -325,7 +327,7 @@ export default function PipelinePage() {
                     href={`/leads/${activeDeal.leadId}`}
                     className="mt-3 inline-flex rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-900"
                   >
-                    Back to Lead Workspace
+                    Open Lead Workspace
                   </Link>
                 ) : null}
               </div>
