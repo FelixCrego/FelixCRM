@@ -7,6 +7,7 @@ type ImportLeadInput = {
   phone?: unknown;
   websiteUrl?: unknown;
   aiResearchSummary?: unknown;
+  sourceQuery?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
         phone: typeof lead?.phone === "string" ? lead.phone.trim() || null : null,
         websiteUrl: typeof lead?.websiteUrl === "string" ? lead.websiteUrl.trim() || null : null,
         aiResearchSummary: typeof lead?.aiResearchSummary === "string" ? lead.aiResearchSummary.trim() || null : null,
-        sourceQuery: "csv_import",
+        sourceQuery: typeof lead?.sourceQuery === "string" ? lead.sourceQuery.trim() || "csv_import" : "csv_import",
       });
       createdCount += 1;
     }
