@@ -58,12 +58,6 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
   const remainingToGoal = Math.max(TOUCHPOINT_GOAL - totalTouchpoints, 0);
   const progressPercent = Math.min((totalTouchpoints / TOUCHPOINT_GOAL) * 100, 100);
 
-  const setQuickDate = (daysToAdd: number) => {
-    const date = new Date();
-    date.setDate(date.getDate() + daysToAdd);
-    setTaskDate(date.toISOString().split('T')[0]);
-  };
-
   const handleAddTask = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!taskTitle || !taskDate || !leadId) return;
@@ -181,10 +175,6 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
             <input type="text" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Objective (e.g., Ask for the close)" className="flex-1 bg-zinc-900 border border-zinc-700 text-white text-sm rounded-lg px-4 py-2.5 focus:outline-none focus:border-indigo-500 placeholder-zinc-500"/>
           </div>
           <div className="grid gap-3">
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setQuickDate(1)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-md border border-zinc-700">Tomorrow</button>
-              <button type="button" onClick={() => setQuickDate(3)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-md border border-zinc-700">In 3 Days</button>
-            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="rounded-lg border border-zinc-700 bg-zinc-900/80 p-2">
                 <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">📅 Follow-up Date</span>
