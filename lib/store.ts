@@ -5,7 +5,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const hasDb = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
-const USERS_TABLE_CANDIDATES = ["User", "user"];
+const USERS_TABLE_CANDIDATES = ["User", "user", "users"];
 const LEADS_TABLE_CANDIDATES = ["leads", "lead", "Lead"];
 const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
 const LEAD_NOTES_TABLE_CANDIDATES = ["lead_notes", "leadNotes", "LeadNotes"];
@@ -395,6 +395,52 @@ export async function listLeads(ownerId: string) {
   return leads.map(leadToMemory);
 }
 
+export type ClaimedLeadCountByUser = {
+  userId: string;
+  userName: string;
+  claimedLeads: number;
+};
+
+export async function listClaimedLeadCountsByUser(): Promise<ClaimedLeadCountByUser[]> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load claimed lead counts.");
+
+  const [users, leads] = await Promise.all([
+    withTableFallback("users", USERS_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: "id,name,full_name,email,username",
+      }),
+    ),
+    withLeadTableFallback((table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: isSnakeLeadsTable(table) ? "owner_id" : "ownerId",
+        [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: "not.is.null",
+      }),
+    ),
+  ]);
+
+  const countsByUserId = new Map<string, number>();
+  for (const lead of leads) {
+    const ownerId = typeof lead.ownerId === "string" ? lead.ownerId : typeof lead.owner_id === "string" ? lead.owner_id : null;
+    if (!ownerId) continue;
+    countsByUserId.set(ownerId, (countsByUserId.get(ownerId) ?? 0) + 1);
+  }
+
+  const usersById = new Map<string, string>();
+  for (const user of users) {
+    if (typeof user.id !== "string") continue;
+    const userName = [user.name, user.full_name, user.username, user.email].find((value) => typeof value === "string" && value.trim().length > 0);
+    usersById.set(user.id, typeof userName === "string" ? userName : user.id);
+  }
+
+  return [...countsByUserId.entries()]
+    .map(([userId, claimedLeads]) => ({
+      userId,
+      userName: usersById.get(userId) ?? userId,
+      claimedLeads,
+    }))
+    .sort((a, b) => b.claimedLeads - a.claimedLeads || a.userName.localeCompare(b.userName));
+}
+
 export async function listClaimableLeads(limit = 100) {
   if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
   const leads = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
@@ -405,59 +451,131 @@ export async function listClaimableLeads(limit = 100) {
   return leads.map(leadToMemory);
 }
 
-export async function createLead(ownerId: string, lead: { businessName: string; phone?: string | null; websiteUrl?: string | null; aiResearchSummary?: string | null; sourceQuery?: string | null }) {
+type CreateLeadInput = { businessName: string; phone?: string | null; websiteUrl?: string | null; aiResearchSummary?: string | null; sourceQuery?: string | null };
+
+export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, options?: { mergeOnDuplicate?: boolean }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
   const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
-  const payload = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(isSnakeLeadsTable(table)
-      ? {
-          business_name: lead.businessName,
-          city: "Unknown",
-          business_type: "Manual",
-          phone: lead.phone ?? null,
-          website_url: lead.websiteUrl ?? null,
-          normalized_name: lead.businessName.toLowerCase(),
-          normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
-          normalized_domain: domain.toLowerCase(),
-          dedupe_key: dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain),
-          status: "NEW",
-          site_status: "UNBUILT",
-          owner_id: ownerId,
-          source_payload: {
-            socialLinks: [],
-            aiResearchSummary: lead.aiResearchSummary ?? null,
-            enrichment: null,
-            sourceQuery: lead.sourceQuery ?? "manual_entry",
-          },
-        }
-      : {
-          businessName: lead.businessName,
-          city: "Unknown",
-          businessType: "Manual",
-          phone: lead.phone ?? null,
-          websiteUrl: lead.websiteUrl ?? null,
-          normalizedName: lead.businessName.toLowerCase(),
-          normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
-          normalizedDomain: domain.toLowerCase(),
-          dedupeKey: dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain),
-          status: "NEW",
-          siteStatus: "UNBUILT",
-          ownerId,
-          sourcePayload: {
-            socialLinks: [],
-            aiResearchSummary: lead.aiResearchSummary ?? null,
-            enrichment: null,
-            sourceQuery: lead.sourceQuery ?? "manual_entry",
-          },
-        }),
-  }));
+  const computedDedupeKey = dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain);
 
-  const created = payload[0];
-  if (!created) throw new Error("Lead was not returned after insert.");
-  return leadToMemory(created);
+  try {
+    const payload = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(isSnakeLeadsTable(table)
+        ? {
+            business_name: lead.businessName,
+            city: "Unknown",
+            business_type: "Manual",
+            phone: lead.phone ?? null,
+            website_url: lead.websiteUrl ?? null,
+            normalized_name: lead.businessName.toLowerCase(),
+            normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
+            normalized_domain: domain.toLowerCase(),
+            dedupe_key: computedDedupeKey,
+            status: "NEW",
+            site_status: "UNBUILT",
+            owner_id: ownerId,
+            source_payload: {
+              socialLinks: [],
+              aiResearchSummary: lead.aiResearchSummary ?? null,
+              enrichment: null,
+              sourceQuery: lead.sourceQuery ?? "manual_entry",
+            },
+          }
+        : {
+            businessName: lead.businessName,
+            city: "Unknown",
+            businessType: "Manual",
+            phone: lead.phone ?? null,
+            websiteUrl: lead.websiteUrl ?? null,
+            normalizedName: lead.businessName.toLowerCase(),
+            normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
+            normalizedDomain: domain.toLowerCase(),
+            dedupeKey: computedDedupeKey,
+            status: "NEW",
+            siteStatus: "UNBUILT",
+            ownerId,
+            sourcePayload: {
+              socialLinks: [],
+              aiResearchSummary: lead.aiResearchSummary ?? null,
+              enrichment: null,
+              sourceQuery: lead.sourceQuery ?? "manual_entry",
+            },
+          }),
+    }));
+
+    const created = payload[0];
+    if (!created) throw new Error("Lead was not returned after insert.");
+    return { lead: leadToMemory(created), merged: false };
+  } catch (error) {
+    if (!(options?.mergeOnDuplicate) || typeof error !== "object" || !error || !("code" in error) || (error as SupabaseError).code !== "23505") {
+      throw error;
+    }
+
+    const mergedLead = await withLeadTableFallback(async (table) => {
+      const dedupeColumn = isSnakeLeadsTable(table) ? "dedupe_key" : "dedupeKey";
+      const payloadColumn = isSnakeLeadsTable(table) ? "source_payload" : "sourcePayload";
+      const rows = await supabaseRequest<any[]>(table, undefined, {
+        select: "*",
+        [dedupeColumn]: `eq.${computedDedupeKey}`,
+        limit: "1",
+      });
+
+      const existing = rows[0];
+      if (!existing) throw error;
+
+      const existingPayload = existing[payloadColumn] && typeof existing[payloadColumn] === "object" ? existing[payloadColumn] as Record<string, unknown> : {};
+      const patchPayload = isSnakeLeadsTable(table)
+        ? {
+            ...(existing.owner_id ? {} : { owner_id: ownerId }),
+            phone: existing.phone ?? lead.phone ?? null,
+            website_url: existing.website_url ?? lead.websiteUrl ?? null,
+            source_payload: {
+              ...existingPayload,
+              aiResearchSummary: typeof existingPayload.aiResearchSummary === "string" && existingPayload.aiResearchSummary.trim()
+                ? existingPayload.aiResearchSummary
+                : lead.aiResearchSummary ?? null,
+              sourceQuery: typeof existingPayload.sourceQuery === "string" && existingPayload.sourceQuery.trim()
+                ? existingPayload.sourceQuery
+                : lead.sourceQuery ?? "csv_import",
+            },
+          }
+        : {
+            ...(existing.ownerId ? {} : { ownerId }),
+            phone: existing.phone ?? lead.phone ?? null,
+            websiteUrl: existing.websiteUrl ?? lead.websiteUrl ?? null,
+            sourcePayload: {
+              ...existingPayload,
+              aiResearchSummary: typeof existingPayload.aiResearchSummary === "string" && existingPayload.aiResearchSummary.trim()
+                ? existingPayload.aiResearchSummary
+                : lead.aiResearchSummary ?? null,
+              sourceQuery: typeof existingPayload.sourceQuery === "string" && existingPayload.sourceQuery.trim()
+                ? existingPayload.sourceQuery
+                : lead.sourceQuery ?? "csv_import",
+            },
+          };
+
+      const mergedRows = await supabaseRequest<any[]>(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify(patchPayload),
+      }, {
+        id: `eq.${existing.id}`,
+        select: "*",
+      });
+
+      return mergedRows[0] ?? existing;
+    });
+
+    return { lead: leadToMemory(mergedLead), merged: true };
+  }
+}
+
+export async function createLead(ownerId: string, lead: CreateLeadInput) {
+  const result = await createOrMergeLead(ownerId, lead, { mergeOnDuplicate: false });
+  return result.lead;
 }
 
 export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "updatedAt" | "status">[]) {
