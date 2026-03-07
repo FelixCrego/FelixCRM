@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type Demo = {
@@ -50,6 +51,7 @@ function formatDateTimeLabel(date: string, time: string) {
 }
 
 export default function DemosPage() {
+  const searchParams = useSearchParams();
   const [demos, setDemos] = useState<Demo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,9 +80,40 @@ export default function DemosPage() {
     loadDemos().catch(() => undefined);
   }, []);
 
+  const pendingDemoFromQuery = useMemo(() => {
+    const date = searchParams.get("date")?.trim() || "";
+    const time = searchParams.get("time")?.trim() || "";
+    const meetLink = searchParams.get("meetLink")?.trim() || "";
+
+    if (!date || !time || !meetLink) {
+      return null;
+    }
+
+    return {
+      id: `pending-${searchParams.get("leadId") || "demo"}-${date}-${time}`,
+      lead_id: searchParams.get("leadId") || null,
+      lead_name: searchParams.get("leadName")?.trim() || "Unknown Lead",
+      selected_date: date,
+      selected_time: time,
+      meet_link: meetLink,
+    } as Demo;
+  }, [searchParams]);
+
   const demosWithMeta = useMemo(
     () =>
-      demos
+      (pendingDemoFromQuery
+        ? [
+            pendingDemoFromQuery,
+            ...demos.filter(
+              (demo) =>
+                !(
+                  demo.lead_name === pendingDemoFromQuery.lead_name &&
+                  demo.selected_date === pendingDemoFromQuery.selected_date &&
+                  demo.selected_time === pendingDemoFromQuery.selected_time
+                ),
+            ),
+          ]
+        : demos)
         .map((demo) => {
           const scheduledAt = parseDemoDateTime(demo.selected_date, demo.selected_time);
           return {
@@ -90,7 +123,7 @@ export default function DemosPage() {
           };
         })
         .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime()),
-    [demos],
+    [demos, pendingDemoFromQuery],
   );
 
   return (
