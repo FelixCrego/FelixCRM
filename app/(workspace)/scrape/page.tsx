@@ -368,17 +368,43 @@ export default function ScrapePage() {
         body: JSON.stringify({ leads: leadsToImport }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Failed to import CSV leads.");
+      if (!response.ok) {
+        if (response.status === 409 && payload.requiresMergeConfirmation) {
+          const shouldMerge = window.confirm(typeof payload.error === "string" ? payload.error : "Duplicate leads found. Merge duplicates and continue import?");
+          if (shouldMerge) {
+            await importCsvLeads(leadsToImport, true);
+          }
+          return;
+        }
+        throw new Error(payload.error ?? "Failed to import CSV leads.");
+      }
 
       const createdCount = Number(payload.createdCount ?? 0);
+      const mergedCount = Number(payload.mergedCount ?? 0);
       const skippedCount = Number(payload.skippedCount ?? 0);
-      setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
+      setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${mergedCount > 0 ? ` Merged ${mergedCount} duplicate${mergedCount === 1 ? "" : "s"}.` : ""}${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
       await refreshLeads();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to import CSV leads.");
     } finally {
       setIsImportingCsv(false);
     }
+  }
+
+  async function importCsvLeads(leadsToImport: ParsedCsvLead[], mergeDuplicates: boolean) {
+    const response = await fetch("/api/leads/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leads: leadsToImport, mergeDuplicates }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Failed to import CSV leads.");
+
+    const createdCount = Number(payload.createdCount ?? 0);
+    const mergedCount = Number(payload.mergedCount ?? 0);
+    const skippedCount = Number(payload.skippedCount ?? 0);
+    setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${mergedCount > 0 ? ` Merged ${mergedCount} duplicate${mergedCount === 1 ? "" : "s"}.` : ""}${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
+    await refreshLeads();
   }
 
   const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
