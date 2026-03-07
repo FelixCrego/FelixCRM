@@ -2165,7 +2165,7 @@ export default function LeadExecutionPage() {
             {callActive && showKeypad ? (
               <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {keypadDigits.map((digit) => (
                     <button
                       key={digit}
@@ -2459,7 +2459,7 @@ export default function LeadExecutionPage() {
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <div className="rounded-md border border-indigo-400/20 bg-zinc-950/70 p-2">
                     <p className="text-[11px] uppercase tracking-wide text-zinc-400">Add custom day</p>
-                    <div className="mt-1.5 flex items-center gap-2">
+                    <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         type="date"
                         value={customDayInput}
@@ -2479,7 +2479,7 @@ export default function LeadExecutionPage() {
 
                   <div className="rounded-md border border-indigo-400/20 bg-zinc-950/70 p-2">
                     <p className="text-[11px] uppercase tracking-wide text-zinc-400">Add custom time</p>
-                    <div className="mt-1.5 flex items-center gap-2">
+                    <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         type="time"
                         value={customTimeInput}
@@ -2534,7 +2534,7 @@ export default function LeadExecutionPage() {
 
             <div className="mt-4">
               <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Available Times ({leadTimeZone})</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {combinedTimeSlots.map((slot) => {
                   const isActive = selectedMeetingTime === slot;
 
