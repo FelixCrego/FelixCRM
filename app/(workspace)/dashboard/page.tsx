@@ -15,6 +15,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useRole } from "@/components/role-context";
 import { useRouter } from "next/navigation";
 
@@ -210,12 +211,39 @@ function TeamLeadDashboard() {
 }
 
 function ManagerDashboard() {
-  const reps = [
-    { name: "Alex Rep", revenue: "$228K", sites: 26, winRate: "31%" },
-    { name: "Nina Cole", revenue: "$207K", sites: 24, winRate: "29%" },
-    { name: "Jordan Lee", revenue: "$184K", sites: 21, winRate: "27%" },
-    { name: "Marco Diaz", revenue: "$169K", sites: 19, winRate: "25%" },
-  ];
+  const [claimedLeadCounts, setClaimedLeadCounts] = useState<Array<{ userId: string; userName: string; claimedLeads: number }>>([]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadClaimedLeadCounts() {
+      try {
+        const response = await fetch("/api/leads/claimed-counts", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const payload = (await response.json().catch(() => null)) as { counts?: Array<{ userId?: string; userName?: string; claimedLeads?: number }> } | null;
+        if (!isActive || !Array.isArray(payload?.counts)) return;
+
+        const normalized = payload.counts
+          .filter((row) => typeof row?.userId === "string" && typeof row?.userName === "string")
+          .map((row) => ({
+            userId: row.userId as string,
+            userName: row.userName as string,
+            claimedLeads: typeof row.claimedLeads === "number" ? row.claimedLeads : 0,
+          }))
+          .sort((a, b) => b.claimedLeads - a.claimedLeads || a.userName.localeCompare(b.userName));
+
+        setClaimedLeadCounts(normalized);
+      } catch {
+        // Keep dashboard shell usable if stats endpoint is unavailable.
+      }
+    }
+
+    void loadClaimedLeadCounts();
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   return (
     <div className="space-y-5">
@@ -239,28 +267,30 @@ function ManagerDashboard() {
       </section>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Leaderboard</h3>
+        <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Claimed Leads by User</h3>
         <div className="overflow-hidden rounded-xl border border-zinc-800">
           <table className="w-full text-left text-sm">
             <thead className="bg-zinc-950 text-zinc-400">
               <tr>
                 <th className="px-4 py-3">Rank</th>
-                <th className="px-4 py-3">Rep</th>
-                <th className="px-4 py-3">Closed Revenue</th>
-                <th className="px-4 py-3">Vercel Sites Deployed</th>
-                <th className="px-4 py-3">Win Rate</th>
+                <th className="px-4 py-3">User</th>
+                <th className="px-4 py-3">Claimed Leads</th>
               </tr>
             </thead>
             <tbody>
-              {reps.map((rep, idx) => (
-                <tr key={rep.name} className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-200">
-                  <td className="px-4 py-3">#{idx + 1}</td>
-                  <td className="px-4 py-3 font-medium">{rep.name}</td>
-                  <td className="px-4 py-3">{rep.revenue}</td>
-                  <td className="px-4 py-3">{rep.sites}</td>
-                  <td className="px-4 py-3 text-emerald-300">{rep.winRate}</td>
+              {claimedLeadCounts.length === 0 ? (
+                <tr className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-400">
+                  <td className="px-4 py-3" colSpan={3}>No claimed leads yet.</td>
                 </tr>
-              ))}
+              ) : (
+                claimedLeadCounts.map((rep, idx) => (
+                  <tr key={rep.userId} className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-200">
+                    <td className="px-4 py-3">#{idx + 1}</td>
+                    <td className="px-4 py-3 font-medium">{rep.userName}</td>
+                    <td className="px-4 py-3 text-emerald-300">{rep.claimedLeads}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
