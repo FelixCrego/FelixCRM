@@ -13,6 +13,18 @@ type FollowUpTask = {
   status: 'pending' | 'completed';
 };
 
+const TOUCHPOINT_GOAL = 7;
+
+const CADENCE_BLUEPRINT: Array<{ dayOffset: number; type: FollowUpTask['type']; title: string }> = [
+  { dayOffset: 1, type: 'Call', title: 'Intro call + confirm decision-maker' },
+  { dayOffset: 3, type: 'Email', title: 'Send proof/results recap' },
+  { dayOffset: 6, type: 'SMS', title: 'Quick pulse check + urgency text' },
+  { dayOffset: 9, type: 'Call', title: 'Handle objections live' },
+  { dayOffset: 13, type: 'Email', title: 'Share offer + implementation path' },
+  { dayOffset: 18, type: 'SMS', title: 'Last chance reminder' },
+  { dayOffset: 24, type: 'Call', title: 'Final close attempt + next step' },
+];
+
 type FollowUpEngineProps = {
   leadId?: string;
   leadName?: string;
@@ -25,6 +37,7 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
   const [taskDate, setTaskDate] = useState('');
   const [taskTime, setTaskTime] = useState('');
   const [tasks, setTasks] = useState<FollowUpTask[]>([]);
+  const [isBuildingCadence, setIsBuildingCadence] = useState(false);
 
   useEffect(() => {
     if (!leadId) return;
@@ -32,12 +45,18 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
       const query: any = supabase.from('follow_ups').select('*');
       const { data } = await query
         .eq('lead_id', leadId)
-        .eq('status', 'pending')
-        .order('due_date', { ascending: true });
+        .order('due_date', { ascending: true })
+        .order('due_time', { ascending: true });
       if (data) setTasks(data as FollowUpTask[]);
     };
     fetchLeadTasks();
   }, [leadId]);
+
+  const completedCount = tasks.filter((task) => task.status === 'completed').length;
+  const pendingTasks = tasks.filter((task) => task.status === 'pending');
+  const totalTouchpoints = tasks.length;
+  const remainingToGoal = Math.max(TOUCHPOINT_GOAL - totalTouchpoints, 0);
+  const progressPercent = Math.min((totalTouchpoints / TOUCHPOINT_GOAL) * 100, 100);
 
   const setQuickDate = (daysToAdd: number) => {
     const date = new Date();
@@ -70,8 +89,46 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
   };
 
   const completeTask = async (taskId: number) => {
-    setTasks(prev => prev.filter(t => t.id !== taskId));
+    setTasks(prev => prev.map((task) => (task.id === taskId ? { ...task, status: 'completed' } : task)));
     await (supabase.from('follow_ups') as any).update({ status: 'completed' }).eq('id', taskId);
+  };
+
+  const buildCadence = async () => {
+    if (!leadId || remainingToGoal === 0) return;
+
+    setIsBuildingCadence(true);
+
+    const now = new Date();
+    const seededTasks = CADENCE_BLUEPRINT.slice(totalTouchpoints, TOUCHPOINT_GOAL).map((step, index) => {
+      const dueDate = new Date(now);
+      dueDate.setDate(dueDate.getDate() + step.dayOffset + index);
+
+      return {
+        lead_id: leadId,
+        lead_name: leadName || 'Unknown Lead',
+        rep_id: currentRepId,
+        title: step.title,
+        type: step.type,
+        due_date: dueDate.toISOString().split('T')[0],
+        due_time: '10:00',
+        status: 'pending' as const,
+      };
+    });
+
+    if (!seededTasks.length) {
+      setIsBuildingCadence(false);
+      return;
+    }
+
+    const optimisticRows = seededTasks.map((task, index) => ({ ...task, id: Date.now() + index }));
+    setTasks((previous) => [...previous, ...optimisticRows]);
+
+    const { error } = await (supabase.from('follow_ups') as any).insert(seededTasks);
+    if (error) {
+      console.error('Error generating cadence:', error);
+    }
+
+    setIsBuildingCadence(false);
   };
 
   return (
@@ -82,7 +139,32 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
             <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             Follow-up Engine
           </h3>
-          <p className="text-xs text-zinc-400 mt-1">Never let a deal go cold.</p>
+          <p className="text-xs text-zinc-400 mt-1">Hit 7 touchpoints to maximize close rate and keep momentum high.</p>
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-xl border border-indigo-400/25 bg-indigo-500/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-wider text-indigo-200">Rep Momentum Tracker</p>
+            <p className="mt-1 text-sm font-semibold text-white">{totalTouchpoints}/{TOUCHPOINT_GOAL} touchpoints scheduled • {completedCount} completed</p>
+            <p className="mt-1 text-xs text-indigo-100/80">
+              {remainingToGoal === 0
+                ? 'You reached the full cadence. Keep pressure with personalized follow-ups.'
+                : `${remainingToGoal} more touchpoint${remainingToGoal > 1 ? 's' : ''} to lock in a complete follow-up plan.`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={buildCadence}
+            disabled={isBuildingCadence || remainingToGoal === 0}
+            className="rounded-md border border-indigo-300/40 bg-indigo-500/20 px-3 py-2 text-xs font-bold uppercase tracking-wide text-indigo-100 transition hover:bg-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isBuildingCadence ? 'Building Cadence...' : remainingToGoal === 0 ? 'Cadence Complete' : `Auto-build next ${remainingToGoal}`}
+          </button>
+        </div>
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-900">
+          <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all" style={{ width: `${progressPercent}%` }} />
         </div>
       </div>
 
@@ -114,11 +196,11 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
 
       <div>
         <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Pending Touchpoints</h4>
-        {tasks.length === 0 ? (
+        {pendingTasks.length === 0 ? (
           <div className="text-center py-6 border border-dashed border-zinc-800 rounded-xl bg-zinc-950/50"><p className="text-sm text-zinc-500 font-medium">No follow-ups scheduled.</p></div>
         ) : (
           <div className="space-y-3">
-            {tasks.map((task) => (
+            {pendingTasks.map((task) => (
               <div key={task.id} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 p-3 rounded-xl">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-lg">{task.type === 'Call' ? '📞' : task.type === 'Email' ? '✉️' : task.type === 'SMS' ? '💬' : '📌'}</div>
