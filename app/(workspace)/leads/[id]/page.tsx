@@ -1059,6 +1059,23 @@ export default function LeadExecutionPage() {
     }
   }
 
+  function goToUpcomingDemos() {
+    if (!meetingLink || !selectedMeetingDay || !selectedMeetingTime) {
+      router.push("/demos");
+      return;
+    }
+
+    const params = new URLSearchParams({
+      leadId,
+      leadName,
+      date: selectedMeetingDay,
+      time: selectedMeetingTime,
+      meetLink: meetingLink,
+    });
+
+    router.push(`/demos?${params.toString()}`);
+  }
+
   async function copyInviteText() {
     if (!meetingLink) return;
     const dayLabel =
@@ -2486,7 +2503,7 @@ export default function LeadExecutionPage() {
               <div className="mt-3 space-y-2">
                 <button
                   type="button"
-                  onClick={() => router.push("/demos")}
+                  onClick={goToUpcomingDemos}
                   className="w-full rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400"
                 >
                   Booked Demo → View Upcoming Demos
