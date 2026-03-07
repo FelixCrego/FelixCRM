@@ -128,6 +128,10 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newLead, setNewLead] = useState({ businessName: "", phone: "", website: "" });
   const [addLeadError, setAddLeadError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
   const [industry, setIndustry] = useState("ALL");
@@ -203,6 +207,43 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     }
   }
 
+
+
+  async function handleDeleteLeads(leadIds: string[]) {
+    if (!leadIds.length) return;
+    setDeleteError(null);
+    setDeleteSuccess(null);
+    setIsDeleting(true);
+
+    try {
+      const response = await fetch("/api/leads", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds }),
+      });
+      const payload = (await response.json().catch(() => null)) as { deleted?: number; forbidden?: number; missing?: number; error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Unable to delete leads.");
+      }
+
+      const deleted = Number(payload?.deleted ?? 0);
+      const forbidden = Number(payload?.forbidden ?? 0);
+      const missing = Number(payload?.missing ?? 0);
+      const fragments = [`Deleted ${deleted} lead${deleted === 1 ? "" : "s"}.`];
+      if (forbidden > 0) fragments.push(`${forbidden} could not be deleted because they are owned by another user.`);
+      if (missing > 0) fragments.push(`${missing} could not be found.`);
+      setDeleteSuccess(fragments.join(" "));
+      setSelectedLeadIds((prev) => prev.filter((id) => !leadIds.includes(id)));
+      setCreatedLeads((prev) => prev.filter((lead) => !leadIds.includes(lead.id)));
+      router.refresh();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Unable to delete leads.");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   const filteredLeads = useMemo(() => {
     return (displayLeads || []).filter((lead) => {
       const safeSearchBlob = [lead?.businessName ?? "", lead?.businessType ?? "", lead?.phone ?? "", lead?.email ?? ""].join(" ").toLowerCase();
@@ -233,6 +274,9 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       return left.localeCompare(right) * locationSortOrder;
     });
   }, [filteredLeads, locationSortDirection]);
+
+  const selectedCount = selectedLeadIds.length;
+  const selectableLeadIds = useMemo(() => sortedLeads.map((lead) => lead.id), [sortedLeads]);
 
   const cumulativeClosedValue = useMemo(() => sortedLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [sortedLeads]);
   const averageClosedDealValue = useMemo(
@@ -295,6 +339,9 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
         </div>
       </header>
 
+      {deleteError ? <p className="rounded-lg border border-rose-600/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{deleteError}</p> : null}
+      {deleteSuccess ? <p className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{deleteSuccess}</p> : null}
+
       {viewMode === "closed" ? (
         <section className="grid gap-3 md:grid-cols-2">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
@@ -307,6 +354,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           </div>
         </section>
       ) : null}
+
 
       {viewMode === "closed" ? (
         <section className="mb-8">
@@ -496,7 +544,8 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             </select>
           </label>
 
-          {viewMode === "closed" ? (
+    
+      {viewMode === "closed" ? (
             <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
               <SlidersHorizontal className="h-4 w-4 text-zinc-500" />
               <select value={closedDateRange} onChange={(event) => setClosedDateRange(event.target.value as "ALL" | "7D" | "30D" | "90D" | "YTD")} className="w-full bg-transparent outline-none">
@@ -515,6 +564,23 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
         <table className="w-full text-left">
           <thead className="border-b border-zinc-800 bg-zinc-950/70 text-xs uppercase tracking-[0.18em] text-zinc-500">
             <tr>
+              {viewMode === "open" ? (
+                <th className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={selectableLeadIds.length > 0 && selectedLeadIds.length === selectableLeadIds.length}
+                    onChange={(event) => {
+                      if (event.target.checked) {
+                        setSelectedLeadIds(selectableLeadIds);
+                        return;
+                      }
+                      setSelectedLeadIds([]);
+                    }}
+                    className="size-4 rounded border-zinc-700 bg-zinc-900"
+                    aria-label="Select all leads"
+                  />
+                </th>
+              ) : null}
               <th className="px-4 py-3">Business Name</th>
               <th className="px-4 py-3">
                 <button
@@ -531,7 +597,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
               <th className="px-4 py-3">Vercel Status</th>
               {viewMode === "closed" ? <th className="px-4 py-3">Deal Value</th> : null}
               {viewMode === "closed" ? <th className="px-4 py-3">Closed Date</th> : null}
-              <th className="px-4 py-3" />
+              <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -541,6 +607,23 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                 onClick={() => router.push(`/leads/${lead?.id}`)}
                 className="group cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-900/50"
               >
+                {viewMode === "open" ? (
+                  <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedLeadIds.includes(lead.id)}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          setSelectedLeadIds((prev) => [...prev, lead.id]);
+                          return;
+                        }
+                        setSelectedLeadIds((prev) => prev.filter((id) => id !== lead.id));
+                      }}
+                      className="size-4 rounded border-zinc-700 bg-zinc-900"
+                      aria-label={`Select ${lead.businessName}`}
+                    />
+                  </td>
+                ) : null}
                 <td className="px-4 py-3 font-semibold text-white">{lead?.businessName ?? "Unknown business"}</td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.city || "Unknown"}</td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td>
@@ -560,10 +643,22 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                 </td>
                 {viewMode === "closed" ? <td className="px-4 py-3 font-medium text-emerald-200">{formatCurrency(lead?.closedDealValue)}</td> : null}
                 {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.closedAt ? new Date(lead.closedAt).toLocaleDateString() : "—"}</td> : null}
-                <td className="px-4 py-3 text-right">
-                  <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 bg-zinc-900/40 px-2.5 py-1.5 text-xs text-zinc-300 opacity-0 transition group-hover:opacity-100">
-                    Open Workspace → <ArrowRight className="h-3.5 w-3.5" />
-                  </span>
+                <td className="px-4 py-3 text-right" onClick={(event) => event.stopPropagation()}>
+                  <div className="inline-flex items-center gap-2">
+                    {viewMode === "open" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLeads([lead.id])}
+                        disabled={isDeleting}
+                        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-60"
+                      >
+                        {isDeleting ? "Deleting..." : "Delete"}
+                      </button>
+                    ) : null}
+                    <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 bg-zinc-900/40 px-2.5 py-1.5 text-xs text-zinc-300">
+                      Open Workspace → <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -574,6 +669,22 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           <div className="p-8 text-center text-sm text-zinc-500">No leads match your filters. Try broadening status, industry, or last-contacted constraints.</div>
         )}
       </section>
+
+      {viewMode === "open" && selectedCount > 0 ? (
+        <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,860px)] -translate-x-1/2 rounded-2xl border border-zinc-700 bg-zinc-900/95 p-3 shadow-2xl shadow-black/40 backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-zinc-300">{selectedCount} lead{selectedCount > 1 ? "s" : ""} selected</p>
+            <button
+              type="button"
+              onClick={() => handleDeleteLeads(selectedLeadIds)}
+              disabled={isDeleting}
+              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:opacity-60"
+            >
+              {isDeleting ? "Deleting..." : "Delete Selected Leads"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
