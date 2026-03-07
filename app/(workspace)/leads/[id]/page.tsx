@@ -1052,8 +1052,6 @@ export default function LeadExecutionPage() {
       }
 
       setMeetingLink(payload.meetLink);
-      router.push("/demos");
-      router.refresh();
     } catch (error) {
       setMeetingError(error instanceof Error ? error.message : "Unable to generate a Google Meet link.");
     } finally {
@@ -2486,6 +2484,13 @@ export default function LeadExecutionPage() {
             {meetingError ? <p className="mt-2 text-xs text-rose-300">{meetingError}</p> : null}
             {meetingLink ? (
               <div className="mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => router.push("/demos")}
+                  className="w-full rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400"
+                >
+                  Booked Demo → View Upcoming Demos
+                </button>
                 <a
                   href={meetingLink.startsWith("http") ? meetingLink : `https://${meetingLink}`}
                   target="_blank"
