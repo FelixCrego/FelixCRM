@@ -35,6 +35,13 @@ type LeadRecord = {
       primaryColor?: string;
       secondaryColor?: string;
     };
+    demoBooking?: {
+      date?: string;
+      time?: string;
+      timeZone?: string;
+      meetLink?: string;
+      bookedAt?: string;
+    };
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
@@ -44,6 +51,13 @@ type LeadRecord = {
       heroImageUrl?: string;
       primaryColor?: string;
       secondaryColor?: string;
+    };
+    demoBooking?: {
+      date?: string;
+      time?: string;
+      timeZone?: string;
+      meetLink?: string;
+      bookedAt?: string;
     };
   } | null;
   aiResearchSummary?: string | null;
@@ -1052,13 +1066,61 @@ export default function LeadExecutionPage() {
       }
 
       setMeetingLink(payload.meetLink);
-      router.push("/demos");
-      router.refresh();
+
+      const existingSourcePayload = (lead?.source_payload ?? lead?.sourcePayload ?? {}) as Record<string, unknown>;
+      const nextDemoBooking = {
+        date: selectedMeetingDay,
+        time: selectedMeetingTime,
+        timeZone: leadTimeZone,
+        meetLink: payload.meetLink,
+        bookedAt: new Date().toISOString(),
+      };
+
+      const { error: persistDemoError } = await supabase
+        .from("leads")
+        .update({
+          source_payload: {
+            ...existingSourcePayload,
+            demoBooking: nextDemoBooking,
+          },
+        })
+        .eq("id", leadId);
+
+      if (!persistDemoError) {
+        setLead((previous) =>
+          previous
+            ? {
+                ...previous,
+                source_payload: {
+                  ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+                  demoBooking: nextDemoBooking,
+                },
+              }
+            : previous,
+        );
+      }
     } catch (error) {
       setMeetingError(error instanceof Error ? error.message : "Unable to generate a Google Meet link.");
     } finally {
       setMeetingLoading(false);
     }
+  }
+
+  function goToUpcomingDemos() {
+    if (!meetingLink || !selectedMeetingDay || !selectedMeetingTime) {
+      router.push("/demos");
+      return;
+    }
+
+    const params = new URLSearchParams({
+      leadId,
+      leadName,
+      date: selectedMeetingDay,
+      time: selectedMeetingTime,
+      meetLink: meetingLink,
+    });
+
+    router.push(`/demos?${params.toString()}`);
   }
 
   async function copyInviteText() {
@@ -2486,6 +2548,13 @@ export default function LeadExecutionPage() {
             {meetingError ? <p className="mt-2 text-xs text-rose-300">{meetingError}</p> : null}
             {meetingLink ? (
               <div className="mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={goToUpcomingDemos}
+                  className="w-full rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400"
+                >
+                  Booked Demo → View Upcoming Demos
+                </button>
                 <a
                   href={meetingLink.startsWith("http") ? meetingLink : `https://${meetingLink}`}
                   target="_blank"

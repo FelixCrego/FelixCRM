@@ -12,6 +12,23 @@ type Demo = {
   meet_link: string;
 };
 
+type LeadApiRecord = {
+  id: string;
+  businessName?: string | null;
+  business_name?: string | null;
+  status?: string | null;
+  sourcePayload?: Record<string, unknown> | null;
+  source_payload?: Record<string, unknown> | null;
+};
+
+type PersistedBookedDemo = {
+  date?: string;
+  time?: string;
+  meetLink?: string;
+};
+
+const DEMO_CACHE_KEY = "felix:pending-upcoming-demos";
+
 function parseDemoDateTime(date: string, time: string) {
   const normalized = time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
   if (!normalized) {
@@ -49,27 +66,146 @@ function formatDateTimeLabel(date: string, time: string) {
   };
 }
 
+function isValidDateString(input: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(input);
+}
+
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeDemo(value: unknown): Demo | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+
+  const selectedDate = typeof raw.selected_date === "string" ? raw.selected_date.trim() : "";
+  const selectedTime = typeof raw.selected_time === "string" ? raw.selected_time.trim() : "";
+  const meetLink = typeof raw.meet_link === "string" ? raw.meet_link.trim() : "";
+  const leadName = typeof raw.lead_name === "string" && raw.lead_name.trim() ? raw.lead_name.trim() : "Unknown Lead";
+
+  if (!selectedDate || !selectedTime || !meetLink || !isValidDateString(selectedDate)) return null;
+  if (selectedDate < getTodayKey()) return null;
+
+  const rawLeadId = typeof raw.lead_id === "string" ? raw.lead_id.trim() : "";
+  return {
+    id:
+      typeof raw.id === "string" && raw.id.trim()
+        ? raw.id
+        : `cached-${rawLeadId || leadName}-${selectedDate}-${selectedTime}`,
+    lead_id: rawLeadId || null,
+    lead_name: leadName,
+    selected_date: selectedDate,
+    selected_time: selectedTime,
+    meet_link: meetLink,
+  };
+}
+
+function getDemoDedupeKey(demo: Demo) {
+  return `${demo.lead_id || demo.lead_name}::${demo.selected_date}::${demo.selected_time}`;
+}
+
+function resolveBookedDemoFromLead(lead: LeadApiRecord): Demo | null {
+  if ((lead.status || "").toUpperCase() === "CLOSED") return null;
+
+  const sourcePayload = (lead.sourcePayload ?? lead.source_payload ?? {}) as Record<string, unknown>;
+  const demoBooking = (sourcePayload.demoBooking ?? sourcePayload.demo_booking ?? null) as PersistedBookedDemo | null;
+
+  if (!demoBooking) return null;
+
+  const date = typeof demoBooking.date === "string" ? demoBooking.date.trim() : "";
+  const time = typeof demoBooking.time === "string" ? demoBooking.time.trim() : "";
+  const meetLink = typeof demoBooking.meetLink === "string" ? demoBooking.meetLink.trim() : "";
+
+  if (!date || !time || !meetLink || !isValidDateString(date)) return null;
+  if (date < getTodayKey()) return null;
+
+  const leadName =
+    (typeof lead.businessName === "string" && lead.businessName.trim()) ||
+    (typeof lead.business_name === "string" && lead.business_name.trim()) ||
+    "Unknown Lead";
+
+  return {
+    id: `lead-booking-${lead.id}-${date}-${time}`,
+    lead_id: lead.id,
+    lead_name: leadName,
+    selected_date: date,
+    selected_time: time,
+    meet_link: meetLink,
+  };
+}
+
+function saveCachedDemos(demos: Demo[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(DEMO_CACHE_KEY, JSON.stringify(demos));
+}
+
 export default function DemosPage() {
   const [demos, setDemos] = useState<Demo[]>([]);
+  const [persistedLeadDemos, setPersistedLeadDemos] = useState<Demo[]>([]);
+  const [cachedPendingDemos, setCachedPendingDemos] = useState<Demo[]>([]);
+  const [pendingDemoFromQuery, setPendingDemoFromQuery] = useState<Demo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const rawCached = window.localStorage.getItem(DEMO_CACHE_KEY);
+    if (!rawCached) {
+      setCachedPendingDemos([]);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(rawCached) as unknown;
+      const normalized = Array.isArray(parsed) ? parsed.map(normalizeDemo).filter((demo): demo is Demo => Boolean(demo)) : [];
+      setCachedPendingDemos(normalized);
+      saveCachedDemos(normalized);
+    } catch {
+      setCachedPendingDemos([]);
+      window.localStorage.removeItem(DEMO_CACHE_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     async function loadDemos() {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/demos", { cache: "no-store" });
-        const payload = (await response.json().catch(() => null)) as { demos?: Demo[]; error?: string } | null;
+        const [demosResponse, leadsResponse] = await Promise.all([
+          fetch("/api/demos", { cache: "no-store" }),
+          fetch("/api/leads", { cache: "no-store" }),
+        ]);
 
-        if (!response.ok) {
-          throw new Error(payload?.error || "Failed to load upcoming demos.");
+        const demosPayload = (await demosResponse.json().catch(() => null)) as { demos?: Demo[]; error?: string } | null;
+        const leadsPayload = (await leadsResponse.json().catch(() => null)) as { leads?: LeadApiRecord[]; error?: string } | null;
+
+        if (!demosResponse.ok) {
+          throw new Error(demosPayload?.error || "Failed to load upcoming demos.");
         }
 
-        setDemos(payload?.demos ?? []);
+        if (!leadsResponse.ok) {
+          throw new Error(leadsPayload?.error || "Failed to load leads for booked demo tracking.");
+        }
+
+        const allLeads = leadsPayload?.leads ?? [];
+        const closedLeadIds = new Set(allLeads.filter((lead) => (lead.status || "").toUpperCase() === "CLOSED").map((lead) => lead.id));
+
+        setDemos(demosPayload?.demos ?? []);
+        setPersistedLeadDemos(allLeads.map(resolveBookedDemoFromLead).filter((demo): demo is Demo => Boolean(demo)));
+        setCachedPendingDemos((previous) => {
+          const nextCached = previous.filter((demo) => {
+            if (demo.selected_date < getTodayKey()) return false;
+            if (demo.lead_id && closedLeadIds.has(demo.lead_id)) return false;
+            return true;
+          });
+          saveCachedDemos(nextCached);
+          return nextCached;
+        });
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load upcoming demos.");
         setDemos([]);
+        setPersistedLeadDemos([]);
       } finally {
         setLoading(false);
       }
@@ -78,20 +214,64 @@ export default function DemosPage() {
     loadDemos().catch(() => undefined);
   }, []);
 
-  const demosWithMeta = useMemo(
-    () =>
-      demos
-        .map((demo) => {
-          const scheduledAt = parseDemoDateTime(demo.selected_date, demo.selected_time);
-          return {
-            ...demo,
-            scheduledAt,
-            ...formatDateTimeLabel(demo.selected_date, demo.selected_time),
-          };
-        })
-        .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime()),
-    [demos],
-  );
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const date = params.get("date")?.trim() || "";
+    const time = params.get("time")?.trim() || "";
+    const meetLink = params.get("meetLink")?.trim() || "";
+
+    if (!date || !time || !meetLink || !isValidDateString(date) || date < getTodayKey()) {
+      setPendingDemoFromQuery(null);
+      return;
+    }
+
+    const nextPending: Demo = {
+      id: `pending-${params.get("leadId") || "demo"}-${date}-${time}`,
+      lead_id: params.get("leadId") || null,
+      lead_name: params.get("leadName")?.trim() || "Unknown Lead",
+      selected_date: date,
+      selected_time: time,
+      meet_link: meetLink,
+    };
+
+    setPendingDemoFromQuery(nextPending);
+    setCachedPendingDemos((previous) => {
+      const map = new Map<string, Demo>();
+      for (const demo of previous) {
+        map.set(getDemoDedupeKey(demo), demo);
+      }
+      map.set(getDemoDedupeKey(nextPending), nextPending);
+      const nextCached = [...map.values()];
+      saveCachedDemos(nextCached);
+      return nextCached;
+    });
+  }, []);
+
+  const demosWithMeta = useMemo(() => {
+    const combined = [...cachedPendingDemos, ...(pendingDemoFromQuery ? [pendingDemoFromQuery] : []), ...demos, ...persistedLeadDemos];
+
+    const dedupedBySlot = new Map<string, Demo>();
+    for (const demo of combined) {
+      if (demo.selected_date < getTodayKey()) continue;
+      const dedupeKey = getDemoDedupeKey(demo);
+      dedupedBySlot.set(dedupeKey, demo);
+    }
+
+    return [...dedupedBySlot.values()]
+      .map((demo) => {
+        const scheduledAt = parseDemoDateTime(demo.selected_date, demo.selected_time);
+        return {
+          ...demo,
+          scheduledAt,
+          ...formatDateTimeLabel(demo.selected_date, demo.selected_time),
+        };
+      })
+      .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime());
+  }, [cachedPendingDemos, demos, pendingDemoFromQuery, persistedLeadDemos]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
