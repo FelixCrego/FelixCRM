@@ -123,6 +123,7 @@ function formatCurrency(value?: number | null) {
 }
 
 export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsListViewProps) {
+  const LEADS_PER_PAGE = 10;
   const router = useRouter();
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -138,6 +139,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
   const [locationSortDirection, setLocationSortDirection] = useState<"asc" | "desc">("asc");
+  const [currentPage, setCurrentPage] = useState(1);
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
   const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
@@ -275,8 +277,24 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     });
   }, [filteredLeads, locationSortDirection]);
 
+  const totalPages = Math.max(1, Math.ceil(sortedLeads.length / LEADS_PER_PAGE));
+  const paginatedLeads = useMemo(() => {
+    const start = (currentPage - 1) * LEADS_PER_PAGE;
+    return sortedLeads.slice(start, start + LEADS_PER_PAGE);
+  }, [currentPage, sortedLeads, LEADS_PER_PAGE]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, status, industry, lastContacted, closedDateRange, viewMode]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   const selectedCount = selectedLeadIds.length;
-  const selectableLeadIds = useMemo(() => sortedLeads.map((lead) => lead.id), [sortedLeads]);
+  const selectableLeadIds = useMemo(() => paginatedLeads.map((lead) => lead.id), [paginatedLeads]);
 
   const cumulativeClosedValue = useMemo(() => sortedLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [sortedLeads]);
   const averageClosedDealValue = useMemo(
@@ -601,7 +619,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             </tr>
           </thead>
           <tbody>
-            {(sortedLeads || []).map((lead) => (
+            {(paginatedLeads || []).map((lead) => (
               <tr
                 key={lead?.id}
                 onClick={() => router.push(`/leads/${lead?.id}`)}
@@ -668,6 +686,35 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
         {(sortedLeads || []).length === 0 && (
           <div className="p-8 text-center text-sm text-zinc-500">No leads match your filters. Try broadening status, industry, or last-contacted constraints.</div>
         )}
+
+        {(sortedLeads || []).length > 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 px-4 py-3 text-sm text-zinc-400">
+            <p>
+              Showing {(currentPage - 1) * LEADS_PER_PAGE + 1}-{Math.min(currentPage * LEADS_PER_PAGE, sortedLeads.length)} of {sortedLeads.length} leads
+            </p>
+            <div className="inline-flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <span className="text-xs text-zinc-500">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage >= totalPages}
+                className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {viewMode === "open" && selectedCount > 0 ? (
