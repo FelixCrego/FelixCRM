@@ -35,11 +35,13 @@ function formatCurrency(value: number) {
 }
 
 function toPipelineStage(lead: Lead): Stage {
-  if (lead.status === "CLOSED") return "Closed Won";
-  if (lead.status === "DISQUALIFIED") return "No Show";
-  if (lead.stripeCheckoutLink) return "Payment Pending";
-  if (lead.status === "CONTACTED") return "Pitched";
-  if (lead.status === "IN_PROGRESS") return "Awaiting Approval";
+  const rawStatus = String(lead.status ?? "").trim().toUpperCase();
+
+  if (rawStatus === "CLOSED" || rawStatus === "CLOSED WON") return "Closed Won";
+  if (rawStatus === "DISQUALIFIED" || rawStatus === "NO SHOW") return "No Show";
+  if (lead.stripeCheckoutLink || rawStatus === "PAYMENT PENDING") return "Payment Pending";
+  if (rawStatus === "AWAITING APPROVAL" || rawStatus === "AWAITING_APPROVAL") return "Awaiting Approval";
+  if (rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
   return "New";
 }
 
@@ -114,7 +116,11 @@ export default function PipelinePage() {
         }
 
         if (isMounted) {
-          setLiveDeals(payload.leads.map(leadToDeal));
+          setLiveDeals(
+            payload.leads
+              .filter((lead) => String(lead.status ?? "").trim().toUpperCase() !== "IN_PROGRESS")
+              .map(leadToDeal),
+          );
         }
       } catch {
         if (isMounted) setLiveDeals([]);
