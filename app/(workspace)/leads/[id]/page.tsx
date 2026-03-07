@@ -100,6 +100,14 @@ type LeadNoteRecord = {
   created_at?: string;
 };
 
+type CompletedFollowUpTask = {
+  id: number;
+  title: string;
+  type: string;
+  due_date: string;
+  due_time: string;
+};
+
 type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
 type ScriptTab = "Scripts" | "Objections";
@@ -1772,6 +1780,29 @@ export default function LeadExecutionPage() {
     setTasks((previous) => previous.map((item) => (item.id === task.id ? (payload.task as LeadTaskRecord) : item)));
   }
 
+  async function saveCompletedFollowUpToNotes(task: CompletedFollowUpTask) {
+    if (!leadId) return;
+
+    const response = await fetch("/api/lead-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
+        channel: "notes",
+        content: `✅ Follow-up completed: ${task.title} (${task.type}) • Scheduled ${task.due_date} at ${task.due_time}`,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.note) {
+      console.error(payload?.error || "Unable to save completed follow-up to notes.");
+      return;
+    }
+
+    setNotes((previous) => [payload.note as LeadNoteRecord, ...previous]);
+  }
+
   const filteredNotes = notes.filter((note) => {
     const type = resolveNoteType(note);
     if (activeTab === "Notes") {
@@ -2165,7 +2196,7 @@ export default function LeadExecutionPage() {
             {callActive && showKeypad ? (
               <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {keypadDigits.map((digit) => (
                     <button
                       key={digit}
@@ -2433,7 +2464,7 @@ export default function LeadExecutionPage() {
             ) : null}
           </div>
 
-          <FollowUpEngine leadId={leadId} leadName={leadName} />
+          <FollowUpEngine leadId={leadId} leadName={leadName} onTaskCompleted={saveCompletedFollowUpToNotes} />
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between gap-2">
@@ -2459,7 +2490,7 @@ export default function LeadExecutionPage() {
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <div className="rounded-md border border-indigo-400/20 bg-zinc-950/70 p-2">
                     <p className="text-[11px] uppercase tracking-wide text-zinc-400">Add custom day</p>
-                    <div className="mt-1.5 flex items-center gap-2">
+                    <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         type="date"
                         value={customDayInput}
@@ -2479,7 +2510,7 @@ export default function LeadExecutionPage() {
 
                   <div className="rounded-md border border-indigo-400/20 bg-zinc-950/70 p-2">
                     <p className="text-[11px] uppercase tracking-wide text-zinc-400">Add custom time</p>
-                    <div className="mt-1.5 flex items-center gap-2">
+                    <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         type="time"
                         value={customTimeInput}
@@ -2534,7 +2565,7 @@ export default function LeadExecutionPage() {
 
             <div className="mt-4">
               <p className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Available Times ({leadTimeZone})</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {combinedTimeSlots.map((slot) => {
                   const isActive = selectedMeetingTime === slot;
 
