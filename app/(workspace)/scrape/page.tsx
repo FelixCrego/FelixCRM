@@ -35,6 +35,7 @@ type ParsedCsvLead = {
   businessName: string;
   phone?: string;
   websiteUrl?: string;
+  aiResearchSummary?: string;
 };
 
 function parseCsvRows(raw: string): string[][] {
@@ -93,9 +94,10 @@ function parseLeadsFromCsv(raw: string): ParsedCsvLead[] {
   const businessNameIndex = normalizedHeaders.findIndex((header) => ["businessname", "name", "company", "business"].includes(header));
   const phoneIndex = normalizedHeaders.findIndex((header) => ["phone", "phonenumber", "telephone"].includes(header));
   const websiteIndex = normalizedHeaders.findIndex((header) => ["website", "websiteurl", "url", "domain"].includes(header));
+  const aiResearchSummaryIndex = normalizedHeaders.findIndex((header) => ["airesearchsummary", "deepaianalysis", "aianalysis", "analysis", "summary", "researchsummary"].includes(header));
 
   if (businessNameIndex < 0) {
-    throw new Error("CSV must include a business name column (businessName, name, company, or business).");
+    throw new Error("CSV must include a business name column (businessName, name, company, or business). Optional columns: phone, website, and Deep AI analysis.");
   }
 
   return dataRows
@@ -103,6 +105,7 @@ function parseLeadsFromCsv(raw: string): ParsedCsvLead[] {
       businessName: row[businessNameIndex]?.trim() || "",
       phone: phoneIndex >= 0 ? row[phoneIndex]?.trim() || "" : "",
       websiteUrl: websiteIndex >= 0 ? row[websiteIndex]?.trim() || "" : "",
+      aiResearchSummary: aiResearchSummaryIndex >= 0 ? row[aiResearchSummaryIndex]?.trim() || "" : "",
     }))
     .filter((lead) => lead.businessName.length > 0);
 }
@@ -321,7 +324,7 @@ export default function ScrapePage() {
     try {
       const csvText = await file.text();
       const leadsToImport = parseLeadsFromCsv(csvText);
-      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.");
+      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.\nRequired column: business name. Optional columns: phone, website, and Deep AI analysis.");
 
       const response = await fetch("/api/leads/import", {
         method: "POST",
