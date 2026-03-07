@@ -342,7 +342,7 @@ export default function DemosPage() {
                 demo.isToday ? "border-emerald-500/60" : "border-zinc-800"
               }`}
             >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px_320px] lg:items-center">
                 <div className="flex items-start gap-4">
                   <div className="min-w-36 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">{demo.dateTimeLabel}</div>
                   <div>
@@ -356,21 +356,25 @@ export default function DemosPage() {
                   </div>
                 </div>
 
-                <div className="flex w-full max-w-sm flex-col items-end gap-2 self-end lg:w-auto lg:self-auto">
-                  <label className="w-full text-left text-xs text-zinc-400">
-                      Pipeline Status
-                      <select
-                        value={getSelectedPipelineStage(demo)}
-                        onChange={(event) => setLeadPipelineStatus(demo.lead_id, demo.lead_name, event.target.value as PipelineStage)}
-                        className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none transition hover:border-zinc-500"
-                      >
-                        {pipelineStageOptions.map((stage) => (
-                          <option key={stage} value={stage}>
-                            {stage}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                <div className="rounded-xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 via-zinc-900 to-zinc-950 p-3 shadow-[0_10px_25px_rgba(79,70,229,0.15)]">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-300">Pipeline sync</p>
+                  <label className="mt-2 block text-left text-xs text-zinc-300">
+                    Demo Status
+                    <select
+                      value={getSelectedPipelineStage(demo)}
+                      onChange={(event) => setLeadPipelineStatus(demo.lead_id, demo.lead_name, event.target.value as PipelineStage)}
+                      className="mt-1.5 w-full rounded-lg border border-indigo-400/40 bg-zinc-950/90 px-3 py-2 text-sm font-medium text-zinc-100 outline-none ring-indigo-400/40 transition focus:ring-2"
+                    >
+                      {pipelineStageOptions.map((stage) => (
+                        <option key={stage} value={stage}>
+                          {stage}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="flex w-full flex-col items-end gap-2 self-end lg:w-auto lg:self-auto">
                   {demo.lead_id ? (
                     <Link
                       href={`/leads/${demo.lead_id}`}
