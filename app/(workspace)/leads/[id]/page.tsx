@@ -103,7 +103,7 @@ type LeadNoteRecord = {
 type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
 type ScriptTab = "Scripts" | "Objections";
-type ExecutionLeadStatus = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
+type ExecutionLeadStatus = "New" | "Pitched" | "Demo Booked" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
 
 
@@ -268,6 +268,11 @@ function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord
       emails: fallbackEmails,
     },
   ];
+}
+
+function hasBookedDemo(leadRecord: LeadRecord | null) {
+  const demoBooking = leadRecord?.source_payload?.demoBooking ?? leadRecord?.sourcePayload?.demoBooking;
+  return Boolean(demoBooking?.meetLink && demoBooking?.date && demoBooking?.time);
 }
 
 function LeadWorkspaceSkeleton() {
@@ -452,15 +457,23 @@ export default function LeadExecutionPage() {
             data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? data.aiResearchSummary ?? "";
           setResearchInsight(existingResearch);
           setResearchError("");
+          const existingDemoBooking = data.source_payload?.demoBooking ?? data.sourcePayload?.demoBooking;
+          if (existingDemoBooking?.date) setSelectedMeetingDay(existingDemoBooking.date);
+          if (existingDemoBooking?.time) setSelectedMeetingTime(existingDemoBooking.time);
+          if (existingDemoBooking?.meetLink) setMeetingLink(existingDemoBooking.meetLink);
+
           const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
           if (
             resolvedStatus === "New" ||
             resolvedStatus === "Pitched" ||
+            resolvedStatus === "Demo Booked" ||
             resolvedStatus === "Awaiting Approval" ||
             resolvedStatus === "Payment Pending" ||
             resolvedStatus === "Closed Won"
           ) {
             setLeadExecutionStatus(resolvedStatus);
+          } else if (hasBookedDemo(data)) {
+            setLeadExecutionStatus("Demo Booked");
           }
 
           setStatus("ready");
@@ -728,6 +741,8 @@ export default function LeadExecutionPage() {
 
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
+  const leadDemoBooking = lead?.source_payload?.demoBooking ?? lead?.sourcePayload?.demoBooking;
+  const isDemoBooked = hasBookedDemo(lead) || leadExecutionStatus === "Demo Booked";
   const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
   const hasLeadWebsite = leadWebsite !== "No website on file";
   const leadWebsiteHref = leadWebsite.startsWith("http://") || leadWebsite.startsWith("https://") ? leadWebsite : `https://${leadWebsite}`;
@@ -1066,6 +1081,7 @@ export default function LeadExecutionPage() {
       }
 
       setMeetingLink(payload.meetLink);
+      setLeadExecutionStatus("Demo Booked");
 
       const existingSourcePayload = (lead?.source_payload ?? lead?.sourcePayload ?? {}) as Record<string, unknown>;
       const nextDemoBooking = {
@@ -1872,9 +1888,25 @@ export default function LeadExecutionPage() {
               )}
             </p>
             <div className="mt-3 space-y-3">
-              <span className="inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
-                {leadExecutionStatus}
+              <span
+                className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                  isDemoBooked
+                    ? "border-fuchsia-300/70 bg-fuchsia-500/25 text-fuchsia-100 shadow-[0_0_24px_rgba(217,70,239,0.4)]"
+                    : "border-indigo-400/30 bg-indigo-500/15 text-indigo-200"
+                }`}
+              >
+                {isDemoBooked ? "Demo Booked" : leadExecutionStatus}
               </span>
+              {isDemoBooked ? (
+                <div className="rounded-lg border border-fuchsia-300/70 bg-gradient-to-r from-fuchsia-600/35 to-violet-600/35 p-3 shadow-[0_0_30px_rgba(217,70,239,0.25)]">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-fuchsia-100">Demo Booked</p>
+                  <p className="mt-1 text-xs text-fuchsia-100/90">
+                    {leadDemoBooking?.date && leadDemoBooking?.time
+                      ? `${leadDemoBooking.date} at ${leadDemoBooking.time}${leadDemoBooking?.timeZone ? ` (${leadDemoBooking.timeZone})` : ""}`
+                      : "Scheduled meeting is ready for follow-up."}
+                  </p>
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={markLeadAsClosedDeal}

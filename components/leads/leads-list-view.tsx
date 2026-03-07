@@ -80,6 +80,16 @@ function normalizeLead(raw: unknown): Lead | null {
     socialLinks: Array.isArray(lead.socialLinks) ? (lead.socialLinks.filter((link) => typeof link === "string") as string[]) : [],
     aiResearchSummary: typeof lead.aiResearchSummary === "string" ? lead.aiResearchSummary : null,
     sourceQuery: typeof lead.sourceQuery === "string" ? lead.sourceQuery : null,
+    demoBooking:
+      lead.demoBooking && typeof lead.demoBooking === "object"
+        ? {
+            date: typeof lead.demoBooking.date === "string" ? lead.demoBooking.date : undefined,
+            time: typeof lead.demoBooking.time === "string" ? lead.demoBooking.time : undefined,
+            timeZone: typeof lead.demoBooking.timeZone === "string" ? lead.demoBooking.timeZone : undefined,
+            meetLink: typeof lead.demoBooking.meetLink === "string" ? lead.demoBooking.meetLink : undefined,
+            bookedAt: typeof lead.demoBooking.bookedAt === "string" ? lead.demoBooking.bookedAt : undefined,
+          }
+        : null,
     status,
     deployedUrl: typeof lead.deployedUrl === "string" ? lead.deployedUrl : null,
     siteStatus,
@@ -120,6 +130,10 @@ function isClosedWithinRange(closedAt: string | null | undefined, range: "ALL" |
 
 function formatCurrency(value?: number | null) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value ?? 0);
+}
+
+function leadHasBookedDemo(lead: Lead) {
+  return Boolean(lead.demoBooking?.meetLink && lead.demoBooking?.date && lead.demoBooking?.time);
 }
 
 export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsListViewProps) {
@@ -642,7 +656,16 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                     />
                   </td>
                 ) : null}
-                <td className="px-4 py-3 font-semibold text-white">{lead?.businessName ?? "Unknown business"}</td>
+                <td className="px-4 py-3 font-semibold text-white">
+                  <div className="flex items-center gap-2">
+                    <span>{lead?.businessName ?? "Unknown business"}</span>
+                    {leadHasBookedDemo(lead) ? (
+                      <span className="inline-flex items-center rounded-full border border-fuchsia-400/60 bg-fuchsia-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-fuchsia-200 shadow-[0_0_18px_rgba(217,70,239,0.35)]">
+                        Demo Booked
+                      </span>
+                    ) : null}
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.city || "Unknown"}</td>
                 <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td>
                 <td className="px-4 py-3">
