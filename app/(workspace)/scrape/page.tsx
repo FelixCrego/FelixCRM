@@ -130,6 +130,7 @@ function websitePill(lead: Lead) {
 }
 
 export default function ScrapePage() {
+  const leadsPerPage = 30;
   const [city, setCity] = useState("");
   const [niche, setNiche] = useState("");
   const [minRating, setMinRating] = useState(0);
@@ -148,6 +149,7 @@ export default function ScrapePage() {
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
   const [isAddingLead, setIsAddingLead] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
   const [newLeadForm, setNewLeadForm] = useState({ businessName: "", phone: "", website: "" });
   const csvFileInputRef = useRef<HTMLInputElement | null>(null);
   const router = useRouter();
@@ -368,11 +370,21 @@ export default function ScrapePage() {
         body: JSON.stringify({ leads: leadsToImport }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Failed to import CSV leads.");
+      if (!response.ok) {
+        if (response.status === 409 && payload.requiresMergeConfirmation) {
+          const shouldMerge = window.confirm(typeof payload.error === "string" ? payload.error : "Duplicate leads found. Merge duplicates and continue import?");
+          if (shouldMerge) {
+            await importCsvLeads(leadsToImport, true);
+          }
+          return;
+        }
+        throw new Error(payload.error ?? "Failed to import CSV leads.");
+      }
 
       const createdCount = Number(payload.createdCount ?? 0);
+      const mergedCount = Number(payload.mergedCount ?? 0);
       const skippedCount = Number(payload.skippedCount ?? 0);
-      setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
+      setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${mergedCount > 0 ? ` Merged ${mergedCount} duplicate${mergedCount === 1 ? "" : "s"}.` : ""}${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
       await refreshLeads();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to import CSV leads.");
@@ -381,10 +393,42 @@ export default function ScrapePage() {
     }
   }
 
-  const latestLeads = useMemo(() => leads.slice(0, 30), [leads]);
+  async function importCsvLeads(leadsToImport: ParsedCsvLead[], mergeDuplicates: boolean) {
+    const response = await fetch("/api/leads/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ leads: leadsToImport, mergeDuplicates }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Failed to import CSV leads.");
+
+    const createdCount = Number(payload.createdCount ?? 0);
+    const mergedCount = Number(payload.mergedCount ?? 0);
+    const skippedCount = Number(payload.skippedCount ?? 0);
+    setClaimSuccessMessage(`Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${mergedCount > 0 ? ` Merged ${mergedCount} duplicate${mergedCount === 1 ? "" : "s"}.` : ""}${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`);
+    await refreshLeads();
+  }
+
+  const totalPages = Math.max(1, Math.ceil(leads.length / leadsPerPage));
+  const paginatedLeads = useMemo(() => {
+    const startIndex = (currentPage - 1) * leadsPerPage;
+    return leads.slice(startIndex, startIndex + leadsPerPage);
+  }, [currentPage, leads]);
+
+  useEffect(() => {
+    setCurrentPage((previousPage) => Math.min(previousPage, totalPages));
+  }, [totalPages]);
+
+  const pageLeadIds = useMemo(() => paginatedLeads.map((lead) => lead.id), [paginatedLeads]);
+  const pageClaimableLeadIds = useMemo(
+    () => paginatedLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).map((lead) => lead.id),
+    [currentUserId, paginatedLeads],
+  );
+  const selectedOnPageCount = selectedLeadIds.filter((leadId) => pageLeadIds.includes(leadId)).length;
+  const allPageClaimableSelected = pageClaimableLeadIds.length > 0 && pageClaimableLeadIds.every((leadId) => selectedLeadIds.includes(leadId));
 
   const selectedCount = selectedLeadIds.length;
-  const claimableCount = latestLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).length;
+  const claimableCount = pageClaimableLeadIds.length;
 
   return (
     <div className="space-y-5 pb-24">
@@ -449,14 +493,39 @@ export default function ScrapePage() {
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">Latest Leads ({leads.length})</h3>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">Scraped Leads ({leads.length})</h3>
           <button
-            onClick={() => handleClaimLeads(latestLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).map((lead) => lead.id))}
+            onClick={() => handleClaimLeads(pageClaimableLeadIds)}
             disabled={isClaiming || claimableCount === 0}
             className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
           >
-            {isClaiming ? "Claiming..." : `Claim All ${claimableCount} Leads`}
+            {isClaiming ? "Claiming..." : `Claim This Page (${claimableCount})`}
           </button>
+        </div>
+        <div className="mb-3 flex items-center justify-between gap-3 text-xs text-zinc-400">
+          <p>
+            {leads.length > 0
+              ? `Showing ${(currentPage - 1) * leadsPerPage + 1}-${Math.min(currentPage * leadsPerPage, leads.length)} of ${leads.length} leads`
+              : "Showing 0-0 of 0 leads"}
+            {selectedOnPageCount > 0 ? ` • ${selectedOnPageCount} selected on this page` : ""}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage((previousPage) => Math.max(1, previousPage - 1))}
+              disabled={currentPage === 1}
+              className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-900 disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="text-zinc-300">Page {currentPage} of {totalPages}</span>
+            <button
+              onClick={() => setCurrentPage((previousPage) => Math.min(totalPages, previousPage + 1))}
+              disabled={currentPage === totalPages}
+              className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-900 disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1080px] text-left text-sm">
@@ -465,13 +534,13 @@ export default function ScrapePage() {
                 <th className="pb-2">
                   <input
                     type="checkbox"
-                    checked={latestLeads.length > 0 && selectedLeadIds.length === latestLeads.length}
+                    checked={allPageClaimableSelected}
                     onChange={(event) => {
                       if (event.target.checked) {
-                        setSelectedLeadIds(latestLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).map((lead) => lead.id));
+                        setSelectedLeadIds((previousLeadIds) => Array.from(new Set([...previousLeadIds, ...pageClaimableLeadIds])));
                         return;
                       }
-                      setSelectedLeadIds([]);
+                      setSelectedLeadIds((previousLeadIds) => previousLeadIds.filter((leadId) => !pageLeadIds.includes(leadId)));
                     }}
                     className="size-4 rounded border-zinc-700 bg-zinc-900"
                     aria-label="Select all leads"
@@ -486,7 +555,7 @@ export default function ScrapePage() {
               </tr>
             </thead>
             <tbody>
-              {latestLeads.map((lead) => {
+              {paginatedLeads.map((lead) => {
                 const checked = selectedLeadIds.includes(lead.id);
                 return (
                   <tr key={lead.id} className="border-t border-zinc-800 align-top">
@@ -561,7 +630,7 @@ export default function ScrapePage() {
                   </tr>
                 );
               })}
-              {!latestLeads.length && (
+              {!paginatedLeads.length && (
                 <tr><td className="py-4 text-zinc-500" colSpan={7}>No leads yet. Run a scrape to load and insert leads.</td></tr>
               )}
             </tbody>
