@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+type PipelineStage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won" | "No Show";
+
 type Demo = {
   id: string;
   lead_id?: string | null;
@@ -28,6 +30,8 @@ type PersistedBookedDemo = {
 };
 
 const DEMO_CACHE_KEY = "felix:pending-upcoming-demos";
+const DEMO_PIPELINE_STATUS_CACHE_KEY = "felix:demo-pipeline-stage-overrides";
+const pipelineStageOptions: PipelineStage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won", "No Show"];
 
 function parseDemoDateTime(date: string, time: string) {
   const normalized = time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
@@ -146,6 +150,26 @@ export default function DemosPage() {
   const [pendingDemoFromQuery, setPendingDemoFromQuery] = useState<Demo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [pipelineStatusOverrides, setPipelineStatusOverrides] = useState<Record<string, PipelineStage>>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const rawOverrides = window.localStorage.getItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
+    if (!rawOverrides) return;
+
+    try {
+      const parsed = JSON.parse(rawOverrides) as Record<string, unknown>;
+      const normalized = Object.fromEntries(
+        Object.entries(parsed).filter((entry): entry is [string, PipelineStage] =>
+          pipelineStageOptions.includes(entry[1] as PipelineStage),
+        ),
+      );
+      setPipelineStatusOverrides(normalized);
+    } catch {
+      window.localStorage.removeItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -273,6 +297,25 @@ export default function DemosPage() {
       .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime());
   }, [cachedPendingDemos, demos, pendingDemoFromQuery, persistedLeadDemos]);
 
+
+  const getSelectedPipelineStage = (demo: Demo) => {
+    const byLeadId = demo.lead_id ? pipelineStatusOverrides[demo.lead_id] : undefined;
+    const byName = pipelineStatusOverrides[`name:${demo.lead_name.trim().toLowerCase()}`];
+    return byLeadId ?? byName ?? "New";
+  };
+
+  const setLeadPipelineStatus = (leadId: string | null | undefined, leadName: string, stage: PipelineStage) => {
+    const next = {
+      ...pipelineStatusOverrides,
+      ...(leadId ? { [leadId]: stage } : {}),
+      [`name:${leadName.trim().toLowerCase()}`]: stage,
+    };
+    setPipelineStatusOverrides(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DEMO_PIPELINE_STATUS_CACHE_KEY, JSON.stringify(next));
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -314,6 +357,20 @@ export default function DemosPage() {
                 </div>
 
                 <div className="flex w-full max-w-sm flex-col items-end gap-2 self-end lg:w-auto lg:self-auto">
+                  <label className="w-full text-left text-xs text-zinc-400">
+                      Pipeline Status
+                      <select
+                        value={getSelectedPipelineStage(demo)}
+                        onChange={(event) => setLeadPipelineStatus(demo.lead_id, demo.lead_name, event.target.value as PipelineStage)}
+                        className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none transition hover:border-zinc-500"
+                      >
+                        {pipelineStageOptions.map((stage) => (
+                          <option key={stage} value={stage}>
+                            {stage}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   {demo.lead_id ? (
                     <Link
                       href={`/leads/${demo.lead_id}`}
