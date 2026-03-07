@@ -329,6 +329,26 @@ function leadToMemory(lead: any): Lead {
           ? sourcePayload.source_query
           : null,
     contacts: contactsFromPayload,
+    demoBooking:
+      sourcePayload.demoBooking && typeof sourcePayload.demoBooking === "object"
+        ? {
+            date: typeof (sourcePayload.demoBooking as Record<string, unknown>).date === "string"
+              ? (sourcePayload.demoBooking as Record<string, unknown>).date as string
+              : undefined,
+            time: typeof (sourcePayload.demoBooking as Record<string, unknown>).time === "string"
+              ? (sourcePayload.demoBooking as Record<string, unknown>).time as string
+              : undefined,
+            timeZone: typeof (sourcePayload.demoBooking as Record<string, unknown>).timeZone === "string"
+              ? (sourcePayload.demoBooking as Record<string, unknown>).timeZone as string
+              : undefined,
+            meetLink: typeof (sourcePayload.demoBooking as Record<string, unknown>).meetLink === "string"
+              ? (sourcePayload.demoBooking as Record<string, unknown>).meetLink as string
+              : undefined,
+            bookedAt: typeof (sourcePayload.demoBooking as Record<string, unknown>).bookedAt === "string"
+              ? (sourcePayload.demoBooking as Record<string, unknown>).bookedAt as string
+              : undefined,
+          }
+        : null,
     closedDealValue:
       (typeof lead.closedDealValue === "number" ? lead.closedDealValue : null) ??
       (typeof lead.closed_deal_value === "number" ? lead.closed_deal_value : null) ??

@@ -42,6 +42,13 @@ export type Lead = {
     phones: string[];
     emails: string[];
   }>;
+  demoBooking?: {
+    date?: string;
+    time?: string;
+    timeZone?: string;
+    meetLink?: string;
+    bookedAt?: string;
+  } | null;
   status: "NEW" | "CONTACTED" | "IN_PROGRESS" | "CLOSED" | "DISQUALIFIED";
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
