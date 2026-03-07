@@ -320,6 +320,14 @@ export default function PipelinePage() {
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Deal Hub</p>
                 <h3 className="mt-1 text-xl font-semibold text-zinc-100">{activeDeal.businessName}</h3>
                 <p className="mt-1 text-sm text-zinc-400">{formatCurrency(activeDeal.value)} • {activeDeal.stage}</p>
+                {activeDeal.leadId ? (
+                  <Link
+                    href={`/leads/${activeDeal.leadId}`}
+                    className="mt-3 inline-flex rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-900"
+                  >
+                    Back to Lead Workspace
+                  </Link>
+                ) : null}
               </div>
               <button onClick={() => setActiveDeal(null)} className="rounded-lg border border-zinc-700 p-2 text-zinc-400 hover:text-zinc-100">
                 <X className="h-4 w-4" />
