@@ -140,44 +140,6 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
     setIsBuildingCadence(false);
   };
 
-  const buildCadence = async () => {
-    if (!leadId || remainingToGoal === 0) return;
-
-    setIsBuildingCadence(true);
-
-    const now = new Date();
-    const seededTasks = CADENCE_BLUEPRINT.slice(totalTouchpoints, TOUCHPOINT_GOAL).map((step, index) => {
-      const dueDate = new Date(now);
-      dueDate.setDate(dueDate.getDate() + step.dayOffset + index);
-
-      return {
-        lead_id: leadId,
-        lead_name: leadName || 'Unknown Lead',
-        rep_id: currentRepId,
-        title: step.title,
-        type: step.type,
-        due_date: dueDate.toISOString().split('T')[0],
-        due_time: '10:00',
-        status: 'pending' as const,
-      };
-    });
-
-    if (!seededTasks.length) {
-      setIsBuildingCadence(false);
-      return;
-    }
-
-    const optimisticRows = seededTasks.map((task, index) => ({ ...task, id: Date.now() + index }));
-    setTasks((previous) => [...previous, ...optimisticRows]);
-
-    const { error } = await (supabase.from('follow_ups') as any).insert(seededTasks);
-    if (error) {
-      console.error('Error generating cadence:', error);
-    }
-
-    setIsBuildingCadence(false);
-  };
-
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 font-sans">
       <div className="flex items-end justify-between mb-6 border-b border-zinc-800/80 pb-4">
