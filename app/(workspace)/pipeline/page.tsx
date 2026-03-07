@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Mail, Phone, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type { Lead } from "@/lib/types";
 
 type Stage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won" | "No Show";
 type VercelStatus = "Live" | "Deploying" | "Unbuilt";
@@ -29,91 +30,53 @@ const stages: Stage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending
 const DEMO_PIPELINE_STATUS_CACHE_KEY = "felix:demo-pipeline-stage-overrides";
 const LEAD_ID_FOR_NAME_PREFIX = "lead-for-name:";
 
-const deals: Deal[] = [
-  {
-    id: "d1",
-    businessName: "Aurora Dental",
-    contactName: "Dr. Barnes",
-    rep: "AM",
-    value: 1200,
-    stage: "New",
-    vercelStatus: "Unbuilt",
-    phone: "+1-415-555-0108",
-    email: "hello@auroradental.com",
-    lastAction: "Inbound lead added 12 mins ago",
-    leadSource: "Referral",
-    websiteGoal: "Launch modern patient booking funnel",
-    history: ["Lead imported • 8:10 AM", "Initial note added • 8:14 AM"],
-  },
-  {
-    id: "d2",
-    businessName: "Pulse Fitness",
-    contactName: "Jordan Snow",
-    rep: "JS",
-    value: 7800,
-    stage: "Pitched",
-    vercelStatus: "Deploying",
-    phone: "+1-628-555-0172",
-    email: "owner@pulsefitness.co",
-    lastAction: "One-call pitch delivered 22 mins ago",
-    leadSource: "Outbound SDR",
-    websiteGoal: "Promote 12-week challenge landing page",
-    history: ["Intro email sent • Yesterday", "Phone call connected • 4:38 PM", "Proposal viewed • 6:21 PM"],
-  },
-  {
-    id: "d3",
-    businessName: "Maple Med Spa",
-    contactName: "Sienna Cole",
-    rep: "SC",
-    value: 425,
-    stage: "Awaiting Approval",
-    vercelStatus: "Deploying",
-    phone: "+1-510-555-0150",
-    email: "owner@maplemedspa.com",
-    lastAction: "Manager approval requested 7 mins ago",
-    leadSource: "Website form",
-    websiteGoal: "Capture same-day consult bookings",
-    history: ["One-call close attempt • 10:08 AM", "Approval routed to manager • 11:42 AM"],
-  },
-  {
-    id: "d4",
-    businessName: "Northline Roofing",
-    contactName: "Tyler Reed",
-    rep: "TR",
-    value: 9200,
-    stage: "Payment Pending",
-    vercelStatus: "Live",
-    phone: "+1-312-555-0123",
-    email: "ops@northlineroof.com",
-    lastAction: "Stripe link sent 5 mins ago",
-    leadSource: "Partner",
-    websiteGoal: "Generate storm season estimate requests",
-    history: ["Checkout link generated • 9:22 AM", "Customer opened link • 1:00 PM"],
-  },
-  {
-    id: "d5",
-    businessName: "Bloom Pediatrics",
-    contactName: "Kim Lee",
-    rep: "KL",
-    value: 5400,
-    stage: "Closed Won",
-    vercelStatus: "Live",
-    phone: "+1-202-555-0189",
-    email: "care@bloompediatrics.com",
-    lastAction: "Paid via Stripe this morning",
-    leadSource: "Inbound",
-    websiteGoal: "Convert new parent consultation calls",
-    history: ["Final call completed • 9:00 AM", "Deal marked Closed Won • 9:34 AM"],
-  },
-];
-
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
+}
+
+function toPipelineStage(lead: Lead): Stage {
+  const rawStatus = String(lead.status ?? "").trim().toUpperCase();
+
+  if (rawStatus === "CLOSED" || rawStatus === "CLOSED WON") return "Closed Won";
+  if (rawStatus === "DISQUALIFIED" || rawStatus === "NO SHOW") return "No Show";
+  if (lead.stripeCheckoutLink || rawStatus === "PAYMENT PENDING") return "Payment Pending";
+  if (rawStatus === "AWAITING APPROVAL" || rawStatus === "AWAITING_APPROVAL") return "Awaiting Approval";
+  if (rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
+  return "New";
+}
+
+function toVercelStatus(lead: Lead): VercelStatus {
+  if (lead.siteStatus === "LIVE") return "Live";
+  if (lead.siteStatus === "BUILDING") return "Deploying";
+  return "Unbuilt";
+}
+
+function leadToDeal(lead: Lead): Deal {
+  const normalizedName = lead.businessName.trim().toLowerCase();
+  const primaryContact = lead.contacts?.find((contact) => contact.name.trim())?.name;
+
+  return {
+    id: lead.id,
+    leadId: lead.id,
+    businessName: lead.businessName,
+    contactName: primaryContact || "Primary Contact",
+    rep: "—",
+    value: lead.closedDealValue ?? 0,
+    stage: toPipelineStage(lead),
+    vercelStatus: toVercelStatus(lead),
+    phone: lead.phone || "",
+    email: lead.email || "",
+    lastAction: `Last updated ${new Date(lead.updatedAt).toLocaleString()}`,
+    leadSource: lead.sourceQuery || "Lead List",
+    websiteGoal: lead.enrichment?.structured.heroCopy || "",
+    history: [`Lead synced from CRM (${normalizedName}).`],
+  };
 }
 
 export default function PipelinePage() {
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
   const [activeTab, setActiveTab] = useState<PlaybookTab>("Scripts");
+  const [liveDeals, setLiveDeals] = useState<Deal[]>([]);
   const [demoStageOverrides, setDemoStageOverrides] = useState<Record<string, Stage>>({});
   const [leadIdByNormalizedName, setLeadIdByNormalizedName] = useState<Record<string, string>>({});
 
@@ -140,10 +103,41 @@ export default function PipelinePage() {
     }
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadLeads = async () => {
+      try {
+        const response = await fetch("/api/leads", { cache: "no-store" });
+        const payload = (await response.json()) as { leads?: Lead[] };
+        if (!response.ok || !Array.isArray(payload.leads)) {
+          if (isMounted) setLiveDeals([]);
+          return;
+        }
+
+        if (isMounted) {
+          setLiveDeals(
+            payload.leads
+              .filter((lead) => String(lead.status ?? "").trim().toUpperCase() !== "IN_PROGRESS")
+              .map(leadToDeal),
+          );
+        }
+      } catch {
+        if (isMounted) setLiveDeals([]);
+      }
+    };
+
+    void loadLeads();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
 
   const dealsWithDemoOverrides = useMemo(
     () =>
-      deals.map((deal) => {
+      liveDeals.map((deal) => {
         const byId = demoStageOverrides[deal.id];
         const byName = demoStageOverrides[`name:${deal.businessName.trim().toLowerCase()}`];
         return {
@@ -152,11 +146,11 @@ export default function PipelinePage() {
           stage: byId ?? byName ?? deal.stage,
         };
       }),
-    [demoStageOverrides, leadIdByNormalizedName],
+    [demoStageOverrides, leadIdByNormalizedName, liveDeals],
   );
 
   const injectedDemoDeals = useMemo(() => {
-    const existingNames = new Set(deals.map((deal) => deal.businessName.trim().toLowerCase()));
+    const existingNames = new Set(liveDeals.map((deal) => deal.businessName.trim().toLowerCase()));
 
     return Object.entries(demoStageOverrides)
       .filter(([key]) => key.startsWith("name:"))
@@ -182,7 +176,7 @@ export default function PipelinePage() {
         websiteGoal: "",
         history: ["Created from upcoming demo status selector."],
       }));
-  }, [demoStageOverrides, leadIdByNormalizedName]);
+  }, [demoStageOverrides, leadIdByNormalizedName, liveDeals]);
 
   const displayDeals = useMemo(() => [...dealsWithDemoOverrides, ...injectedDemoDeals], [dealsWithDemoOverrides, injectedDemoDeals]);
 
