@@ -35,6 +35,13 @@ type LeadRecord = {
       primaryColor?: string;
       secondaryColor?: string;
     };
+    demoBooking?: {
+      date?: string;
+      time?: string;
+      timeZone?: string;
+      meetLink?: string;
+      bookedAt?: string;
+    };
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
@@ -44,6 +51,13 @@ type LeadRecord = {
       heroImageUrl?: string;
       primaryColor?: string;
       secondaryColor?: string;
+    };
+    demoBooking?: {
+      date?: string;
+      time?: string;
+      timeZone?: string;
+      meetLink?: string;
+      bookedAt?: string;
     };
   } | null;
   aiResearchSummary?: string | null;
@@ -1052,6 +1066,39 @@ export default function LeadExecutionPage() {
       }
 
       setMeetingLink(payload.meetLink);
+
+      const existingSourcePayload = (lead?.source_payload ?? lead?.sourcePayload ?? {}) as Record<string, unknown>;
+      const nextDemoBooking = {
+        date: selectedMeetingDay,
+        time: selectedMeetingTime,
+        timeZone: leadTimeZone,
+        meetLink: payload.meetLink,
+        bookedAt: new Date().toISOString(),
+      };
+
+      const { error: persistDemoError } = await supabase
+        .from("leads")
+        .update({
+          source_payload: {
+            ...existingSourcePayload,
+            demoBooking: nextDemoBooking,
+          },
+        })
+        .eq("id", leadId);
+
+      if (!persistDemoError) {
+        setLead((previous) =>
+          previous
+            ? {
+                ...previous,
+                source_payload: {
+                  ...(previous.source_payload ?? previous.sourcePayload ?? {}),
+                  demoBooking: nextDemoBooking,
+                },
+              }
+            : previous,
+        );
+      }
     } catch (error) {
       setMeetingError(error instanceof Error ? error.message : "Unable to generate a Google Meet link.");
     } finally {
