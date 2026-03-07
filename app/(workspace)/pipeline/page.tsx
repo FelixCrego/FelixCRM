@@ -1,7 +1,7 @@
 "use client";
 
 import { Mail, Phone, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Stage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 type VercelStatus = "Live" | "Deploying" | "Unbuilt";
@@ -24,6 +24,7 @@ type Deal = {
 };
 
 const stages: Stage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won"];
+const DEMO_PIPELINE_STATUS_CACHE_KEY = "felix:demo-pipeline-stage-overrides";
 
 const deals: Deal[] = [
   {
@@ -110,8 +111,39 @@ function formatCurrency(value: number) {
 export default function PipelinePage() {
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
   const [activeTab, setActiveTab] = useState<PlaybookTab>("Scripts");
+  const [demoStageOverrides, setDemoStageOverrides] = useState<Record<string, Stage>>({});
 
-  const byStage = useMemo(() => Object.fromEntries(stages.map((stage) => [stage, deals.filter((deal) => deal.stage === stage)])), []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const rawOverrides = window.localStorage.getItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
+    if (!rawOverrides) return;
+
+    try {
+      const parsed = JSON.parse(rawOverrides) as Record<string, unknown>;
+      const normalized = Object.fromEntries(
+        Object.entries(parsed).filter((entry): entry is [string, Stage] => stages.includes(entry[1] as Stage)),
+      );
+      setDemoStageOverrides(normalized);
+    } catch {
+      window.localStorage.removeItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
+    }
+  }, []);
+
+  const dealsWithDemoOverrides = useMemo(
+    () =>
+      deals.map((deal) => {
+        const byId = demoStageOverrides[deal.id];
+        const byName = demoStageOverrides[`name:${deal.businessName.trim().toLowerCase()}`];
+        return { ...deal, stage: byId ?? byName ?? deal.stage };
+      }),
+    [demoStageOverrides],
+  );
+
+  const byStage = useMemo(
+    () => Object.fromEntries(stages.map((stage) => [stage, dealsWithDemoOverrides.filter((deal) => deal.stage === stage)])),
+    [dealsWithDemoOverrides],
+  );
 
   const playbookContent: Record<PlaybookTab, string[]> = {
     Scripts: [
