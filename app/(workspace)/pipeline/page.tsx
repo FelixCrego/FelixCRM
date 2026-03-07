@@ -1,9 +1,9 @@
 "use client";
 
 import { Mail, Phone, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type Stage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
+type Stage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won" | "No Show";
 type VercelStatus = "Live" | "Deploying" | "Unbuilt";
 type PlaybookTab = "Scripts" | "Objections" | "Tips";
 
@@ -23,7 +23,8 @@ type Deal = {
   history: string[];
 };
 
-const stages: Stage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won"];
+const stages: Stage[] = ["New", "Pitched", "Awaiting Approval", "Payment Pending", "Closed Won", "No Show"];
+const DEMO_PIPELINE_STATUS_CACHE_KEY = "felix:demo-pipeline-stage-overrides";
 
 const deals: Deal[] = [
   {
@@ -110,8 +111,69 @@ function formatCurrency(value: number) {
 export default function PipelinePage() {
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
   const [activeTab, setActiveTab] = useState<PlaybookTab>("Scripts");
+  const [demoStageOverrides, setDemoStageOverrides] = useState<Record<string, Stage>>({});
 
-  const byStage = useMemo(() => Object.fromEntries(stages.map((stage) => [stage, deals.filter((deal) => deal.stage === stage)])), []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const rawOverrides = window.localStorage.getItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
+    if (!rawOverrides) return;
+
+    try {
+      const parsed = JSON.parse(rawOverrides) as Record<string, unknown>;
+      const normalized = Object.fromEntries(
+        Object.entries(parsed).filter((entry): entry is [string, Stage] => stages.includes(entry[1] as Stage)),
+      );
+      setDemoStageOverrides(normalized);
+    } catch {
+      window.localStorage.removeItem(DEMO_PIPELINE_STATUS_CACHE_KEY);
+    }
+  }, []);
+
+  const dealsWithDemoOverrides = useMemo(
+    () =>
+      deals.map((deal) => {
+        const byId = demoStageOverrides[deal.id];
+        const byName = demoStageOverrides[`name:${deal.businessName.trim().toLowerCase()}`];
+        return { ...deal, stage: byId ?? byName ?? deal.stage };
+      }),
+    [demoStageOverrides],
+  );
+
+  const injectedDemoDeals = useMemo(() => {
+    const existingNames = new Set(deals.map((deal) => deal.businessName.trim().toLowerCase()));
+
+    return Object.entries(demoStageOverrides)
+      .filter(([key]) => key.startsWith("name:"))
+      .map(([key, stage]) => ({ key, stage: stage as Stage, normalizedName: key.slice(5).trim() }))
+      .filter(({ normalizedName }) => normalizedName && !existingNames.has(normalizedName))
+      .map(({ key, stage, normalizedName }) => ({
+        id: `demo-${key}`,
+        businessName: normalizedName
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" "),
+        contactName: "Upcoming Demo",
+        rep: "—",
+        value: 0,
+        stage,
+        vercelStatus: "Unbuilt" as const,
+        phone: "",
+        email: "",
+        lastAction: "Status synced from Upcoming Demos",
+        leadSource: "Upcoming Demos",
+        websiteGoal: "",
+        history: ["Created from upcoming demo status selector."],
+      }));
+  }, [demoStageOverrides]);
+
+  const displayDeals = useMemo(() => [...dealsWithDemoOverrides, ...injectedDemoDeals], [dealsWithDemoOverrides, injectedDemoDeals]);
+
+  const byStage = useMemo(
+    () => Object.fromEntries(stages.map((stage) => [stage, displayDeals.filter((deal) => deal.stage === stage)])),
+    [displayDeals],
+  );
 
   const playbookContent: Record<PlaybookTab, string[]> = {
     Scripts: [
@@ -133,7 +195,7 @@ export default function PipelinePage() {
 
   return (
     <>
-      <div className="grid gap-4 xl:grid-cols-5">
+      <div className="grid gap-4 xl:grid-cols-6">
         {stages.map((stage) => {
           const stageDeals = byStage[stage] as Deal[];
           const stageValue = stageDeals.reduce((total, deal) => total + deal.value, 0);
@@ -165,22 +227,26 @@ export default function PipelinePage() {
 
                     <div className="mt-3 flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <a
-                          href={`tel:${deal.phone}`}
-                          onClick={(event) => event.stopPropagation()}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-                          aria-label={`Call ${deal.businessName}`}
-                        >
-                          <Phone className="h-4 w-4" />
-                        </a>
-                        <a
-                          href={`mailto:${deal.email}`}
-                          onClick={(event) => event.stopPropagation()}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-                          aria-label={`Email ${deal.businessName}`}
-                        >
-                          <Mail className="h-4 w-4" />
-                        </a>
+                        {deal.phone ? (
+                          <a
+                            href={`tel:${deal.phone}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                            aria-label={`Call ${deal.businessName}`}
+                          >
+                            <Phone className="h-4 w-4" />
+                          </a>
+                        ) : null}
+                        {deal.email ? (
+                          <a
+                            href={`mailto:${deal.email}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                            aria-label={`Email ${deal.businessName}`}
+                          >
+                            <Mail className="h-4 w-4" />
+                          </a>
+                        ) : null}
                       </div>
 
                       {deal.vercelStatus === "Live" ? (
