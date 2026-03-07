@@ -34,6 +34,12 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 }
 
+function getLeadWorkspaceHref(deal: Deal): string | null {
+  if (deal.leadId) return `/leads/${deal.leadId}`;
+  if (!deal.id.startsWith("demo-")) return `/leads/${deal.id}`;
+  return null;
+}
+
 function toPipelineStage(lead: Lead): Stage {
   const rawStatus = String(lead.status ?? "").trim().toUpperCase();
 
@@ -187,6 +193,8 @@ export default function PipelinePage() {
     [displayDeals],
   );
 
+  const activeDealWorkspaceHref = activeDeal ? getLeadWorkspaceHref(activeDeal) : null;
+
   const playbookContent: Record<PlaybookTab, string[]> = {
     Scripts: [
       "30-second opener focused on ROI and speed-to-launch.",
@@ -223,7 +231,10 @@ export default function PipelinePage() {
               </header>
 
               <div className="space-y-3">
-                {stageDeals.map((deal) => (
+                {stageDeals.map((deal) => {
+                  const leadWorkspaceHref = getLeadWorkspaceHref(deal);
+
+                  return (
                   <article
                     key={deal.id}
                     onClick={() => setActiveDeal(deal)}
@@ -286,9 +297,9 @@ export default function PipelinePage() {
                       )}
                     </div>
 
-                    {deal.leadId ? (
+                    {leadWorkspaceHref ? (
                       <Link
-                        href={`/leads/${deal.leadId}`}
+                        href={leadWorkspaceHref}
                         onClick={(event) => event.stopPropagation()}
                         className="mt-3 block rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-center text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-900"
                       >
@@ -298,7 +309,8 @@ export default function PipelinePage() {
 
                     <footer className="mt-3 text-[11px] text-zinc-500">{deal.lastAction}</footer>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </section>
           );
@@ -322,9 +334,9 @@ export default function PipelinePage() {
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Deal Hub</p>
                 <h3 className="mt-1 text-xl font-semibold text-zinc-100">{activeDeal.businessName}</h3>
                 <p className="mt-1 text-sm text-zinc-400">{formatCurrency(activeDeal.value)} • {activeDeal.stage}</p>
-                {activeDeal.leadId ? (
+                {activeDealWorkspaceHref ? (
                   <Link
-                    href={`/leads/${activeDeal.leadId}`}
+                    href={activeDealWorkspaceHref}
                     className="mt-3 inline-flex rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-900"
                   >
                     Open Lead Workspace
