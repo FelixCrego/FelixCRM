@@ -5,7 +5,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const hasDb = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
-const USERS_TABLE_CANDIDATES = ["User", "user"];
+const USERS_TABLE_CANDIDATES = ["User", "user", "users"];
 const LEADS_TABLE_CANDIDATES = ["leads", "lead", "Lead"];
 const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
 const LEAD_NOTES_TABLE_CANDIDATES = ["lead_notes", "leadNotes", "LeadNotes"];
@@ -393,6 +393,52 @@ export async function listLeads(ownerId: string) {
     order: isSnakeLeadsTable(table) ? "updated_at.desc" : "updatedAt.desc",
   }));
   return leads.map(leadToMemory);
+}
+
+export type ClaimedLeadCountByUser = {
+  userId: string;
+  userName: string;
+  claimedLeads: number;
+};
+
+export async function listClaimedLeadCountsByUser(): Promise<ClaimedLeadCountByUser[]> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load claimed lead counts.");
+
+  const [users, leads] = await Promise.all([
+    withTableFallback("users", USERS_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: "id,name,full_name,email,username",
+      }),
+    ),
+    withLeadTableFallback((table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: isSnakeLeadsTable(table) ? "owner_id" : "ownerId",
+        [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: "not.is.null",
+      }),
+    ),
+  ]);
+
+  const countsByUserId = new Map<string, number>();
+  for (const lead of leads) {
+    const ownerId = typeof lead.ownerId === "string" ? lead.ownerId : typeof lead.owner_id === "string" ? lead.owner_id : null;
+    if (!ownerId) continue;
+    countsByUserId.set(ownerId, (countsByUserId.get(ownerId) ?? 0) + 1);
+  }
+
+  const usersById = new Map<string, string>();
+  for (const user of users) {
+    if (typeof user.id !== "string") continue;
+    const userName = [user.name, user.full_name, user.username, user.email].find((value) => typeof value === "string" && value.trim().length > 0);
+    usersById.set(user.id, typeof userName === "string" ? userName : user.id);
+  }
+
+  return [...countsByUserId.entries()]
+    .map(([userId, claimedLeads]) => ({
+      userId,
+      userName: usersById.get(userId) ?? userId,
+      claimedLeads,
+    }))
+    .sort((a, b) => b.claimedLeads - a.claimedLeads || a.userName.localeCompare(b.userName));
 }
 
 export async function listClaimableLeads(limit = 100) {
