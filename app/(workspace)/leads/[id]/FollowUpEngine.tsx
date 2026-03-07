@@ -29,9 +29,10 @@ type FollowUpEngineProps = {
   leadId?: string;
   leadName?: string;
   currentRepId?: string;
+  onTaskCompleted?: (task: FollowUpTask) => Promise<void> | void;
 };
 
-export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_123' }: FollowUpEngineProps) {
+export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_123', onTaskCompleted }: FollowUpEngineProps) {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskType, setTaskType] = useState('Call');
   const [taskDate, setTaskDate] = useState('');
@@ -83,8 +84,60 @@ export default function FollowUpEngine({ leadId, leadName, currentRepId = 'rep_1
   };
 
   const completeTask = async (taskId: number) => {
+    const completedTask = tasks.find((task) => task.id === taskId);
     setTasks(prev => prev.map((task) => (task.id === taskId ? { ...task, status: 'completed' } : task)));
-    await (supabase.from('follow_ups') as any).update({ status: 'completed' }).eq('id', taskId);
+
+    const { error } = await (supabase.from('follow_ups') as any).update({ status: 'completed' }).eq('id', taskId);
+    if (error) {
+      console.error('Error completing task:', error);
+      return;
+    }
+
+    if (!completedTask || !onTaskCompleted) return;
+
+    try {
+      await onTaskCompleted(completedTask);
+    } catch (noteError) {
+      console.error('Error syncing completed task to notes:', noteError);
+    }
+  };
+
+  const buildCadence = async () => {
+    if (!leadId || remainingToGoal === 0) return;
+
+    setIsBuildingCadence(true);
+
+    const now = new Date();
+    const seededTasks = CADENCE_BLUEPRINT.slice(totalTouchpoints, TOUCHPOINT_GOAL).map((step, index) => {
+      const dueDate = new Date(now);
+      dueDate.setDate(dueDate.getDate() + step.dayOffset + index);
+
+      return {
+        lead_id: leadId,
+        lead_name: leadName || 'Unknown Lead',
+        rep_id: currentRepId,
+        title: step.title,
+        type: step.type,
+        due_date: dueDate.toISOString().split('T')[0],
+        due_time: '10:00',
+        status: 'pending' as const,
+      };
+    });
+
+    if (!seededTasks.length) {
+      setIsBuildingCadence(false);
+      return;
+    }
+
+    const optimisticRows = seededTasks.map((task, index) => ({ ...task, id: Date.now() + index }));
+    setTasks((previous) => [...previous, ...optimisticRows]);
+
+    const { error } = await (supabase.from('follow_ups') as any).insert(seededTasks);
+    if (error) {
+      console.error('Error generating cadence:', error);
+    }
+
+    setIsBuildingCadence(false);
   };
 
   const buildCadence = async () => {

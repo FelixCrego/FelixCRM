@@ -100,6 +100,14 @@ type LeadNoteRecord = {
   created_at?: string;
 };
 
+type CompletedFollowUpTask = {
+  id: number;
+  title: string;
+  type: string;
+  due_date: string;
+  due_time: string;
+};
+
 type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
 type ScriptTab = "Scripts" | "Objections";
@@ -1772,6 +1780,29 @@ export default function LeadExecutionPage() {
     setTasks((previous) => previous.map((item) => (item.id === task.id ? (payload.task as LeadTaskRecord) : item)));
   }
 
+  async function saveCompletedFollowUpToNotes(task: CompletedFollowUpTask) {
+    if (!leadId) return;
+
+    const response = await fetch("/api/lead-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId,
+        channel: "notes",
+        content: `✅ Follow-up completed: ${task.title} (${task.type}) • Scheduled ${task.due_date} at ${task.due_time}`,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+
+    if (!response.ok || !payload?.note) {
+      console.error(payload?.error || "Unable to save completed follow-up to notes.");
+      return;
+    }
+
+    setNotes((previous) => [payload.note as LeadNoteRecord, ...previous]);
+  }
+
   const filteredNotes = notes.filter((note) => {
     const type = resolveNoteType(note);
     if (activeTab === "Notes") {
@@ -2433,7 +2464,7 @@ export default function LeadExecutionPage() {
             ) : null}
           </div>
 
-          <FollowUpEngine leadId={leadId} leadName={leadName} />
+          <FollowUpEngine leadId={leadId} leadName={leadName} onTaskCompleted={saveCompletedFollowUpToNotes} />
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between gap-2">
