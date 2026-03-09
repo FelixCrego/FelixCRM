@@ -386,13 +386,34 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_BUSINESS_NAME: typeof frontendEnv.NEXT_PUBLIC_BUSINESS_NAME === "string" && frontendEnv.NEXT_PUBLIC_BUSINESS_NAME.trim()
         ? frontendEnv.NEXT_PUBLIC_BUSINESS_NAME.trim()
         : templateConfig.business.name,
-      NEXT_PUBLIC_PRIMARY_COLOR: typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" ? frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR : "",
-      NEXT_PUBLIC_SECONDARY_COLOR: typeof frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR === "string" ? frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR : "",
-      NEXT_PUBLIC_LOGO_URL: typeof frontendEnv.NEXT_PUBLIC_LOGO_URL === "string" ? frontendEnv.NEXT_PUBLIC_LOGO_URL : "",
-      NEXT_PUBLIC_FEATURE_IMAGE_URL:
-        typeof frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL === "string" && frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
-          ? frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
-          : templateConfig.branding.heroImageUrl || "",
+      NEXT_PUBLIC_CITY: templateConfig.business.city,
+      NEXT_PUBLIC_BUSINESS_CATEGORY: templateConfig.business.category,
+      NEXT_PUBLIC_WEBSITE_URL: templateConfig.business.websiteUrl,
+      NEXT_PUBLIC_CONTACT_PHONE: templateConfig.content.contact.phone,
+      NEXT_PUBLIC_CONTACT_EMAIL: templateConfig.content.contact.email,
+      NEXT_PUBLIC_PRIMARY_LOCATION: templateConfig.geo.primaryLocation,
+      NEXT_PUBLIC_SERVICE_AREAS: templateConfig.geo.serviceAreas.join(","),
+      NEXT_PUBLIC_HERO_HEADLINE: templateConfig.content.hero.headline,
+      NEXT_PUBLIC_HERO_SUBHEADLINE: templateConfig.content.hero.subheadline,
+      NEXT_PUBLIC_HERO_CTA_LABEL: templateConfig.content.hero.ctaLabel,
+      NEXT_PUBLIC_GOOGLE_BUSINESS_PROFILE: templateConfig.links.googleBusinessProfile,
+      NEXT_PUBLIC_SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
+      NEXT_PUBLIC_PRIMARY_COLOR:
+        typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" && frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()
+          ? frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()
+          : templateConfig.branding.primaryColor,
+      NEXT_PUBLIC_SECONDARY_COLOR:
+        typeof frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR === "string" && frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR.trim()
+          ? frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR.trim()
+          : templateConfig.branding.secondaryColor,
+      NEXT_PUBLIC_LOGO_URL:
+        typeof frontendEnv.NEXT_PUBLIC_LOGO_URL === "string" && frontendEnv.NEXT_PUBLIC_LOGO_URL.trim()
+          ? frontendEnv.NEXT_PUBLIC_LOGO_URL.trim()
+          : templateConfig.branding.logoUrl,
+      NEXT_PUBLIC_HERO_URL:
+        typeof frontendEnv.NEXT_PUBLIC_HERO_URL === "string" && frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
+          ? frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
+          : templateConfig.branding.heroImageUrl,
     };
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
