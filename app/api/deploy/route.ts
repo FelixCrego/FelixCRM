@@ -389,7 +389,10 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_PRIMARY_COLOR: typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" ? frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR : "",
       NEXT_PUBLIC_SECONDARY_COLOR: typeof frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR === "string" ? frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR : "",
       NEXT_PUBLIC_LOGO_URL: typeof frontendEnv.NEXT_PUBLIC_LOGO_URL === "string" ? frontendEnv.NEXT_PUBLIC_LOGO_URL : "",
-      NEXT_PUBLIC_HERO_URL: typeof frontendEnv.NEXT_PUBLIC_HERO_URL === "string" ? frontendEnv.NEXT_PUBLIC_HERO_URL : "",
+      NEXT_PUBLIC_FEATURE_IMAGE_URL:
+        typeof frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL === "string" && frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
+          ? frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
+          : templateConfig.branding.heroImageUrl || "",
     };
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
