@@ -922,15 +922,6 @@ export default function LeadExecutionPage() {
     await persistContacts(nextContacts);
   };
 
-  function readFileAsDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-      reader.onerror = () => reject(new Error("Failed to read file."));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function runResearch() {
     if (!leadId) {
       setResearchError("This lead is missing an id, so analysis cannot be run.");
@@ -1029,7 +1020,7 @@ export default function LeadExecutionPage() {
       }
 
       const fallbackProjectUrl = payload?.project ? `https://${payload.project}.vercel.app` : undefined;
-      const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url || fallbackProjectUrl;
+      const returnedUrl = payload?.deployedUrl || payload?.url || payload?.liveUrl || fallbackProjectUrl;
 
       setDeployProgress(20);
       setDeployStageLabel("Deployment queued. Preparing your live site...");
@@ -1071,12 +1062,29 @@ export default function LeadExecutionPage() {
   async function handleBrandingFileUpload(file: File | undefined, target: "logo" | "hero") {
     if (!file) return;
 
+    setDeployError("");
+
     try {
-      const fileData = await readFileAsDataUrl(file);
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("leadId", leadId || "lead");
+      formData.append("target", target);
+
+      const response = await fetch("/api/storage/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
+
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.error || "Unable to upload the image to storage.");
+      }
+
       if (target === "logo") {
-        setBrandingLogoUrl(fileData);
+        setBrandingLogoUrl(payload.url);
       } else {
-        setBrandingHeroImageUrl(fileData);
+        setBrandingHeroImageUrl(payload.url);
       }
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : "Unable to process the uploaded image.");
