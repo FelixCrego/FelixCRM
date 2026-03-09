@@ -1020,7 +1020,7 @@ export default function LeadExecutionPage() {
       }
 
       const fallbackProjectUrl = payload?.project ? `https://${payload.project}.vercel.app` : undefined;
-      const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url || fallbackProjectUrl;
+      const returnedUrl = payload?.deployedUrl || payload?.url || payload?.liveUrl || fallbackProjectUrl;
 
       setDeployProgress(20);
       setDeployStageLabel("Deployment queued. Preparing your live site...");

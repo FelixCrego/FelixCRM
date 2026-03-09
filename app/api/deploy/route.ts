@@ -527,7 +527,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       url: deployedUrl,
       deployedUrl,
-      liveUrl: projectAliasUrl,
+      liveUrl: deploymentAliasUrl ?? projectAliasUrl,
       deploymentId,
       project: vercelProjectName,
       repository: clonedRepoFullName,
