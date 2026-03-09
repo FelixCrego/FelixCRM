@@ -18,6 +18,20 @@ function normalizeRepoSlug(value: string | undefined): { owner: string; repo: st
 }
 
 
+const TEMPLATE_REPO_MAP: Record<string, string> = {
+  "garage-door": process.env.VERCEL_TEMPLATE_REPO || "FelixCrego/TemplateDetailer",
+  "new-template": process.env.VERCEL_TEMPLATE_REPO_NEW_TEMPLATE || "FelixCrego/TemplateDetailer",
+};
+
+function resolveTemplateRepo(templateId: string | undefined): { templateId: string; repo: { owner: string; repo: string } | null } {
+  const normalizedTemplateId = typeof templateId === "string" && templateId.trim() ? templateId.trim().toLowerCase() : "garage-door";
+  const repoSlug = TEMPLATE_REPO_MAP[normalizedTemplateId] || TEMPLATE_REPO_MAP["garage-door"];
+  return {
+    templateId: normalizedTemplateId,
+    repo: normalizeRepoSlug(repoSlug),
+  };
+}
+
 function normalizePhoneHref(phone: string): string {
   const digits = phone.replace(/\D+/g, "");
   if (!digits) return "";
@@ -242,14 +256,15 @@ export async function POST(request: Request) {
     const vercelTeamId = process.env.VERCEL_TEAM_ID?.trim() || undefined;
     const vercelPublicDeployments = process.env.VERCEL_PUBLIC_DEPLOYMENTS === "true";
     const vercelBypassProtection = process.env.VERCEL_BYPASS_DEPLOYMENT_PROTECTION === "true";
-    const templateRepo = normalizeRepoSlug(process.env.VERCEL_TEMPLATE_REPO);
+    const requestedTemplateId = typeof body.templateId === "string" ? body.templateId : undefined;
+    const { templateId, repo: templateRepo } = resolveTemplateRepo(requestedTemplateId);
     const githubToken = process.env.GITHUB_TOKEN;
     const githubOwner = process.env.GITHUB_OWNER || templateRepo?.owner;
     if (!token || !templateRepo || !githubToken || !githubOwner) {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
       return NextResponse.json(
         {
-          error: "Missing deployment configuration. Required: VERCEL_TOKEN, VERCEL_TEMPLATE_REPO, GITHUB_TOKEN. Optional: GITHUB_OWNER (defaults to template repo owner), VERCEL_TEMPLATE_PROJECT.",
+          error: "Missing deployment configuration. Required: VERCEL_TOKEN, GITHUB_TOKEN, and a valid template repo (VERCEL_TEMPLATE_REPO / VERCEL_TEMPLATE_REPO_NEW_TEMPLATE). Optional: GITHUB_OWNER (defaults to template repo owner), VERCEL_TEMPLATE_PROJECT.",
         },
         { status: 500 },
       );
@@ -359,6 +374,8 @@ export async function POST(request: Request) {
       });
     }
 
+    const frontendEnv = body && typeof body.env === "object" && body.env !== null ? (body.env as Record<string, unknown>) : {};
+
     const deploymentEnv = {
       TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
       TEMPLATE_CONFIG_VERSION,
@@ -366,6 +383,13 @@ export async function POST(request: Request) {
       CONTACT_PHONE: templateConfig.content.contact.phone,
       CONTACT_EMAIL: templateConfig.content.contact.email,
       SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
+      NEXT_PUBLIC_BUSINESS_NAME: typeof frontendEnv.NEXT_PUBLIC_BUSINESS_NAME === "string" && frontendEnv.NEXT_PUBLIC_BUSINESS_NAME.trim()
+        ? frontendEnv.NEXT_PUBLIC_BUSINESS_NAME.trim()
+        : templateConfig.business.name,
+      NEXT_PUBLIC_PRIMARY_COLOR: typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" ? frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR : "",
+      NEXT_PUBLIC_SECONDARY_COLOR: typeof frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR === "string" ? frontendEnv.NEXT_PUBLIC_SECONDARY_COLOR : "",
+      NEXT_PUBLIC_LOGO_URL: typeof frontendEnv.NEXT_PUBLIC_LOGO_URL === "string" ? frontendEnv.NEXT_PUBLIC_LOGO_URL : "",
+      NEXT_PUBLIC_HERO_URL: typeof frontendEnv.NEXT_PUBLIC_HERO_URL === "string" ? frontendEnv.NEXT_PUBLIC_HERO_URL : "",
     };
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
@@ -507,6 +531,7 @@ export async function POST(request: Request) {
       deploymentId,
       project: vercelProjectName,
       repository: clonedRepoFullName,
+      templateId,
       templateProject: project ?? null,
       scope: {
         type: vercelTeamId ? "team" : "personal",

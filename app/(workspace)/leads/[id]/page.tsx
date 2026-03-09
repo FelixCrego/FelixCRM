@@ -334,6 +334,7 @@ export default function LeadExecutionPage() {
   const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
   const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<"garage-door" | "new-template">("garage-door");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
   const [callIntel, setCallIntel] = useState<CallIntelRecord | null>(null);
@@ -1008,8 +1009,16 @@ export default function LeadExecutionPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           leadId,
+          templateId: selectedTemplateId,
           researchOutput: researchInsight.trim() || undefined,
           templateConfigOverrides,
+          env: {
+            NEXT_PUBLIC_BUSINESS_NAME: leadName,
+            NEXT_PUBLIC_PRIMARY_COLOR: brandingPrimaryColor,
+            NEXT_PUBLIC_SECONDARY_COLOR: brandingSecondaryColor,
+            NEXT_PUBLIC_LOGO_URL: brandingLogoUrl.trim(),
+            NEXT_PUBLIC_HERO_URL: brandingHeroImageUrl.trim(),
+          },
         }),
       });
 
@@ -2052,6 +2061,18 @@ export default function LeadExecutionPage() {
             </div>
 
             <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-indigo-100/90">
+              <label className="space-y-1">
+                <span className="block">Select Template</span>
+                <select
+                  value={selectedTemplateId}
+                  onChange={(event) => setSelectedTemplateId(event.target.value as "garage-door" | "new-template")}
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none"
+                >
+                  <option value="garage-door">Garage Door</option>
+                  <option value="new-template">New Template</option>
+                </select>
+              </label>
+
               <label className="space-y-1">
                 <span className="block">Logo URL or upload</span>
                 <input
