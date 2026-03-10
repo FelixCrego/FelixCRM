@@ -34,8 +34,13 @@ async function ensurePublicBucket(supabaseUrl: string, serviceRoleKey: string): 
       return bucket;
     }
 
-    if (getResponse.status !== 404) {
-      const message = await getResponse.text();
+    const message = await getResponse.text();
+    const bucketMissing =
+      getResponse.status === 404 ||
+      /bucket\s+not\s+found/i.test(message) ||
+      /"statusCode"\s*:\s*"?404"?/i.test(message);
+
+    if (!bucketMissing) {
       throw new Error(`Unable to check storage bucket \"${bucket}\": ${message || getResponse.statusText}`);
     }
 
@@ -57,8 +62,8 @@ async function ensurePublicBucket(supabaseUrl: string, serviceRoleKey: string): 
       return bucket;
     }
 
-    const message = await createResponse.text();
-    throw new Error(`Unable to create storage bucket \"${bucket}\": ${message || createResponse.statusText}`);
+    const createMessage = await createResponse.text();
+    throw new Error(`Unable to create storage bucket \"${bucket}\": ${createMessage || createResponse.statusText}`);
   }
 
   throw new Error("No storage bucket candidates are available.");
