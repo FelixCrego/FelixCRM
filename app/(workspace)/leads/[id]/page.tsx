@@ -1008,6 +1008,7 @@ export default function LeadExecutionPage() {
             NEXT_PUBLIC_PRIMARY_COLOR: brandingPrimaryColor,
             NEXT_PUBLIC_SECONDARY_COLOR: brandingSecondaryColor,
             NEXT_PUBLIC_LOGO_URL: brandingLogoUrl.trim(),
+            NEXT_PUBLIC_HERO_URL: brandingHeroImageUrl.trim(),
             NEXT_PUBLIC_FEATURE_IMAGE_URL: brandingHeroImageUrl.trim(),
           },
         }),

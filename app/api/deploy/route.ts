@@ -74,18 +74,35 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
   const phoneHref = normalizePhoneHref(phoneDisplay);
   const email = config.content.contact.email;
 
-  updated = updated.replace(/businessName:\s*"[^"]*"/, `businessName: "${escapeForQuotedValue(businessName)}"`);
-  updated = updated.replace(/text:\s*"[^"]*"/, `text: "${escapeForQuotedValue(businessName)}"`);
-  updated = updated.replace(/shortText:\s*"[^"]*"/, `shortText: "${escapeForQuotedValue(businessName)}"`);
+  const stringOverrides: Array<[string, string]> = [
+    ["businessName", businessName],
+    ["text", businessName],
+    ["shortText", businessName],
+    ["headline", config.content.hero.headline],
+    ["subheadline", config.content.hero.subheadline],
+    ["ctaLabel", config.content.hero.ctaLabel],
+    ["logoUrl", config.branding.logoUrl],
+    ["logo", config.branding.logoUrl],
+    ["heroImageUrl", config.branding.heroImageUrl],
+    ["heroUrl", config.branding.heroImageUrl],
+    ["featureImageUrl", config.branding.heroImageUrl],
+    ["primaryColor", config.branding.primaryColor],
+    ["secondaryColor", config.branding.secondaryColor],
+  ];
+
+  for (const [key, value] of stringOverrides) {
+    if (!value) continue;
+    updated = replaceQuotedKeyValue(updated, key, value);
+  }
 
   if (phoneDisplay) {
-    updated = updated.replace(/phoneDisplay:\s*"[^"]*"/, `phoneDisplay: "${escapeForQuotedValue(phoneDisplay)}"`);
+    updated = replaceQuotedKeyValue(updated, "phoneDisplay", phoneDisplay);
   }
   if (phoneHref) {
-    updated = updated.replace(/phoneHref:\s*"[^"]*"/, `phoneHref: "${escapeForQuotedValue(phoneHref)}"`);
+    updated = replaceQuotedKeyValue(updated, "phoneHref", phoneHref);
   }
   if (email) {
-    updated = updated.replace(/email:\s*"[^"]*"/, `email: "${escapeForQuotedValue(email)}"`);
+    updated = replaceQuotedKeyValue(updated, "email", email);
   }
 
   if (config.links.socials.length > 0) {
@@ -413,7 +430,15 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_HERO_URL:
         typeof frontendEnv.NEXT_PUBLIC_HERO_URL === "string" && frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
           ? frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
-          : templateConfig.branding.heroImageUrl,
+          : typeof frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL === "string" && frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
+            ? frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
+            : templateConfig.branding.heroImageUrl,
+      NEXT_PUBLIC_FEATURE_IMAGE_URL:
+        typeof frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL === "string" && frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
+          ? frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
+          : typeof frontendEnv.NEXT_PUBLIC_HERO_URL === "string" && frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
+            ? frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
+            : templateConfig.branding.heroImageUrl,
     };
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
