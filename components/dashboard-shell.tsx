@@ -23,6 +23,7 @@ import {
   Gauge,
   CalendarDays,
   CircleDollarSign,
+  Menu,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -93,6 +94,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { activeRole, setActiveRole } = useRole();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [magicBarValue, setMagicBarValue] = useState("");
   const [magicBarStatus, setMagicBarStatus] = useState("");
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
@@ -246,7 +248,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         <div className="flex min-h-screen flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur md:px-8">
-            <div className="flex items-start gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setMobileNavOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-700 hover:text-zinc-100 lg:hidden"
+              >
+                <Menu className="h-4 w-4" />
+                Menu
+              </button>
               <div className="relative flex-1">
                 <div className="flex items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-zinc-400">
                   <Sparkles className="h-4 w-4 text-blue-300" />
@@ -318,7 +327,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </button>
               <button
                 onClick={() => setDrawerOpen(true)}
-                className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-200 transition hover:bg-blue-500/20"
+                className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-200 transition hover:bg-blue-500/20 sm:inline-flex"
               >
                 AI Playbook
               </button>
@@ -335,10 +344,51 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       <div
         className={cn(
           "fixed inset-0 z-40 bg-black/50 transition-opacity duration-200",
-          drawerOpen ? "opacity-100" : "pointer-events-none opacity-0",
+          drawerOpen || mobileNavOpen ? "opacity-100" : "pointer-events-none opacity-0",
         )}
-        onClick={() => setDrawerOpen(false)}
+        onClick={() => {
+          setDrawerOpen(false);
+          setMobileNavOpen(false);
+        }}
       />
+      <aside
+        className={cn(
+          "fixed left-0 top-0 z-50 h-full w-[min(88vw,20rem)] border-r border-zinc-800 bg-zinc-900 p-4 shadow-2xl transition-transform duration-300 lg:hidden",
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="mb-6 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-zinc-100">
+            <Command className="h-4 w-4" />
+            <p className="text-sm font-semibold">Felix CRM OS</p>
+          </div>
+          <button onClick={() => setMobileNavOpen(false)} className="rounded-lg border border-zinc-700 p-1.5 text-zinc-400 hover:text-zinc-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="space-y-1">
+          {navByRole[activeRole].map((item) => {
+            const Icon = item.icon;
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            return (
+              <Link
+                key={`mobile-${item.href}`}
+                href={item.href}
+                onClick={() => setMobileNavOpen(false)}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200",
+                  active
+                    ? "bg-zinc-800 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                    : "text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      </aside>
       <aside
         className={cn(
           "fixed right-0 top-0 z-50 h-full w-full max-w-md border-l border-zinc-800 bg-zinc-900 p-6 shadow-2xl transition-transform duration-300",

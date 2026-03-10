@@ -252,7 +252,7 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   };
 
   return (
-    <div className="grid h-[calc(100vh-9.5rem)] grid-cols-12 gap-4 overflow-hidden bg-zinc-950">
+    <div className="grid min-h-[calc(100vh-9.5rem)] grid-cols-12 gap-4 bg-zinc-950 xl:h-[calc(100vh-9.5rem)] xl:overflow-hidden">
       <aside className="col-span-12 flex h-full flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 xl:col-span-3">
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Lead Context</p>
@@ -442,7 +442,7 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
               <Phone className="h-4 w-4" /> Call
             </button>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs text-zinc-400">
+          <div className="mt-3 grid grid-cols-1 gap-2 text-center text-xs text-zinc-400 sm:grid-cols-3">
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-2">
               <Clock3 className="mx-auto mb-1 h-3.5 w-3.5 text-zinc-500" /> Queue: 00:09
             </div>
@@ -456,7 +456,7 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/70">
-          <div className="flex border-b border-zinc-800 text-xs font-medium uppercase tracking-wide text-zinc-400">
+          <div className="flex flex-wrap border-b border-zinc-800 text-xs font-medium uppercase tracking-wide text-zinc-400">
             {(["NOTES", "SMS", "EMAIL"] as const).map((tab) => (
               <button
                 key={tab}

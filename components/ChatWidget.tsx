@@ -113,11 +113,11 @@ export default function ChatWidget() {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 font-sans flex flex-col items-end">
+    <div className="fixed bottom-4 right-4 z-50 flex max-w-[calc(100vw-1rem)] flex-col items-end font-sans sm:bottom-6 sm:right-6">
       
       {/* The Chat Window */}
       {isOpen && (
-        <div className="mb-4 w-[600px] h-[500px] bg-[#0a0a0a]/95 backdrop-blur-xl border border-zinc-800/80 rounded-2xl shadow-2xl flex overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-300">
+        <div className="mb-4 flex h-[min(70vh,500px)] w-[min(94vw,600px)] overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#0a0a0a]/95 shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-5 fade-in duration-300">
           
           {!isNameSet ? (
             // Username Registration Screen
@@ -144,7 +144,7 @@ export default function ChatWidget() {
             // The Normal Chat Interface
             <>
               {/* Sidebar (Conversations) */}
-              <div className="w-48 bg-zinc-950 border-r border-zinc-800 flex flex-col">
+              <div className="hidden w-48 border-r border-zinc-800 bg-zinc-950 sm:flex sm:flex-col">
                 <div className="p-4 border-b border-zinc-800">
                   <h3 className="text-xs font-black text-white uppercase tracking-widest">Conversations</h3>
                 </div>
