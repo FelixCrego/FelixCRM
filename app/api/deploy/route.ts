@@ -271,8 +271,10 @@ export async function POST(request: Request) {
     const token = process.env.VERCEL_TOKEN;
     const project = process.env.VERCEL_TEMPLATE_PROJECT;
     const vercelTeamId = process.env.VERCEL_TEAM_ID?.trim() || undefined;
-    const vercelPublicDeployments = process.env.VERCEL_PUBLIC_DEPLOYMENTS === "true";
     const vercelBypassProtection = process.env.VERCEL_BYPASS_DEPLOYMENT_PROTECTION === "true";
+    const vercelPublicDeployments = process.env.VERCEL_PUBLIC_DEPLOYMENTS
+      ? process.env.VERCEL_PUBLIC_DEPLOYMENTS === "true"
+      : !vercelBypassProtection;
     const requestedTemplateId = typeof body.templateId === "string" ? body.templateId : undefined;
     const { templateId, repo: templateRepo } = resolveTemplateRepo(requestedTemplateId);
     const githubToken = process.env.GITHUB_TOKEN;
