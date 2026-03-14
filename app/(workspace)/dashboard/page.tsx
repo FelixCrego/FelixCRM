@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { useRole } from "@/components/role-context";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ManagerGoalEarningsPredictor } from "@/components/dashboard/manager-goal-earnings-predictor";
 
 const repKpis = [
   { label: "Earned Commission", value: "$18,250", trend: "+14%", icon: TrendingUp },
@@ -253,6 +254,8 @@ function ManagerDashboard() {
         <h2 className="mt-2 text-2xl font-semibold text-white">Eliot Ferrer • Team Command Center</h2>
         <p className="mt-1 text-sm text-zinc-300">All Rep tools remain available below, plus team recruiting, performance oversight, and rep-specific goal management.</p>
       </section>
+
+      <ManagerGoalEarningsPredictor />
 
       <section className="grid gap-3 md:grid-cols-3">
         {[
