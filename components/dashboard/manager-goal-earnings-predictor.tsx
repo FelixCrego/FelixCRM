@@ -68,6 +68,34 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
+const LOCAL_PLAN_STORAGE_KEY = "manager-goal-plan-local";
+
+type ManagerPlanApiPayload = {
+  plan?: ManagerPlan | null;
+  error?: string;
+  warning?: string;
+  tableMissing?: boolean;
+  code?: string;
+};
+
+function saveLocalLockedPlan(plan: ManagerPlan) {
+  try {
+    localStorage.setItem(LOCAL_PLAN_STORAGE_KEY, JSON.stringify(plan));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function readLocalLockedPlan() {
+  try {
+    const raw = localStorage.getItem(LOCAL_PLAN_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as ManagerPlan;
+  } catch {
+    return null;
+  }
+}
+
 function roundCurrency(value: number) {
   return Math.max(0, Math.round(value));
 }
@@ -150,12 +178,19 @@ export function ManagerGoalEarningsPredictor() {
     async function loadLockedPlan() {
       setLoadingLockedPlan(true);
       const response = await fetch("/api/manager-plans", { cache: "no-store" }).catch(() => null);
-      const payload = (await response?.json().catch(() => null)) as { plan?: ManagerPlan; error?: string } | null;
+      const payload = (await response?.json().catch(() => null)) as ManagerPlanApiPayload | null;
 
       if (!active) return;
 
       if (response?.ok && payload?.plan) {
         setLockedPlan(payload.plan);
+      } else if (payload?.tableMissing) {
+        const localPlan = readLocalLockedPlan();
+        if (localPlan) {
+          setLockedPlan(localPlan);
+        }
+        setSaveState("idle");
+        setSaveMessage(payload.warning ?? "Supabase manager_plans table is missing. Showing locally saved plan if available.");
       }
 
       setLoadingLockedPlan(false);
@@ -191,15 +226,36 @@ export function ManagerGoalEarningsPredictor() {
       }),
     }).catch(() => null);
 
-    const payload = (await response?.json().catch(() => null)) as { plan?: ManagerPlan; error?: string } | null;
+    const payload = (await response?.json().catch(() => null)) as ManagerPlanApiPayload | null;
 
     if (!response?.ok || !payload?.plan) {
+      if (payload?.code === "MANAGER_PLANS_TABLE_MISSING") {
+        const localFallbackPlan: ManagerPlan = {
+          id: `local-${Date.now()}`,
+          manager_id: "local-manager",
+          week_start_date: getWeekStartDate(),
+          locked_metrics_json: {
+            inputs,
+            projections,
+          },
+          projected_income: projections.find((item) => item.label === "1 Year")?.total ?? 0,
+          created_at: new Date().toISOString(),
+        };
+
+        saveLocalLockedPlan(localFallbackPlan);
+        setLockedPlan(localFallbackPlan);
+        setSaveState("saved");
+        setSaveMessage("Supabase table is missing, so this plan was locked locally in your browser for this week.");
+        return;
+      }
+
       setSaveState("error");
       setSaveMessage(payload?.error ?? "Unable to lock plan. Confirm Supabase table exists and try again.");
       return;
     }
 
     setLockedPlan(payload.plan);
+    saveLocalLockedPlan(payload.plan);
     setSaveState("saved");
     setSaveMessage("Weekly plan locked in successfully.");
   }

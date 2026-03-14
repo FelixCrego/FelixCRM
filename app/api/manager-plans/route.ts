@@ -9,6 +9,8 @@ type PostgrestError = {
   details?: string;
 };
 
+const MISSING_TABLE_MESSAGE = "Could not find the table 'public.manager_plans' in the schema cache";
+
 function getConfig() {
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error("Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
@@ -17,17 +19,24 @@ function getConfig() {
   return { supabaseUrl, serviceRoleKey };
 }
 
-function getErrorMessage(payload: unknown, fallback: string) {
-  if (!payload || typeof payload !== "object") return fallback;
+function parsePostgrestError(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object") {
+    return { message: fallback, isMissingManagerPlansTable: false };
+  }
+
   const maybeError = payload as PostgrestError;
   const message = typeof maybeError.message === "string" ? maybeError.message : "";
   const details = typeof maybeError.details === "string" ? maybeError.details : "";
+  const merged = message || details || fallback;
 
-  if (message.includes("Could not find the table 'public.manager_plans' in the schema cache")) {
-    return "Manager plans table is not installed in Supabase yet. Run supabase/manager_plans.sql and refresh PostgREST schema cache.";
+  if (message.includes(MISSING_TABLE_MESSAGE) || details.includes(MISSING_TABLE_MESSAGE)) {
+    return {
+      message: "Manager plans table is not installed in Supabase yet. Run supabase/manager_plans.sql and refresh PostgREST schema cache.",
+      isMissingManagerPlansTable: true,
+    };
   }
 
-  return message || details || fallback;
+  return { message: merged, isMissingManagerPlansTable: false };
 }
 
 export async function GET() {
@@ -53,7 +62,12 @@ export async function GET() {
 
     const payload = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) {
-      return NextResponse.json({ error: getErrorMessage(payload, "Unable to load manager plan.") }, { status: response.status });
+      const parsed = parsePostgrestError(payload, "Unable to load manager plan.");
+      if (parsed.isMissingManagerPlansTable) {
+        return NextResponse.json({ plan: null, tableMissing: true, warning: parsed.message });
+      }
+
+      return NextResponse.json({ error: parsed.message }, { status: response.status });
     }
 
     const [plan] = Array.isArray(payload) ? payload : [];
@@ -103,7 +117,19 @@ export async function POST(request: Request) {
 
     const responsePayload = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) {
-      return NextResponse.json({ error: getErrorMessage(responsePayload, "Unable to lock manager plan.") }, { status: response.status });
+      const parsed = parsePostgrestError(responsePayload, "Unable to lock manager plan.");
+      if (parsed.isMissingManagerPlansTable) {
+        return NextResponse.json(
+          {
+            error: parsed.message,
+            code: "MANAGER_PLANS_TABLE_MISSING",
+            setupSql: "supabase/manager_plans.sql",
+          },
+          { status: 503 },
+        );
+      }
+
+      return NextResponse.json({ error: parsed.message }, { status: response.status });
     }
 
     const [plan] = Array.isArray(responsePayload) ? responsePayload : [];
