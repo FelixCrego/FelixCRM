@@ -28,6 +28,40 @@ type Applicant = {
 
 const STATUSES: ApplicantStatus[] = ["New", "Reviewing", "Interviewing", "Hired", "Rejected"];
 
+const ATS_SETUP_ERROR = "Recruiting tables are not installed in Supabase yet.";
+
+const ATS_SETUP_SQL = `-- ATS schema for manager recruiting workflows.
+create extension if not exists pgcrypto;
+
+create table if not exists public.jobs (
+  id uuid primary key default gen_random_uuid(),
+  manager_id uuid not null,
+  title text not null,
+  description text not null,
+  department text,
+  status text not null default 'open' check (status in ('open', 'closed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists jobs_manager_id_idx on public.jobs (manager_id);
+create index if not exists jobs_status_idx on public.jobs (status);
+
+create table if not exists public.applicants (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  name text not null,
+  email text not null,
+  phone text,
+  resume_url text,
+  linkedin_url text,
+  status text not null default 'New' check (status in ('New', 'Reviewing', 'Interviewing', 'Hired', 'Rejected')),
+  applied_at timestamptz not null default now()
+);
+
+create index if not exists applicants_job_id_idx on public.applicants (job_id);
+create index if not exists applicants_status_idx on public.applicants (status);
+create index if not exists applicants_applied_at_idx on public.applicants (applied_at desc);`;
+
 export default function RecruitingPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applicants, setApplicants] = useState<Applicant[]>([]);
@@ -37,6 +71,7 @@ export default function RecruitingPage() {
   const [creatingJob, setCreatingJob] = useState(false);
   const [updatingApplicantId, setUpdatingApplicantId] = useState<string | null>(null);
   const [form, setForm] = useState({ title: "", description: "", department: "" });
+  const needsAtsSetup = error.includes(ATS_SETUP_ERROR);
 
   async function loadData() {
     setLoading(true);
@@ -136,6 +171,11 @@ export default function RecruitingPage() {
     setMessage("Application link copied to clipboard.");
   }
 
+  async function copySetupSql() {
+    await navigator.clipboard.writeText(ATS_SETUP_SQL);
+    setMessage("ATS setup SQL copied. Run it in Supabase SQL Editor, then reload this page.");
+  }
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
@@ -143,6 +183,37 @@ export default function RecruitingPage() {
         <h1 className="mt-2 text-2xl font-semibold text-white">Recruiting Dashboard</h1>
         <p className="mt-1 text-sm text-zinc-400">Create jobs, publish unique application links to external boards, and manage applicants through the hiring pipeline.</p>
       </section>
+
+      {needsAtsSetup ? (
+        <section className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5">
+          <h2 className="text-lg font-semibold text-amber-100">One-time ATS Setup Required</h2>
+          <p className="mt-1 text-sm text-amber-200/90">Run the ATS table SQL in your Supabase project, then refresh this page.</p>
+          <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-amber-100/90">
+            <li>Open Supabase → SQL Editor for this project.</li>
+            <li>Paste and run the SQL below (or <code>supabase/ats_tables.sql</code>).</li>
+            <li>Refresh PostgREST schema cache (or wait ~30s), then click Reload Data.</li>
+          </ol>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void copySetupSql()}
+              className="rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-300/20"
+            >
+              Copy ATS SQL
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              className="rounded-lg border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:border-zinc-500"
+            >
+              Reload Data
+            </button>
+          </div>
+          <pre className="mt-3 max-h-72 overflow-auto rounded-xl border border-amber-500/30 bg-zinc-950 p-3 text-xs text-zinc-200">
+            {ATS_SETUP_SQL}
+          </pre>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
         <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
@@ -171,7 +242,7 @@ export default function RecruitingPage() {
             />
             <button
               type="submit"
-              disabled={creatingJob}
+              disabled={creatingJob || needsAtsSetup}
               className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {creatingJob ? "Creating..." : "Create Job"}
