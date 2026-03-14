@@ -81,11 +81,16 @@ export default function RecruitingPage() {
       });
 
       const payload = (await response.json().catch(() => null)) as { job?: Job; error?: string } | null;
-      if (!response.ok || !payload?.job) {
+      if (!response.ok) {
         throw new Error(payload?.error || "Unable to create job.");
       }
 
-      setJobs((prev) => [payload.job as Job, ...prev]);
+      if (payload?.job) {
+        setJobs((prev) => [payload.job as Job, ...prev]);
+      } else {
+        await loadData();
+      }
+
       setForm({ title: "", description: "", department: "" });
       setMessage("Job created successfully.");
     } catch (createError) {
