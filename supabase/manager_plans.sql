@@ -1,4 +1,7 @@
 -- Manager plans table for weekly accountability and earnings projections.
+-- After running this SQL in Supabase, refresh PostgREST schema cache so /rest/v1/manager_plans is discoverable.
+create extension if not exists pgcrypto;
+
 create table if not exists public.manager_plans (
   id uuid primary key default gen_random_uuid(),
   manager_id uuid not null,

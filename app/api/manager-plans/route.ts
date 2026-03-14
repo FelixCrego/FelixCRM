@@ -20,7 +20,14 @@ function getConfig() {
 function getErrorMessage(payload: unknown, fallback: string) {
   if (!payload || typeof payload !== "object") return fallback;
   const maybeError = payload as PostgrestError;
-  return maybeError.message || maybeError.details || fallback;
+  const message = typeof maybeError.message === "string" ? maybeError.message : "";
+  const details = typeof maybeError.details === "string" ? maybeError.details : "";
+
+  if (message.includes("Could not find the table 'public.manager_plans' in the schema cache")) {
+    return "Manager plans table is not installed in Supabase yet. Run supabase/manager_plans.sql and refresh PostgREST schema cache.";
+  }
+
+  return message || details || fallback;
 }
 
 export async function GET() {
