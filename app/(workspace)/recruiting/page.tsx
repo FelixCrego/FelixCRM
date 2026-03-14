@@ -1,26 +1,261 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+type Job = {
+  id: string;
+  title: string;
+  description: string;
+  department?: string | null;
+  status: "open" | "closed";
+  created_at: string;
+};
+
+type ApplicantStatus = "New" | "Reviewing" | "Interviewing" | "Hired" | "Rejected";
+
+type Applicant = {
+  id: string;
+  job_id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  resume_url?: string | null;
+  linkedin_url?: string | null;
+  status: ApplicantStatus;
+  applied_at: string;
+  jobTitle?: string;
+};
+
+const STATUSES: ApplicantStatus[] = ["New", "Reviewing", "Interviewing", "Hired", "Rejected"];
+
 export default function RecruitingPage() {
-  const stages = [
-    { label: "Sourced", count: 18 },
-    { label: "Phone Screen", count: 9 },
-    { label: "Final Interview", count: 5 },
-    { label: "Offer Extended", count: 3 },
-  ];
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [applicants, setApplicants] = useState<Applicant[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [creatingJob, setCreatingJob] = useState(false);
+  const [updatingApplicantId, setUpdatingApplicantId] = useState<string | null>(null);
+  const [form, setForm] = useState({ title: "", description: "", department: "" });
+
+  async function loadData() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const [jobsRes, applicantsRes] = await Promise.all([
+        fetch("/api/jobs", { cache: "no-store" }),
+        fetch("/api/applicants", { cache: "no-store" }),
+      ]);
+
+      const jobsPayload = (await jobsRes.json().catch(() => null)) as { jobs?: Job[]; error?: string } | null;
+      const applicantsPayload = (await applicantsRes.json().catch(() => null)) as { applicants?: Applicant[]; error?: string } | null;
+
+      if (!jobsRes.ok) throw new Error(jobsPayload?.error || "Unable to load jobs.");
+      if (!applicantsRes.ok) throw new Error(applicantsPayload?.error || "Unable to load applicants.");
+
+      setJobs(Array.isArray(jobsPayload?.jobs) ? jobsPayload.jobs : []);
+      setApplicants(Array.isArray(applicantsPayload?.applicants) ? applicantsPayload.applicants : []);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load recruiting data.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  async function handleCreateJob(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreatingJob(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { job?: Job; error?: string } | null;
+      if (!response.ok || !payload?.job) {
+        throw new Error(payload?.error || "Unable to create job.");
+      }
+
+      setJobs((prev) => [payload.job as Job, ...prev]);
+      setForm({ title: "", description: "", department: "" });
+      setMessage("Job created successfully.");
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Unable to create job.");
+    } finally {
+      setCreatingJob(false);
+    }
+  }
+
+  async function updateApplicantStatus(applicantId: string, status: ApplicantStatus) {
+    setUpdatingApplicantId(applicantId);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/applicants/${applicantId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error || "Unable to update applicant status.");
+
+      setApplicants((prev) => prev.map((applicant) => (applicant.id === applicantId ? { ...applicant, status } : applicant)));
+    } catch (statusError) {
+      setError(statusError instanceof Error ? statusError.message : "Unable to update applicant status.");
+    } finally {
+      setUpdatingApplicantId(null);
+    }
+  }
+
+  const groupedApplicants = useMemo(
+    () =>
+      STATUSES.reduce<Record<ApplicantStatus, Applicant[]>>((acc, status) => {
+        acc[status] = applicants.filter((applicant) => applicant.status === status);
+        return acc;
+      }, { New: [], Reviewing: [], Interviewing: [], Hired: [], Rejected: [] }),
+    [applicants],
+  );
+
+  async function copyApplicationLink(jobId: string) {
+    const link = `${window.location.origin}/apply/${jobId}`;
+    await navigator.clipboard.writeText(link);
+    setMessage("Application link copied to clipboard.");
+  }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Manager Tooling</p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">Recruiting Pipeline</h1>
-        <p className="mt-1 text-sm text-zinc-400">Manage outbound recruiting and candidate progression for commission-only sales reps.</p>
+        <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Manager Recruiting ATS</p>
+        <h1 className="mt-2 text-2xl font-semibold text-white">Recruiting Dashboard</h1>
+        <p className="mt-1 text-sm text-zinc-400">Create jobs, publish unique application links to external boards, and manage applicants through the hiring pipeline.</p>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {stages.map((stage) => (
-          <article key={stage.label} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-            <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">{stage.label}</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{stage.count}</p>
-          </article>
-        ))}
+      <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="text-lg font-semibold text-white">Create New Job</h2>
+          <form onSubmit={handleCreateJob} className="mt-3 grid gap-3">
+            <input
+              required
+              value={form.title}
+              onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+              placeholder="Job title"
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+            <input
+              value={form.department}
+              onChange={(event) => setForm((prev) => ({ ...prev, department: event.target.value }))}
+              placeholder="Department (optional)"
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+            <textarea
+              required
+              value={form.description}
+              onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+              rows={5}
+              placeholder="Job description"
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
+            <button
+              type="submit"
+              disabled={creatingJob}
+              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {creatingJob ? "Creating..." : "Create Job"}
+            </button>
+          </form>
+        </article>
+
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="text-lg font-semibold text-white">Open Jobs</h2>
+          <div className="mt-3 space-y-2">
+            {jobs.length === 0 ? <p className="text-sm text-zinc-400">No jobs yet.</p> : null}
+            {jobs.map((job) => (
+              <div key={job.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+                <p className="text-sm font-semibold text-white">{job.title}</p>
+                <p className="text-xs text-zinc-400">{job.department || "General"} • {job.status}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyApplicationLink(job.id)}
+                    disabled={job.status !== "open"}
+                    className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-200 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Copy Application Link
+                  </button>
+                  <a href={`/apply/${job.id}`} target="_blank" rel="noreferrer" className="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:border-zinc-600">
+                    View Public Post
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      {message ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{message}</p> : null}
+      {error ? <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p> : null}
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <h2 className="text-lg font-semibold text-white">Candidate Pipeline</h2>
+        {loading ? <p className="mt-2 text-sm text-zinc-400">Loading applicants...</p> : null}
+
+        <div className="mt-4 grid gap-3 xl:grid-cols-5">
+          {STATUSES.map((status) => (
+            <div key={status} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">{status}</h3>
+                <span className="text-xs text-zinc-400">{groupedApplicants[status].length}</span>
+              </div>
+
+              <div className="space-y-2">
+                {groupedApplicants[status].map((applicant) => (
+                  <article key={applicant.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
+                    <p className="text-sm font-medium text-zinc-100">{applicant.name}</p>
+                    <p className="text-xs text-zinc-400">{applicant.email}</p>
+                    <p className="mt-1 text-xs text-blue-200">{applicant.jobTitle || "Unknown role"}</p>
+
+                    <div className="mt-2 flex gap-1.5">
+                      {applicant.resume_url ? (
+                        <a href={applicant.resume_url} target="_blank" rel="noreferrer" className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
+                          Resume
+                        </a>
+                      ) : null}
+                      {applicant.linkedin_url ? (
+                        <a href={applicant.linkedin_url} target="_blank" rel="noreferrer" className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
+                          LinkedIn
+                        </a>
+                      ) : null}
+                    </div>
+
+                    <select
+                      value={applicant.status}
+                      onChange={(event) => void updateApplicantStatus(applicant.id, event.target.value as ApplicantStatus)}
+                      disabled={updatingApplicantId === applicant.id}
+                      className="mt-2 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+                    >
+                      {STATUSES.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </article>
+                ))}
+
+                {groupedApplicants[status].length === 0 ? <p className="text-xs text-zinc-500">No candidates</p> : null}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );
