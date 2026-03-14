@@ -73,8 +73,16 @@ const navByRole: Record<UserRole, NavItem[]> = {
   ],
   MANAGER: [
     { href: "/dashboard", label: "Manager Dashboard", icon: Gauge },
-    { href: "/territory-setup", label: "Territory Setup", icon: MapIcon },
-    { href: "/rep-performance", label: "Rep Performance", icon: Trophy },
+    { href: "/scrape", label: "Scrape Leads", icon: Search },
+    { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
+    { href: "/pipeline", label: "Pipeline", icon: Flame },
+    { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/training", label: "Training Center", icon: Bot },
+    { href: "/commissions", label: "Commissions", icon: Wallet },
+    { href: "/recruiting", label: "Recruiting", icon: Users },
+    { href: "/team-performance", label: "Team Performance", icon: Trophy },
+    { href: "/team-goals", label: "Rep Goals", icon: MapIcon },
     { href: "/payouts", label: "Payouts", icon: Briefcase },
   ],
   SUPER_ADMIN: [
