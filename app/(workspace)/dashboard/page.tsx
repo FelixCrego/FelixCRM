@@ -15,11 +15,11 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ManagerGoalEarningsPredictor } from "@/components/dashboard/manager-goal-earnings-predictor";
+import { buildManagerActionPlan, type PredictorInputs } from "@/lib/manager-action-engine";
 
 const repKpis = [
   { label: "Earned Commission", value: "$18,250", trend: "+14%", icon: TrendingUp },
@@ -51,6 +51,7 @@ const dailyExecution = [
 
 function RepDashboard() {
   const router = useRouter();
+
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_350px]">
@@ -212,8 +213,19 @@ function TeamLeadDashboard() {
   );
 }
 
+type ManagerLockedPlan = {
+  id: string;
+  week_start_date: string;
+  projected_income: number;
+  created_at: string;
+  locked_metrics_json: {
+    inputs: PredictorInputs;
+  };
+};
+
 function ManagerDashboard() {
   const [claimedLeadCounts, setClaimedLeadCounts] = useState<Array<{ userId: string; userName: string; claimedLeads: number }>>([]);
+  const [lockedPlan, setLockedPlan] = useState<ManagerLockedPlan | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -241,11 +253,30 @@ function ManagerDashboard() {
       }
     }
 
+    async function loadLockedPlan() {
+      try {
+        const response = await fetch("/api/manager-plans", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const payload = (await response.json().catch(() => null)) as { plan?: ManagerLockedPlan | null } | null;
+        if (!isActive || !payload?.plan) return;
+        setLockedPlan(payload.plan);
+      } catch {
+        // Keep dashboard shell usable if manager plans endpoint is unavailable.
+      }
+    }
+
     void loadClaimedLeadCounts();
+    void loadLockedPlan();
     return () => {
       isActive = false;
     };
   }, []);
+
+  const dashboardActionPlan = useMemo(() => {
+    if (!lockedPlan?.locked_metrics_json?.inputs) return null;
+    return buildManagerActionPlan(lockedPlan.locked_metrics_json.inputs, lockedPlan.locked_metrics_json.inputs);
+  }, [lockedPlan]);
 
   return (
     <div className="space-y-5">
@@ -274,6 +305,32 @@ function ManagerDashboard() {
           );
         })}
       </section>
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <h3 className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Daily Action Board (From Locked Weekly Plan)</h3>
+        {!dashboardActionPlan ? (
+          <p className="text-sm text-zinc-400">No locked plan found yet. Lock a weekly plan in Rep Goals to generate daily action tasks.</p>
+        ) : (
+          <div className="space-y-3">
+            <p className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-100">{dashboardActionPlan.headline}</p>
+            {dashboardActionPlan.lockedGapSummary ? <p className="text-xs text-zinc-400">{dashboardActionPlan.lockedGapSummary}</p> : null}
+            <div className="grid gap-2 md:grid-cols-2">
+              {dashboardActionPlan.tasks.map((task) => (
+                <article key={task.id} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-white">{task.title}</p>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${task.priority === "critical" ? "bg-rose-500/15 text-rose-200" : task.priority === "high" ? "bg-amber-500/15 text-amber-200" : "bg-blue-500/15 text-blue-200"}`}>{task.priority}</span>
+                  </div>
+                  <p className="text-xs text-zinc-300">{task.play}</p>
+                  <p className="mt-1 text-xs text-zinc-400">Target: {task.target}</p>
+                  <p className="mt-1 text-xs text-emerald-300">Time Block: {task.minutes} min today</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Claimed Leads by User</h3>

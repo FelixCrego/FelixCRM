@@ -1,20 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
-type PredictorInputs = {
-  averageDealValue: number;
-  repCommissionRate: number;
-  personalWeeklyCalls: number;
-  personalContactRate: number;
-  personalDemoBookedRate: number;
-  personalShowRate: number;
-  personalCloseRate: number;
-  teamActiveReps: number;
-  teamAvgCallsPerRep: number;
-  teamCloseRate: number;
-  teamTargetNewHiresMonthly: number;
-};
+import { buildManagerActionPlan, type PredictorInputs } from "@/lib/manager-action-engine";
 
 type ProjectionRow = {
   label: string;
@@ -68,6 +55,35 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
+const LOCAL_PLAN_STORAGE_KEY = "manager-goal-plan-local";
+
+type ManagerPlanApiPayload = {
+  plan?: ManagerPlan | null;
+  error?: string;
+  warning?: string;
+  tableMissing?: boolean;
+  code?: string;
+  setupSqlText?: string;
+};
+
+function saveLocalLockedPlan(plan: ManagerPlan) {
+  try {
+    localStorage.setItem(LOCAL_PLAN_STORAGE_KEY, JSON.stringify(plan));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function readLocalLockedPlan() {
+  try {
+    const raw = localStorage.getItem(LOCAL_PLAN_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as ManagerPlan;
+  } catch {
+    return null;
+  }
+}
+
 function roundCurrency(value: number) {
   return Math.max(0, Math.round(value));
 }
@@ -95,6 +111,7 @@ export function ManagerGoalEarningsPredictor() {
   const [loadingLockedPlan, setLoadingLockedPlan] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<string>("");
+  const [setupSqlText, setSetupSqlText] = useState<string>("");
 
   const personalWeeklyClosedDeals = useMemo(() => {
     return (
@@ -128,21 +145,11 @@ export function ManagerGoalEarningsPredictor() {
     });
   }, [weeklyPersonalEarnings, weeklyOverrideEarnings]);
 
-  const actionPriority = useMemo(() => {
-    if (inputs.teamCloseRate < 0.15) {
-      return "Priority: Ride-alongs and sales coaching.";
-    }
+  const lockedInputs = lockedPlan?.locked_metrics_json?.inputs ?? null;
 
-    if (inputs.teamActiveReps < inputs.teamTargetNewHiresMonthly) {
-      return "Priority: Dedicate 3 hours/day to Recruiting.";
-    }
-
-    if (personalWeeklyClosedDeals < 0.3) {
-      return "Priority: Lead Generation & Personal Selling.";
-    }
-
-    return "Priority: Maintain coaching rhythm and protect recruiting blocks while scaling team production.";
-  }, [inputs.teamCloseRate, inputs.teamActiveReps, inputs.teamTargetNewHiresMonthly, personalWeeklyClosedDeals]);
+  const actionPlan = useMemo(() => {
+    return buildManagerActionPlan(inputs, lockedInputs);
+  }, [inputs, lockedInputs]);
 
   useEffect(() => {
     let active = true;
@@ -150,12 +157,20 @@ export function ManagerGoalEarningsPredictor() {
     async function loadLockedPlan() {
       setLoadingLockedPlan(true);
       const response = await fetch("/api/manager-plans", { cache: "no-store" }).catch(() => null);
-      const payload = (await response?.json().catch(() => null)) as { plan?: ManagerPlan; error?: string } | null;
+      const payload = (await response?.json().catch(() => null)) as ManagerPlanApiPayload | null;
 
       if (!active) return;
 
       if (response?.ok && payload?.plan) {
         setLockedPlan(payload.plan);
+      } else if (payload?.tableMissing) {
+        const localPlan = readLocalLockedPlan();
+        if (localPlan) {
+          setLockedPlan(localPlan);
+        }
+        setSaveState("idle");
+        setSaveMessage(payload.warning ?? "Supabase manager_plans table is missing. Showing locally saved plan if available.");
+        setSetupSqlText(payload.setupSqlText ?? "");
       }
 
       setLoadingLockedPlan(false);
@@ -172,11 +187,13 @@ export function ManagerGoalEarningsPredictor() {
     setInputs((prev) => ({ ...prev, [key]: value }));
     setSaveState("idle");
     setSaveMessage("");
+    setSetupSqlText("");
   }
 
   async function handleLockPlan() {
     setSaveState("saving");
     setSaveMessage("");
+    setSetupSqlText("");
 
     const response = await fetch("/api/manager-plans", {
       method: "POST",
@@ -191,17 +208,41 @@ export function ManagerGoalEarningsPredictor() {
       }),
     }).catch(() => null);
 
-    const payload = (await response?.json().catch(() => null)) as { plan?: ManagerPlan; error?: string } | null;
+    const payload = (await response?.json().catch(() => null)) as ManagerPlanApiPayload | null;
 
     if (!response?.ok || !payload?.plan) {
+      if (payload?.code === "MANAGER_PLANS_TABLE_MISSING") {
+        const localFallbackPlan: ManagerPlan = {
+          id: `local-${Date.now()}`,
+          manager_id: "local-manager",
+          week_start_date: getWeekStartDate(),
+          locked_metrics_json: {
+            inputs,
+            projections,
+          },
+          projected_income: projections.find((item) => item.label === "1 Year")?.total ?? 0,
+          created_at: new Date().toISOString(),
+        };
+
+        saveLocalLockedPlan(localFallbackPlan);
+        setLockedPlan(localFallbackPlan);
+        setSaveState("saved");
+        setSaveMessage("Supabase table is missing, so this plan was locked locally in your browser for this week.");
+        setSetupSqlText(payload.setupSqlText ?? "");
+        return;
+      }
+
       setSaveState("error");
       setSaveMessage(payload?.error ?? "Unable to lock plan. Confirm Supabase table exists and try again.");
+      setSetupSqlText(payload?.setupSqlText ?? "");
       return;
     }
 
     setLockedPlan(payload.plan);
+    saveLocalLockedPlan(payload.plan);
     setSaveState("saved");
     setSaveMessage("Weekly plan locked in successfully.");
+    setSetupSqlText("");
   }
 
   function handleExportPlan() {
@@ -337,7 +378,27 @@ export function ManagerGoalEarningsPredictor() {
 
       <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
         <h4 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-300">3) Action Engine</h4>
-        <p className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-100">{actionPriority}</p>
+        <p className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-100">{actionPlan.headline}</p>
+
+        {actionPlan.lockedGapSummary ? (
+          <p className="text-xs text-zinc-400">{actionPlan.lockedGapSummary}</p>
+        ) : null}
+
+        <div className="grid gap-2 md:grid-cols-2">
+          {actionPlan.tasks.map((task) => (
+            <article key={task.id} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <h5 className="text-sm font-semibold text-white">{task.title}</h5>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${task.priority === "critical" ? "bg-rose-500/15 text-rose-200" : task.priority === "high" ? "bg-amber-500/15 text-amber-200" : "bg-blue-500/15 text-blue-200"}`}>
+                  {task.priority}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-300">{task.play}</p>
+              <p className="mt-1 text-xs text-zinc-400">Target: {task.target}</p>
+              <p className="mt-1 text-xs text-emerald-300">Time Block: {task.minutes} min today</p>
+            </article>
+          ))}
+        </div>
 
         <div className="flex flex-wrap gap-2">
           <button
@@ -359,6 +420,15 @@ export function ManagerGoalEarningsPredictor() {
 
         {saveMessage ? (
           <p className={`text-sm ${saveState === "error" ? "text-rose-300" : "text-emerald-300"}`}>{saveMessage}</p>
+        ) : null}
+
+        {setupSqlText ? (
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-400">Supabase SQL to run</p>
+            <pre className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900 p-3 text-xs text-zinc-200">
+              <code>{setupSqlText}</code>
+            </pre>
+          </div>
         ) : null}
       </section>
     </section>
