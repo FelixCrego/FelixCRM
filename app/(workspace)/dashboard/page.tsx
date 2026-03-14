@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { useRole } from "@/components/role-context";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ManagerGoalEarningsPredictor } from "@/components/dashboard/manager-goal-earnings-predictor";
 
 const repKpis = [
   { label: "Earned Commission", value: "$18,250", trend: "+14%", icon: TrendingUp },
