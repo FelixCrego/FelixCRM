@@ -46,6 +46,12 @@ function firstDeploymentAlias(payload: Record<string, unknown>): string | undefi
   return undefined;
 }
 
+function deploymentProjectAlias(payload: Record<string, unknown>): string | undefined {
+  const projectName = typeof payload.name === "string" ? payload.name.trim() : "";
+  if (!projectName) return undefined;
+  return toHttpsUrl(`${projectName}.vercel.app`);
+}
+
 function resolveDeploymentState(payload: Record<string, unknown>): string {
   const candidate =
     (typeof payload.readyState === "string" && payload.readyState) ||
@@ -121,7 +127,8 @@ export async function GET(request: Request) {
     const payload = (await response.json()) as Record<string, unknown>;
     const readyState = resolveDeploymentState(payload);
     const aliasUrl = firstDeploymentAlias(payload);
-    const deployedUrl = aliasUrl ?? toHttpsUrl(payload.url) ?? lead.deployedUrl ?? null;
+    const projectAliasUrl = deploymentProjectAlias(payload);
+    const deployedUrl = aliasUrl ?? projectAliasUrl ?? lead.deployedUrl ?? toHttpsUrl(payload.url) ?? null;
 
     if (readyState === "READY" || readyState === "LIVE") {
       await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
