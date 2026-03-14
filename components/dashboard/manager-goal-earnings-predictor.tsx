@@ -40,6 +40,9 @@ const defaultInputs: PredictorInputs = {
   personalCloseRate: 0.25,
   teamActiveReps: 10,
   teamAvgCallsPerRep: 45,
+  teamContactRate: 0.25,
+  teamDemoBookedRate: 0.4,
+  teamShowRate: 0.7,
   teamCloseRate: 0.18,
   teamTargetNewHiresMonthly: 12,
 };
@@ -124,7 +127,7 @@ export function ManagerGoalEarningsPredictor() {
   }, [inputs]);
 
   const teamWeeklyClosedDeals = useMemo(() => {
-    return inputs.teamActiveReps * inputs.teamAvgCallsPerRep * inputs.personalContactRate * inputs.teamCloseRate;
+    return inputs.teamActiveReps * inputs.teamAvgCallsPerRep * inputs.teamContactRate * inputs.teamDemoBookedRate * inputs.teamShowRate * inputs.teamCloseRate;
   }, [inputs]);
 
   const weeklyPersonalEarnings = useMemo(() => {
@@ -256,7 +259,10 @@ export function ManagerGoalEarningsPredictor() {
       ["Personal Show Rate", `${toPercentInput(inputs.personalShowRate)}%`],
       ["Personal Close Rate", `${toPercentInput(inputs.personalCloseRate)}%`],
       ["Team Active Reps", `${inputs.teamActiveReps}`],
-      ["Team Avg Calls / Rep", `${inputs.teamAvgCallsPerRep}`],
+      ["Team Avg Calls / Rep (Weekly)", `${inputs.teamAvgCallsPerRep}`],
+      ["Team Contact Rate", `${toPercentInput(inputs.teamContactRate)}%`],
+      ["Team Demo Booked Rate", `${toPercentInput(inputs.teamDemoBookedRate)}%`],
+      ["Team Show Rate", `${toPercentInput(inputs.teamShowRate)}%`],
       ["Team Close Rate", `${toPercentInput(inputs.teamCloseRate)}%`],
       ["Target New Hires / Month", `${inputs.teamTargetNewHiresMonthly}`],
       [],
@@ -321,26 +327,29 @@ export function ManagerGoalEarningsPredictor() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <InputNumber label="Average Deal Value ($)" value={inputs.averageDealValue} step={100} min={500} onChange={(v) => setInput("averageDealValue", clamp(v, 500, 200000))} />
-            <InputRateControl label="Rep Commission Rate" value={inputs.repCommissionRate} min={10} max={40} color="yellow" onChange={(v) => setInput("repCommissionRate", v)} />
+            <InputRateControl label="Rep Commission Rate" value={inputs.repCommissionRate} min={10} max={40} color="blue" onChange={(v) => setInput("repCommissionRate", v)} />
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
             <fieldset className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Personal Funnel</legend>
-              <InputNumber tone="yellow" label="Weekly Calls" value={inputs.personalWeeklyCalls} min={0} max={500} onChange={(v) => setInput("personalWeeklyCalls", clamp(v, 0, 500))} />
-              <InputRateControl label="Contact Rate" value={inputs.personalContactRate} color="yellow" onChange={(v) => setInput("personalContactRate", v)} />
-              <InputRateControl label="Demos Booked" value={inputs.personalDemoBookedRate} color="yellow" onChange={(v) => setInput("personalDemoBookedRate", v)} />
-              <InputRateControl label="Show Rate" value={inputs.personalShowRate} color="yellow" onChange={(v) => setInput("personalShowRate", v)} />
-              <InputRateControl label="Close Rate" value={inputs.personalCloseRate} color="yellow" onChange={(v) => setInput("personalCloseRate", v)} />
+              <InputNumber tone="blue" label="Weekly Calls" value={inputs.personalWeeklyCalls} min={0} max={500} onChange={(v) => setInput("personalWeeklyCalls", clamp(v, 0, 500))} />
+              <InputRateControl label="Contact Rate" value={inputs.personalContactRate} color="blue" onChange={(v) => setInput("personalContactRate", v)} />
+              <InputRateControl label="Demos Booked" value={inputs.personalDemoBookedRate} color="blue" onChange={(v) => setInput("personalDemoBookedRate", v)} />
+              <InputRateControl label="Show Rate" value={inputs.personalShowRate} color="blue" onChange={(v) => setInput("personalShowRate", v)} />
+              <InputRateControl label="Close Rate" value={inputs.personalCloseRate} color="blue" onChange={(v) => setInput("personalCloseRate", v)} />
             </fieldset>
 
             <fieldset className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Team & Recruiting Funnel</legend>
-              <p className="text-[11px] text-zinc-500">Avg Calls per Rep is a weekly number (used for weekly projections).</p>
-              <InputNumber label="Active Reps" value={inputs.teamActiveReps} min={0} max={100} onChange={(v) => setInput("teamActiveReps", clamp(v, 0, 100))} />
-              <InputNumber label="Avg Calls per Rep (Weekly)" value={inputs.teamAvgCallsPerRep} min={0} max={500} onChange={(v) => setInput("teamAvgCallsPerRep", clamp(v, 0, 500))} />
-              <InputRateControl label="Team Close Rate" value={inputs.teamCloseRate} color="blue" onChange={(v) => setInput("teamCloseRate", v)} />
-              <InputNumber label="Target New Hires / month" value={inputs.teamTargetNewHiresMonthly} min={0} max={100} onChange={(v) => setInput("teamTargetNewHiresMonthly", clamp(v, 0, 100))} />
+              <p className="text-[11px] text-zinc-500">Avg Calls per Rep is a weekly number (used for weekly projections). Team rates are independent so you can compare side-by-side against personal funnel performance.</p>
+              <InputNumber tone="yellow" label="Active Reps" value={inputs.teamActiveReps} min={0} max={100} onChange={(v) => setInput("teamActiveReps", clamp(v, 0, 100))} />
+              <InputNumber tone="yellow" label="Avg Calls per Rep (Weekly)" value={inputs.teamAvgCallsPerRep} min={0} max={500} onChange={(v) => setInput("teamAvgCallsPerRep", clamp(v, 0, 500))} />
+              <InputRateControl label="Team Contact Rate" value={inputs.teamContactRate} color="yellow" onChange={(v) => setInput("teamContactRate", v)} />
+              <InputRateControl label="Team Demo Booked Rate" value={inputs.teamDemoBookedRate} color="yellow" onChange={(v) => setInput("teamDemoBookedRate", v)} />
+              <InputRateControl label="Team Show Rate" value={inputs.teamShowRate} color="yellow" onChange={(v) => setInput("teamShowRate", v)} />
+              <InputRateControl label="Team Close Rate" value={inputs.teamCloseRate} color="yellow" onChange={(v) => setInput("teamCloseRate", v)} />
+              <InputNumber tone="yellow" label="Target New Hires / month" value={inputs.teamTargetNewHiresMonthly} min={0} max={100} onChange={(v) => setInput("teamTargetNewHiresMonthly", clamp(v, 0, 100))} />
             </fieldset>
           </div>
         </section>
@@ -379,7 +388,7 @@ export function ManagerGoalEarningsPredictor() {
 
       <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
         <h4 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-300">3) Action Engine</h4>
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-100">{actionPlan.headline}</p>
+        <p className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-100">{actionPlan.headline}</p>
 
         {actionPlan.lockedGapSummary ? (
           <p className="text-xs text-zinc-400">{actionPlan.lockedGapSummary}</p>

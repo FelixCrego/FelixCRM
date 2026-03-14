@@ -8,6 +8,9 @@ export type PredictorInputs = {
   personalCloseRate: number;
   teamActiveReps: number;
   teamAvgCallsPerRep: number;
+  teamContactRate: number;
+  teamDemoBookedRate: number;
+  teamShowRate: number;
   teamCloseRate: number;
   teamTargetNewHiresMonthly: number;
 };
@@ -52,7 +55,18 @@ export function calculateWeeklySnapshot(inputs: PredictorInputs) {
     inputs.personalShowRate *
     inputs.personalCloseRate;
 
-  const teamClosedDeals = inputs.teamActiveReps * inputs.teamAvgCallsPerRep * inputs.personalContactRate * inputs.teamCloseRate;
+  const teamContactRate = inputs.teamContactRate ?? inputs.personalContactRate;
+  const teamDemoBookedRate = inputs.teamDemoBookedRate ?? inputs.personalDemoBookedRate;
+  const teamShowRate = inputs.teamShowRate ?? inputs.personalShowRate;
+
+  const teamClosedDeals =
+    inputs.teamActiveReps *
+    inputs.teamAvgCallsPerRep *
+    teamContactRate *
+    teamDemoBookedRate *
+    teamShowRate *
+    inputs.teamCloseRate;
+
   const personalIncome = personalClosedDeals * inputs.averageDealValue * MANAGER_BASE_COMMISSION;
   const overrideRate = Math.max(MANAGER_BASE_COMMISSION - inputs.repCommissionRate, 0);
   const teamOverrideIncome = teamClosedDeals * inputs.averageDealValue * overrideRate;
