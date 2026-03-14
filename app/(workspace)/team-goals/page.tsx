@@ -1,3 +1,7 @@
+"use client";
+
+import { ManagerGoalEarningsPredictor } from "@/components/dashboard/manager-goal-earnings-predictor";
+
 const goals = [
   { rep: "Aarav Patel", target: "60 calls/day", progress: 92 },
   { rep: "Jordan Kim", target: "5 demos/week", progress: 80 },
@@ -13,6 +17,9 @@ export default function TeamGoalsPage() {
         <h1 className="mt-2 text-2xl font-semibold text-white">Rep Goal Assignment</h1>
         <p className="mt-1 text-sm text-zinc-400">Assign individualized goals to each team member and monitor completion in one place.</p>
       </section>
+
+
+      <ManagerGoalEarningsPredictor />
 
       <section className="grid gap-3 md:grid-cols-2">
         {goals.map((goal) => (
