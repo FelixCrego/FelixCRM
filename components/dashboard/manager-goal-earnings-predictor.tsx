@@ -321,24 +321,25 @@ export function ManagerGoalEarningsPredictor() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <InputNumber label="Average Deal Value ($)" value={inputs.averageDealValue} step={100} min={500} onChange={(v) => setInput("averageDealValue", clamp(v, 500, 200000))} />
-            <InputRangePercent label="Rep Commission Rate" value={inputs.repCommissionRate} min={10} max={40} onChange={(v) => setInput("repCommissionRate", v)} />
+            <InputRateControl label="Rep Commission Rate" value={inputs.repCommissionRate} min={10} max={40} color="yellow" onChange={(v) => setInput("repCommissionRate", v)} />
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
             <fieldset className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Personal Funnel</legend>
-              <InputNumber label="Weekly Calls" value={inputs.personalWeeklyCalls} min={0} max={500} onChange={(v) => setInput("personalWeeklyCalls", clamp(v, 0, 500))} />
-              <InputRangePercent label="Contact Rate" value={inputs.personalContactRate} onChange={(v) => setInput("personalContactRate", v)} />
-              <InputRangePercent label="Demos Booked" value={inputs.personalDemoBookedRate} onChange={(v) => setInput("personalDemoBookedRate", v)} />
-              <InputRangePercent label="Show Rate" value={inputs.personalShowRate} onChange={(v) => setInput("personalShowRate", v)} />
-              <InputRangePercent label="Close Rate" value={inputs.personalCloseRate} onChange={(v) => setInput("personalCloseRate", v)} />
+              <InputNumber tone="yellow" label="Weekly Calls" value={inputs.personalWeeklyCalls} min={0} max={500} onChange={(v) => setInput("personalWeeklyCalls", clamp(v, 0, 500))} />
+              <InputRateControl label="Contact Rate" value={inputs.personalContactRate} color="yellow" onChange={(v) => setInput("personalContactRate", v)} />
+              <InputRateControl label="Demos Booked" value={inputs.personalDemoBookedRate} color="yellow" onChange={(v) => setInput("personalDemoBookedRate", v)} />
+              <InputRateControl label="Show Rate" value={inputs.personalShowRate} color="yellow" onChange={(v) => setInput("personalShowRate", v)} />
+              <InputRateControl label="Close Rate" value={inputs.personalCloseRate} color="yellow" onChange={(v) => setInput("personalCloseRate", v)} />
             </fieldset>
 
             <fieldset className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Team & Recruiting Funnel</legend>
+              <p className="text-[11px] text-zinc-500">Avg Calls per Rep is a weekly number (used for weekly projections).</p>
               <InputNumber label="Active Reps" value={inputs.teamActiveReps} min={0} max={100} onChange={(v) => setInput("teamActiveReps", clamp(v, 0, 100))} />
-              <InputNumber label="Avg Calls per Rep" value={inputs.teamAvgCallsPerRep} min={0} max={500} onChange={(v) => setInput("teamAvgCallsPerRep", clamp(v, 0, 500))} />
-              <InputRangePercent label="Team Close Rate" value={inputs.teamCloseRate} onChange={(v) => setInput("teamCloseRate", v)} />
+              <InputNumber label="Avg Calls per Rep (Weekly)" value={inputs.teamAvgCallsPerRep} min={0} max={500} onChange={(v) => setInput("teamAvgCallsPerRep", clamp(v, 0, 500))} />
+              <InputRateControl label="Team Close Rate" value={inputs.teamCloseRate} color="blue" onChange={(v) => setInput("teamCloseRate", v)} />
               <InputNumber label="Target New Hires / month" value={inputs.teamTargetNewHiresMonthly} min={0} max={100} onChange={(v) => setInput("teamTargetNewHiresMonthly", clamp(v, 0, 100))} />
             </fieldset>
           </div>
@@ -378,7 +379,7 @@ export function ManagerGoalEarningsPredictor() {
 
       <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
         <h4 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-300">3) Action Engine</h4>
-        <p className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-100">{actionPlan.headline}</p>
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-100">{actionPlan.headline}</p>
 
         {actionPlan.lockedGapSummary ? (
           <p className="text-xs text-zinc-400">{actionPlan.lockedGapSummary}</p>
@@ -442,6 +443,7 @@ function InputNumber({
   min,
   max,
   step = 1,
+  tone = "blue",
 }: {
   label: string;
   value: number;
@@ -449,6 +451,7 @@ function InputNumber({
   min?: number;
   max?: number;
   step?: number;
+  tone?: "blue" | "yellow";
 }) {
   return (
     <label className="block text-xs text-zinc-300">
@@ -460,38 +463,49 @@ function InputNumber({
         max={max}
         step={step}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-sm text-white outline-none ring-blue-500/40 transition focus:ring"
+        className={`w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-sm text-white outline-none transition focus:ring ${tone === "yellow" ? "ring-amber-500/40" : "ring-blue-500/40"}`}
       />
     </label>
   );
 }
 
-function InputRangePercent({
+function InputRateControl({
   label,
   value,
   onChange,
   min = 0,
   max = 100,
+  color = "blue",
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   min?: number;
   max?: number;
+  color?: "blue" | "yellow";
 }) {
+  const display = Math.round(value * 100);
+
   return (
     <label className="block text-xs text-zinc-300">
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between gap-2">
         <span className="uppercase tracking-[0.12em] text-zinc-500">{label}</span>
-        <span className="font-semibold text-zinc-200">{Math.round(value * 100)}%</span>
+        <input
+          type="number"
+          value={display}
+          min={min}
+          max={max}
+          onChange={(event) => onChange(clamp(Number(event.target.value) / 100, min / 100, max / 100))}
+          className={`w-16 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-right text-xs font-semibold text-zinc-100 outline-none transition focus:ring ${color === "yellow" ? "ring-amber-500/40" : "ring-blue-500/40"}`}
+        />
       </div>
       <input
         type="range"
-        value={Math.round(value * 100)}
+        value={display}
         min={min}
         max={max}
         onChange={(event) => onChange(clamp(Number(event.target.value) / 100, min / 100, max / 100))}
-        className="w-full accent-blue-500"
+        className={`w-full ${color === "yellow" ? "accent-amber-400" : "accent-blue-500"}`}
       />
     </label>
   );
