@@ -32,8 +32,13 @@ export async function GET() {
       cache: "no-store",
     });
 
-    const data = await response.json().catch(() => []);
-    if (!response.ok) return NextResponse.json({ error: "Unable to load jobs." }, { status: response.status });
+    const data = await response.json().catch(() => null) as { message?: string; details?: string } | unknown;
+    if (!response.ok) {
+      const error = typeof data === "object" && data && "message" in data && typeof (data as { message?: string }).message === "string"
+        ? (data as { message?: string }).message
+        : "Unable to load jobs.";
+      return NextResponse.json({ error }, { status: response.status });
+    }
 
     return NextResponse.json({ jobs: Array.isArray(data) ? data : [] });
   } catch (error) {
@@ -76,8 +81,13 @@ export async function POST(request: Request) {
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json().catch(() => []);
-    if (!response.ok) return NextResponse.json({ error: "Unable to create job." }, { status: response.status });
+    const data = await response.json().catch(() => null) as { message?: string; details?: string } | unknown;
+    if (!response.ok) {
+      const error = typeof data === "object" && data && "message" in data && typeof (data as { message?: string }).message === "string"
+        ? (data as { message?: string }).message
+        : "Unable to create job.";
+      return NextResponse.json({ error }, { status: response.status });
+    }
 
     const [job] = Array.isArray(data) ? data : [];
     return NextResponse.json({ job }, { status: 201 });
