@@ -12,6 +12,27 @@ function getConfig() {
   return { supabaseUrl, serviceRoleKey };
 }
 
+type PostgrestError = {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+};
+
+function getErrorMessage(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object") return fallback;
+
+  const maybeError = payload as PostgrestError;
+  const message = typeof maybeError.message === "string" ? maybeError.message : "";
+  const details = typeof maybeError.details === "string" ? maybeError.details : "";
+
+  if (message.includes("Could not find the table 'public.jobs' in the schema cache")) {
+    return "Recruiting tables are not installed in Supabase yet. Run supabase/ats_tables.sql and refresh the PostgREST schema cache.";
+  }
+
+  return message || details || fallback;
+}
+
 export async function GET() {
   const userId = await getAuthenticatedUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,8 +53,10 @@ export async function GET() {
       cache: "no-store",
     });
 
-    const data = await response.json().catch(() => []);
-    if (!response.ok) return NextResponse.json({ error: "Unable to load jobs." }, { status: response.status });
+    const data = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) {
+      return NextResponse.json({ error: getErrorMessage(data, "Unable to load jobs.") }, { status: response.status });
+    }
 
     return NextResponse.json({ jobs: Array.isArray(data) ? data : [] });
   } catch (error) {
@@ -76,8 +99,10 @@ export async function POST(request: Request) {
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json().catch(() => []);
-    if (!response.ok) return NextResponse.json({ error: "Unable to create job." }, { status: response.status });
+    const data = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) {
+      return NextResponse.json({ error: getErrorMessage(data, "Unable to create job.") }, { status: response.status });
+    }
 
     const [job] = Array.isArray(data) ? data : [];
     return NextResponse.json({ job }, { status: 201 });
