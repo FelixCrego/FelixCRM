@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRole } from "@/components/role-context";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 const repKpis = [
@@ -305,13 +306,19 @@ function ManagerDashboard() {
       <section className="grid gap-4 lg:grid-cols-3">
         <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
           <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">Recruiting</p>
-          <h3 className="mt-1 text-lg font-semibold text-white">Hiring Funnel</h3>
-          <p className="mt-1 text-sm text-zinc-400">Track new rep candidates from sourced to onboarding-ready.</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Manager ATS</h3>
+          <p className="mt-1 text-sm text-zinc-400">Public apply links + applicant pipeline for recruiting reps.</p>
           <div className="mt-3 text-sm text-zinc-200">
             <p>Applicants: <span className="text-blue-300">26</span></p>
             <p>Interviews this week: <span className="text-blue-300">8</span></p>
             <p>Offer-ready: <span className="text-blue-300">3</span></p>
           </div>
+          <Link
+            href="/recruiting"
+            className="mt-3 inline-flex rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/20"
+          >
+            Open Recruiting Tab
+          </Link>
         </article>
 
         <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
