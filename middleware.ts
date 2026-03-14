@@ -8,7 +8,7 @@ import {
   refreshSupabaseSession,
 } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/login", "/signup", "/api/auth/login", "/api/auth/signup"];
+const PUBLIC_PATHS = ["/login", "/signup", "/apply", "/api/auth/login", "/api/auth/signup", "/api/public"];
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));

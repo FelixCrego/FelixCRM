@@ -247,6 +247,12 @@ function ManagerDashboard() {
 
   return (
     <div className="space-y-5">
+      <section className="rounded-2xl border border-blue-500/30 bg-gradient-to-r from-blue-500/10 to-zinc-900 p-5">
+        <p className="text-xs uppercase tracking-[0.16em] text-blue-200">Manager Workspace</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Eliot Ferrer • Team Command Center</h2>
+        <p className="mt-1 text-sm text-zinc-300">All Rep tools remain available below, plus team recruiting, performance oversight, and rep-specific goal management.</p>
+      </section>
+
       <section className="grid gap-3 md:grid-cols-3">
         {[
           { title: "Total Pipeline", value: "$1.2M", icon: Wallet },
@@ -295,6 +301,48 @@ function ManagerDashboard() {
           </table>
         </div>
       </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">Recruiting</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Hiring Funnel</h3>
+          <p className="mt-1 text-sm text-zinc-400">Track new rep candidates from sourced to onboarding-ready.</p>
+          <div className="mt-3 text-sm text-zinc-200">
+            <p>Applicants: <span className="text-blue-300">26</span></p>
+            <p>Interviews this week: <span className="text-blue-300">8</span></p>
+            <p>Offer-ready: <span className="text-blue-300">3</span></p>
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">Sales Team Performance</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Weekly Leaderboard</h3>
+          <p className="mt-1 text-sm text-zinc-400">Monitor production and coaching opportunities by rep.</p>
+          <div className="mt-3 space-y-1 text-sm text-zinc-200">
+            {["Maya Chen • 7 demos", "Carlos Vega • $18.4k pipeline", "Nia Ross • 4 closed deals"].map((item) => (
+              <p key={item} className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">{item}</p>
+            ))}
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+          <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">Rep Goals</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Goal Assignments</h3>
+          <p className="mt-1 text-sm text-zinc-400">Set individual weekly outcomes and track completion by rep.</p>
+          <div className="mt-3 space-y-1 text-sm text-zinc-200">
+            {["A. Patel • 60 calls/day • 92% complete", "J. Kim • 5 demos/week • 80% complete", "S. Lewis • 2 closes/week • 50% complete"].map((goal) => (
+              <p key={goal} className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">{goal}</p>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep-Level Workspace Access</h3>
+        <p className="text-sm text-zinc-400">Managers can still execute daily rep workflows directly from the same dashboard context.</p>
+      </section>
+
+      <RepDashboard />
     </div>
   );
 }
