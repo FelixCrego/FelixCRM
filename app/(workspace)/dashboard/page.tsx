@@ -254,6 +254,7 @@ function ManagerDashboard() {
         <p className="mt-1 text-sm text-zinc-300">All Rep tools remain available below, plus team recruiting, performance oversight, and rep-specific goal management.</p>
       </section>
 
+
       <section className="grid gap-3 md:grid-cols-3">
         {[
           { title: "Total Pipeline", value: "$1.2M", icon: Wallet },
