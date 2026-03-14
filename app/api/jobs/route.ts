@@ -12,6 +12,27 @@ function getConfig() {
   return { supabaseUrl, serviceRoleKey };
 }
 
+type PostgrestError = {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+};
+
+function getErrorMessage(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object") return fallback;
+
+  const maybeError = payload as PostgrestError;
+  const message = typeof maybeError.message === "string" ? maybeError.message : "";
+  const details = typeof maybeError.details === "string" ? maybeError.details : "";
+
+  if (message.includes("Could not find the table 'public.jobs' in the schema cache")) {
+    return "Recruiting tables are not installed in Supabase yet. Run supabase/ats_tables.sql and refresh the PostgREST schema cache.";
+  }
+
+  return message || details || fallback;
+}
+
 export async function GET() {
   const userId = await getAuthenticatedUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,12 +53,9 @@ export async function GET() {
       cache: "no-store",
     });
 
-    const data = await response.json().catch(() => null) as { message?: string; details?: string } | unknown;
+    const data = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) {
-      const error = typeof data === "object" && data && "message" in data && typeof (data as { message?: string }).message === "string"
-        ? (data as { message?: string }).message
-        : "Unable to load jobs.";
-      return NextResponse.json({ error }, { status: response.status });
+      return NextResponse.json({ error: getErrorMessage(data, "Unable to load jobs.") }, { status: response.status });
     }
 
     return NextResponse.json({ jobs: Array.isArray(data) ? data : [] });
@@ -81,12 +99,9 @@ export async function POST(request: Request) {
       body: JSON.stringify(payload),
     });
 
-    const data = await response.json().catch(() => null) as { message?: string; details?: string } | unknown;
+    const data = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) {
-      const error = typeof data === "object" && data && "message" in data && typeof (data as { message?: string }).message === "string"
-        ? (data as { message?: string }).message
-        : "Unable to create job.";
-      return NextResponse.json({ error }, { status: response.status });
+      return NextResponse.json({ error: getErrorMessage(data, "Unable to create job.") }, { status: response.status });
     }
 
     const [job] = Array.isArray(data) ? data : [];
