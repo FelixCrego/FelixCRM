@@ -672,6 +672,41 @@ export default function LeadExecutionPage() {
   }, [activeTab, leadId, supabase]);
 
   useEffect(() => {
+    if (activeTab !== "Call Audio & AI" || !leadId) return;
+
+    let mounted = true;
+
+    const fetchCallIntel = async () => {
+      setIsLoadingIntel(true);
+
+      const { data, error } = await supabase
+        .from("call_analytics")
+        .select("*")
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!mounted) return;
+
+      if (error) {
+        setCallIntel(null);
+        setIsLoadingIntel(false);
+        return;
+      }
+
+      setCallIntel(data as CallIntelRecord | null);
+      setIsLoadingIntel(false);
+    };
+
+    fetchCallIntel();
+
+    return () => {
+      mounted = false;
+    };
+  }, [activeTab, leadId, supabase]);
+
+  useEffect(() => {
     if (!researchStorageKey || typeof window === "undefined") return;
 
     const cachedResearch = window.localStorage.getItem(researchStorageKey);
