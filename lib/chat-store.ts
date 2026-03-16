@@ -11,7 +11,7 @@ const PRESENCE_TTL_MS = 45_000;
 type SupabaseError = { code?: string; message?: string };
 
 type StoredMessage = {
-  id?: string | number;
+  id?: string;
   sender_id?: string;
   sender_name?: string;
   recipient_id?: string | null;
@@ -147,9 +147,7 @@ async function withTableFallback<T>(cacheKey: string, candidates: string[], requ
 }
 
 function mapStoredMessage(row: StoredMessage): ChatMessage | null {
-  const id =
-    (typeof row.id === "string" && row.id.trim()) ||
-    (typeof row.id === "number" && Number.isFinite(row.id) ? String(row.id) : "");
+  const id = typeof row.id === "string" && row.id.trim() ? row.id : "";
   const senderId = (typeof row.sender_id === "string" && row.sender_id.trim()) || (typeof row.senderId === "string" && row.senderId.trim()) || "";
   const senderName = (typeof row.sender_name === "string" && row.sender_name.trim()) || (typeof row.senderName === "string" && row.senderName.trim()) || getFallbackName(senderId || id || "unknown");
   const content = typeof row.content === "string" ? row.content : "";
