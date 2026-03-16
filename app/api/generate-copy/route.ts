@@ -195,9 +195,9 @@ export async function POST(req: Request) {
   try {
     rawBody = await req.text();
 
-    let payload: Record<string, unknown> = {};
+    let payload: GenerateCopyPayload = {};
     try {
-      payload = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+      payload = rawBody ? (JSON.parse(rawBody) as GenerateCopyPayload) : {};
     } catch {
       payload = {};
     }
