@@ -49,6 +49,12 @@ export type AmazonS3UrlValidation = {
   errors: string[];
 };
 
+export type AmazonS3ObjectReference = {
+  bucket: string;
+  key: string;
+  region: string | null;
+};
+
 type RawPayload = Record<string, unknown>;
 
 function getString(value: unknown): string | null {
@@ -130,7 +136,7 @@ function buildS3Uri(bucket: string | null, key: string | null) {
   return bucket && key ? `s3://${bucket}/${key}` : null;
 }
 
-function parseAmazonS3Url(value: string | null) {
+function parseAmazonS3Url(value: string | null): (AmazonS3ObjectReference & { url: URL }) | null {
   if (!value) return null;
 
   try {
@@ -166,6 +172,25 @@ function parseAmazonS3Url(value: string | null) {
   } catch {
     return null;
   }
+}
+
+export function parseAmazonS3Uri(value: string | null): AmazonS3ObjectReference | null {
+  if (!value) return null;
+  const match = value.trim().match(/^s3:\/\/([^/]+)\/(.+)$/i);
+  if (!match) return null;
+
+  return {
+    bucket: decodeURIComponent(match[1]),
+    key: decodeURIComponent(match[2]),
+    region: null,
+  };
+}
+
+export function isExpiredIsoTimestamp(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const expiresAt = new Date(value);
+  if (Number.isNaN(expiresAt.getTime())) return false;
+  return expiresAt.getTime() <= Date.now();
 }
 
 export function validateAmazonS3PresignedUrl(value: string | null): AmazonS3UrlValidation {
@@ -237,9 +262,23 @@ export function sanitizeSensitiveUrl(value: string | null): string | null {
 }
 
 export function sanitizeContactLensNoteContent(content: string): string {
-  return content.replace(/https:\/\/[^\s]*\.s3[.-][^\s]*\.amazonaws\.com\/[^\s)]+/gi, (match) => {
+  const sanitized = content.replace(/https:\/\/[^\s]*\.s3[.-][^\s]*\.amazonaws\.com\/[^\s)]+/gi, (match) => {
     return sanitizeSensitiveUrl(match) ?? match;
   });
+
+  const lines = sanitized
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line, index, allLines) => {
+      if (/^Recording URL:/i.test(line)) return false;
+      if (/^Recording URL expires:/i.test(line)) return false;
+      if (/^Recording S3:/i.test(line)) return false;
+      if (/^Analysis S3:/i.test(line)) return false;
+      if (!line && (!allLines[index - 1] || !allLines[index + 1])) return false;
+      return true;
+    });
+
+  return lines.join("\n").trim();
 }
 
 export function isContactLensWebhookAuthorized(request: Request): boolean {
@@ -389,14 +428,12 @@ export function buildContactLensLeadNote(payload: ContactLensWebhookPayload): st
 
   if (typeof payload.interruptions === "number") lines.push(`Interruptions: ${payload.interruptions}`);
   if (payload.aiSummary) lines.push(`AI summary: ${payload.aiSummary}`);
-  if (payload.recordingUrl) lines.push(`Recording URL: ${sanitizeSensitiveUrl(payload.recordingUrl)}`);
-  if (payload.recordingUrlExpiresAt) lines.push(`Recording URL expires: ${payload.recordingUrlExpiresAt}`);
-  if (payload.recordingS3Uri) lines.push(`Recording S3: ${payload.recordingS3Uri}`);
-  if (payload.analysisS3Uri) lines.push(`Analysis S3: ${payload.analysisS3Uri}`);
+  if (payload.recordingUrl || payload.recordingS3Uri) lines.push("Recording available in Call Audio & AI.");
+  if (payload.analysisS3Uri) lines.push("Analysis artifact synced.");
   if (payload.sourceEventTime) lines.push(`Source event time: ${payload.sourceEventTime}`);
 
   const transcriptSnippet = payload.transcriptText?.trim().slice(0, 400);
   if (transcriptSnippet) lines.push(`Transcript excerpt: ${transcriptSnippet}`);
 
-  return lines.join("\n");
+  return sanitizeContactLensNoteContent(lines.join("\n"));
 }

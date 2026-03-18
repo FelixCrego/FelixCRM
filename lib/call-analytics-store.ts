@@ -2,6 +2,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 type CallAnalyticsRecord = {
+  id?: string | null;
   lead_id?: string | null;
   contact_id: string;
   customer_phone?: string | null;
@@ -36,6 +37,26 @@ function getSupabaseHeaders() {
 
 export async function getCallAnalyticsByContactId(contactId: string) {
   const url = new URL("/rest/v1/call_analytics", supabaseUrl);
+  url.searchParams.set("contact_id", `eq.${contactId}`);
+  url.searchParams.set("select", "*");
+  url.searchParams.set("limit", "1");
+
+  const response = await fetch(url, {
+    headers: getSupabaseHeaders(),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const rows = (await response.json()) as CallAnalyticsRecord[];
+  return rows[0] ?? null;
+}
+
+export async function getCallAnalyticsByLeadAndContactId(leadId: string, contactId: string) {
+  const url = new URL("/rest/v1/call_analytics", supabaseUrl);
+  url.searchParams.set("lead_id", `eq.${leadId}`);
   url.searchParams.set("contact_id", `eq.${contactId}`);
   url.searchParams.set("select", "*");
   url.searchParams.set("limit", "1");

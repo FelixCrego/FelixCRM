@@ -61,6 +61,13 @@ type LeadRecord = {
       bookedAt?: string;
     };
   } | null;
+  enrichment?: {
+    structured?: {
+      logoUrl?: string | null;
+      brandColors?: string[] | null;
+      heroCopy?: string | null;
+    } | null;
+  } | null;
   aiResearchSummary?: string | null;
   contacts?: LeadContactRecord[];
 };
@@ -146,6 +153,7 @@ type CallIntelRecord = {
   duration_seconds?: number | string | null;
   overall_sentiment?: string | null;
   recording_url?: string | null;
+  recording_url_expires_at?: string | null;
   recording_s3_uri?: string | null;
   analysis_s3_uri?: string | null;
   ai_summary?: string | null;
@@ -346,6 +354,9 @@ export default function LeadExecutionPage() {
   const [callIntelHistory, setCallIntelHistory] = useState<CallIntelRecord[]>([]);
   const [selectedCallIntelId, setSelectedCallIntelId] = useState<string | null>(null);
   const [isLoadingIntel, setIsLoadingIntel] = useState(false);
+  const [resolvedRecordingUrl, setResolvedRecordingUrl] = useState<string | null>(null);
+  const [resolvedRecordingError, setResolvedRecordingError] = useState<string>("");
+  const [isLoadingRecording, setIsLoadingRecording] = useState(false);
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
   const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
@@ -733,6 +744,62 @@ export default function LeadExecutionPage() {
 
   const selectedCallIntel = callIntelHistory.find((entry) => entry.id === selectedCallIntelId) ?? callIntelHistory[0] ?? null;
   const callIntel = selectedCallIntel;
+  const playbackRecordingUrl = resolvedRecordingUrl ?? callIntel?.recording_url ?? null;
+
+  useEffect(() => {
+    if (activeTab !== "Call Audio & AI" || !leadId || !callIntel?.contact_id) {
+      setResolvedRecordingUrl(null);
+      setResolvedRecordingError("");
+      setIsLoadingRecording(false);
+      return;
+    }
+
+    if (!callIntel.recording_url && !callIntel.recording_s3_uri) {
+      setResolvedRecordingUrl(null);
+      setResolvedRecordingError("");
+      setIsLoadingRecording(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPlayableRecording() {
+      setIsLoadingRecording(true);
+      setResolvedRecordingError("");
+
+      try {
+        const response = await fetch(
+          `/api/call-recordings?leadId=${encodeURIComponent(leadId)}&contactId=${encodeURIComponent(callIntel.contact_id ?? "")}`,
+          { cache: "no-store" },
+        );
+        const payload = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
+
+        if (cancelled) return;
+
+        if (!response.ok || !payload?.url) {
+          setResolvedRecordingUrl(callIntel.recording_url ?? null);
+          setResolvedRecordingError(payload?.error || "Unable to load the recording.");
+          setIsLoadingRecording(false);
+          return;
+        }
+
+        setResolvedRecordingUrl(payload.url);
+        setResolvedRecordingError("");
+        setIsLoadingRecording(false);
+      } catch {
+        if (cancelled) return;
+        setResolvedRecordingUrl(callIntel.recording_url ?? null);
+        setResolvedRecordingError("Unable to load the recording.");
+        setIsLoadingRecording(false);
+      }
+    }
+
+    void loadPlayableRecording();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, callIntel?.contact_id, callIntel?.recording_s3_uri, callIntel?.recording_url, leadId]);
 
   useEffect(() => {
     if (!researchStorageKey || typeof window === "undefined") return;
@@ -859,11 +926,13 @@ export default function LeadExecutionPage() {
   useEffect(() => {
     const sourcePayload = lead?.source_payload ?? lead?.sourcePayload;
     const branding = sourcePayload?.templateBranding;
-    setBrandingLogoUrl(branding?.logoUrl || "");
+    const enrichmentStructured = lead?.enrichment?.structured;
+    const enrichmentColors = Array.isArray(enrichmentStructured?.brandColors) ? enrichmentStructured.brandColors.filter(Boolean) : [];
+    setBrandingLogoUrl(branding?.logoUrl || enrichmentStructured?.logoUrl || "");
     setBrandingHeroImageUrl(branding?.heroImageUrl || "");
-    setBrandingPrimaryColor(branding?.primaryColor || "#0f172a");
-    setBrandingSecondaryColor(branding?.secondaryColor || "#2563eb");
-  }, [lead?.id, lead?.sourcePayload, lead?.source_payload]);
+    setBrandingPrimaryColor(branding?.primaryColor || enrichmentColors[0] || "#0f172a");
+    setBrandingSecondaryColor(branding?.secondaryColor || enrichmentColors[1] || enrichmentColors[0] || "#2563eb");
+  }, [lead?.enrichment, lead?.id, lead?.sourcePayload, lead?.source_payload]);
 
   const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
     () => ({
@@ -2457,18 +2526,30 @@ export default function LeadExecutionPage() {
                         )}
                       </div>
 
-                      {callIntel.recording_url && (
+                      {playbackRecordingUrl && (
                         <div className="mt-2 w-full rounded-lg border border-zinc-800/80 bg-zinc-950 p-2">
-                          <audio controls className="h-8 w-full" src={callIntel.recording_url}>
+                          <audio controls className="h-8 w-full" src={playbackRecordingUrl}>
                             Your browser does not support the audio element.
                           </audio>
                         </div>
                       )}
 
-                      {!callIntel.recording_url && callIntel.recording_s3_uri && (
+                      {isLoadingRecording && (
+                        <div className="mt-2 rounded-lg border border-zinc-800/80 bg-zinc-950 p-3 text-xs text-zinc-400">
+                          Loading playable recording...
+                        </div>
+                      )}
+
+                      {!playbackRecordingUrl && callIntel.recording_s3_uri && (
                         <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
-                          <p className="font-semibold uppercase tracking-widest text-amber-300">Recording Located In S3</p>
-                          <p className="mt-1 break-all text-amber-100/90">{callIntel.recording_s3_uri}</p>
+                          <p className="font-semibold uppercase tracking-widest text-amber-300">Recording Sync Complete</p>
+                          <p className="mt-1 text-amber-100/90">The recording exists in Amazon S3 but a playable URL is not available yet.</p>
+                        </div>
+                      )}
+
+                      {!!resolvedRecordingError && !isLoadingRecording && (
+                        <div className="mt-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-200">
+                          {resolvedRecordingError}
                         </div>
                       )}
 
