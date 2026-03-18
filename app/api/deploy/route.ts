@@ -70,6 +70,8 @@ function replaceQuotedKeyValue(source: string, key: string, nextValue: string): 
 function applySiteConfigOverrides(source: string, config: TemplateConfig): string {
   let updated = source;
   const businessName = config.business.name;
+  const businessNameLower = businessName.toLowerCase();
+  const businessHandle = businessNameLower.replace(/[^a-z0-9]+/g, "");
   const phoneDisplay = config.content.contact.phone;
   const phoneHref = normalizePhoneHref(phoneDisplay);
   const email = config.content.contact.email;
@@ -120,6 +122,28 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
     updated = replaceQuotedKeyValue(updated, "city", primaryLocation);
     updated = replaceQuotedKeyValue(updated, "location", primaryLocation);
     updated = replaceQuotedKeyValue(updated, "primaryLocation", primaryLocation);
+  }
+
+  if (source.includes("window.SITE_CONFIG")) {
+    if (businessName) {
+      updated = replaceQuotedKeyValue(updated, "name", businessName);
+      updated = replaceQuotedKeyValue(updated, "legalName", businessName);
+    }
+    if (businessNameLower) {
+      updated = replaceQuotedKeyValue(updated, "nameLower", businessNameLower);
+    }
+    if (primaryLocation) {
+      updated = replaceQuotedKeyValue(updated, "primaryLocationLower", primaryLocation.toLowerCase());
+    }
+    if (businessHandle) {
+      updated = replaceQuotedKeyValue(updated, "handle", businessHandle);
+    }
+    if (phoneHref) {
+      updated = replaceQuotedKeyValue(updated, "phoneE164", phoneHref);
+    }
+    if (email) {
+      updated = replaceQuotedKeyValue(updated, "email", email);
+    }
   }
 
   if (config.geo.serviceAreas.length > 0) {
