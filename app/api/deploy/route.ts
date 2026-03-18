@@ -141,7 +141,16 @@ async function patchGeneratedRepoSiteConfig(params: {
   branch: string;
   templateConfig: TemplateConfig;
 }) {
-  const candidatePaths = ["src/config/site.ts", "src/config/siteConfig.ts", "config/site.ts", "siteConfig.ts", "lib/siteConfig.ts"];
+  const candidatePaths = [
+    "src/config/site.ts",
+    "src/config/siteConfig.ts",
+    "config/site.ts",
+    "siteConfig.ts",
+    "lib/siteConfig.ts",
+    "site-config.js",
+    "template-config.js",
+    "area-config.js",
+  ];
 
   const allPaths: string[] = [...candidatePaths];
   const treeResponse = await fetch(`https://api.github.com/repos/${params.repoFullName}/git/trees/${params.branch}?recursive=1`, {
@@ -174,7 +183,23 @@ async function patchGeneratedRepoSiteConfig(params: {
     if (!sha || !encodedContent || contentPayload.encoding !== "base64") return false;
 
     const source = Buffer.from(encodedContent.replace(/\n/g, ""), "base64").toString("utf8");
-    if (!source.includes("siteConfig") && !source.includes("businessName") && !source.includes("phoneDisplay") && !source.includes("serviceAreas") && !source.includes("areas") && !source.includes("primaryLocation") && !source.includes("location") && !source.includes("city") && !source.includes("serviceArea")) {
+    if (
+      !source.includes("siteConfig") &&
+      !source.includes("SITE_CONFIG") &&
+      !source.includes("businessName") &&
+      !source.includes("phoneDisplay") &&
+      !source.includes("logoUrl") &&
+      !source.includes("heroImageUrl") &&
+      !source.includes("featureImageUrl") &&
+      !source.includes("primaryColor") &&
+      !source.includes("secondaryColor") &&
+      !source.includes("serviceAreas") &&
+      !source.includes("areas") &&
+      !source.includes("primaryLocation") &&
+      !source.includes("location") &&
+      !source.includes("city") &&
+      !source.includes("serviceArea")
+    ) {
       return false;
     }
 

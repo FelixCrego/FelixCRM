@@ -121,8 +121,19 @@ function buildServiceAreas(city: string): string[] {
   return [normalizedCity, ...directionalAreas].slice(0, 8);
 }
 
+function firstNonEmptyString(values: Array<unknown>): string {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
 export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateConfig {
   const safeOverrides = toPartialObject(overrides) as TemplateConfigOverrides;
+  const enrichmentBranding = lead.enrichment?.structured;
+  const [primaryEnrichmentColor = "", secondaryEnrichmentColor = ""] = enrichmentBranding?.brandColors ?? [];
 
   const defaultConfig: TemplateConfig = {
     templateVersion: TEMPLATE_CONFIG_VERSION,
@@ -138,10 +149,10 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
       serviceAreas: buildServiceAreas(lead.city),
     },
     branding: {
-      logoUrl: "",
+      logoUrl: enrichmentBranding?.logoUrl?.trim() || "",
       heroImageUrl: "",
-      primaryColor: "#0f172a",
-      secondaryColor: "#2563eb",
+      primaryColor: firstNonEmptyString([primaryEnrichmentColor, "#0f172a"]),
+      secondaryColor: firstNonEmptyString([secondaryEnrichmentColor, primaryEnrichmentColor, "#2563eb"]),
     },
     content: {
       hero: {
