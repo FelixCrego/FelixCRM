@@ -21,6 +21,46 @@ function getAwsRegion() {
   return process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
 }
 
+function resolveBucketRegion(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as {
+    BucketRegion?: unknown;
+    Endpoint?: unknown;
+    $response?: { headers?: Record<string, string | undefined> };
+    $metadata?: { httpHeaders?: Record<string, string | undefined> };
+  };
+  if (typeof candidate.BucketRegion === "string" && candidate.BucketRegion.trim()) {
+    return candidate.BucketRegion.trim();
+  }
+  const endpoint =
+    typeof candidate.Endpoint === "string"
+      ? candidate.Endpoint
+      : candidate.$metadata?.httpHeaders?.["x-amz-bucket-region"] ??
+        candidate.$response?.headers?.["x-amz-bucket-region"] ??
+        null;
+  if (typeof endpoint !== "string" || !endpoint.trim()) return null;
+  const fromHeader = endpoint.trim();
+  if (!fromHeader.includes(".")) return fromHeader;
+  const match = fromHeader.match(/s3[.-]([a-z0-9-]+)\.amazonaws\.com/i);
+  return match?.[1] ?? null;
+}
+
+async function sendWithBucketRegionRetry<T>(
+  operation: (client: S3Client) => Promise<T>,
+  initialRegion = getAwsRegion(),
+): Promise<T> {
+  let region = initialRegion;
+  let client = new S3Client({ region });
+  try {
+    return await operation(client);
+  } catch (error) {
+    const redirectedRegion = resolveBucketRegion(error);
+    if (!redirectedRegion || redirectedRegion === region) throw error;
+    client = new S3Client({ region: redirectedRegion });
+    return operation(client);
+  }
+}
+
 function buildAnalysisPrefixes(recordingKey: string): string[] {
   const normalizedKey = recordingKey.replace(/^\/+/, "");
   const dateMatch = normalizedKey.match(/\/(\d{4})\/(\d{2})\/(\d{2})\//);
@@ -58,17 +98,17 @@ async function bodyToString(body: unknown): Promise<string> {
 async function findAnalysisArtifactKey(bucket: string, recordingKey: string, contactId: string): Promise<string | null> {
   const prefixes = buildAnalysisPrefixes(recordingKey);
   if (!prefixes.length) return null;
-
-  const s3 = new S3Client({ region: getAwsRegion() });
   const candidates: Array<{ key: string; lastModified: number }> = [];
 
   for (const prefix of prefixes) {
-    const response = await s3.send(
-      new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: prefix,
-        MaxKeys: 200,
-      }),
+    const response = await sendWithBucketRegionRetry((s3) =>
+      s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          MaxKeys: 200,
+        }),
+      ),
     );
 
     for (const item of response.Contents ?? []) {
@@ -95,13 +135,13 @@ export async function hydrateContactLensPayloadFromS3(payload: ContactLensWebhoo
 
   const artifactKey = await findAnalysisArtifactKey(recordingS3.bucket, recordingS3.key, payload.contactId);
   if (!artifactKey) return {};
-
-  const s3 = new S3Client({ region: getAwsRegion() });
-  const object = await s3.send(
-    new GetObjectCommand({
-      Bucket: recordingS3.bucket,
-      Key: artifactKey,
-    }),
+  const object = await sendWithBucketRegionRetry((s3) =>
+    s3.send(
+      new GetObjectCommand({
+        Bucket: recordingS3.bucket,
+        Key: artifactKey,
+      }),
+    ),
   );
 
   const content = await bodyToString(object.Body);
