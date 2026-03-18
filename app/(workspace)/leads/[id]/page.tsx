@@ -588,25 +588,37 @@ export default function LeadExecutionPage() {
 
     let cancelled = false;
     setRecoveringContactId(currentContactId);
+    const retryDelaysMs = [0, 3000, 10000, 30000, 90000];
+    const timeoutIds: number[] = [];
 
     const recoverLatestCall = async () => {
-      await fetch("/api/call-analytics/recover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          leadId,
-          contactId: currentContactId,
-        }),
-      }).catch(() => null);
+      for (const delay of retryDelaysMs) {
+        const run = () => {
+          fetch("/api/call-analytics/recover", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              leadId,
+              contactId: currentContactId,
+            }),
+          }).catch(() => null);
 
-      if (!cancelled) {
-        window.setTimeout(() => {
           fetch("/api/call-analytics/refresh", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ leadId, contactId: currentContactId }),
           }).catch(() => null);
-        }, 3000);
+        };
+
+        if (delay === 0) {
+          run();
+          continue;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+          if (!cancelled) run();
+        }, delay);
+        timeoutIds.push(timeoutId);
       }
     };
 
@@ -614,6 +626,9 @@ export default function LeadExecutionPage() {
 
     return () => {
       cancelled = true;
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [callStatus, currentContactId, leadId, recoveringContactId]);
 
