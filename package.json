@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@aws-sdk/client-connect": "^3.1011.0",
     "@aws-sdk/client-s3": "^3.1011.0",
     "@aws-sdk/s3-request-presigner": "^3.1011.0",
     "@google/generative-ai": "^0.24.1",

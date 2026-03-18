@@ -1625,21 +1625,29 @@ export default function LeadExecutionPage() {
 
     setNotesLoading(true);
     setNotesError("");
-    const response = await fetch("/api/lead-notes", {
+    const response = await fetch(activeTab === "SMS" ? "/api/sms/send" : "/api/lead-notes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        leadId,
-        content,
-        channel: activeTab === "Notes" ? "notes" : activeTab === "Email" ? "email" : activeTab === "SMS" ? "sms" : "notes",
-        contactId: currentContactId,
-      }),
+      body: JSON.stringify(
+        activeTab === "SMS"
+          ? {
+              leadId,
+              message: content,
+              phone: dialNumber || leadPhone,
+            }
+          : {
+              channel: activeTab === "Notes" ? "notes" : "email",
+              leadId,
+              content,
+              contactId: currentContactId,
+            },
+      ),
     });
 
     const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
 
     if (!response.ok || !payload?.note) {
-      setNotesError(payload?.error || "Unable to save note.");
+      setNotesError(payload?.error || (activeTab === "SMS" ? "Unable to send SMS." : "Unable to save note."));
       setNotesLoading(false);
       return;
     }
@@ -2859,7 +2867,7 @@ export default function LeadExecutionPage() {
                 disabled={notesLoading || !notesDraft.trim()}
                 className="rounded-md bg-indigo-500 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-700"
               >
-                Send
+                {activeTab === "SMS" ? "Send SMS" : activeTab === "Email" ? "Save Email" : "Save Note"}
               </button>
               </div>
             ) : null}
