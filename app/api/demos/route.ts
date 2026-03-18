@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { canUserViewAllLeads } from "@/lib/store";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,8 +25,46 @@ function buildDemosUrl(filterField: "rep_id" | "rep_email", filterValue: string)
   return url;
 }
 
+function buildAllDemosUrl() {
+  const url = new URL("/rest/v1/demos", supabaseUrl);
+  url.searchParams.set("select", "id,lead_id,lead_name,selected_date,selected_time,meet_link,rep_id,rep_email,created_at");
+  url.searchParams.set("order", "selected_date.asc,selected_time.asc");
+  return url;
+}
+
 async function fetchDemosByFilter(filterField: "rep_id" | "rep_email", filterValue: string) {
   const response = await fetch(buildDemosUrl(filterField, filterValue), {
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const rawMessage = await response.text();
+    const parsedMessage = (() => {
+      try {
+        return JSON.parse(rawMessage) as { code?: string; message?: string };
+      } catch {
+        return null;
+      }
+    })();
+
+    if (parsedMessage?.code === "PGRST205") {
+      return { demos: [] as DemoRow[], tableMissing: true as const };
+    }
+
+    throw new Error(parsedMessage?.message || rawMessage || "Failed to fetch demos.");
+  }
+
+  const demos = (await response.json().catch(() => [])) as DemoRow[];
+  return { demos, tableMissing: false as const };
+}
+
+async function fetchAllDemos() {
+  const response = await fetch(buildAllDemosUrl(), {
     headers: {
       apikey: supabaseServiceRoleKey as string,
       Authorization: `Bearer ${supabaseServiceRoleKey}`,
@@ -66,6 +105,19 @@ export async function GET() {
   }
 
   try {
+    const includeAll = await canUserViewAllLeads(user.id, user.email);
+    if (includeAll) {
+      const allDemos = await fetchAllDemos();
+      if (allDemos.tableMissing) {
+        return NextResponse.json({
+          demos: [],
+          warning: "Upcoming demos are unavailable because the Supabase demos table has not been created yet.",
+        });
+      }
+
+      return NextResponse.json({ demos: allDemos.demos });
+    }
+
     const byId = await fetchDemosByFilter("rep_id", user.id);
     const byEmail = user.email ? await fetchDemosByFilter("rep_email", user.email) : { demos: [] as DemoRow[], tableMissing: false as const };
 
