@@ -448,7 +448,7 @@ export default function LeadExecutionPage() {
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
 
-  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, startOutboundCall, endActiveCall, sendCallDigit } = useAmazonConnect();
+  const { activeContactId, callActive, callSeconds, ccpReady, connectionStatus, callStatus, startOutboundCall, endActiveCall, sendCallDigit } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
   const [showKeypad, setShowKeypad] = useState(false);
   const keypadDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
@@ -516,6 +516,12 @@ export default function LeadExecutionPage() {
       captureContactId(contact, attempts - 1);
     }, 750);
   }, []);
+
+  useEffect(() => {
+    if (activeContactId) {
+      setCurrentContactId(activeContactId);
+    }
+  }, [activeContactId]);
 
   useEffect(() => {
     type ConnectWindow = Window & {

@@ -8,6 +8,7 @@ type ConnectContact = {
   isInbound?: () => boolean;
   onConnected?: (callback: () => void) => void;
   onEnded?: (callback: () => void) => void;
+  getContactId?: () => string;
   sendDigit?: (digit: string) => void;
   getConnections?: () => Array<{ getEndpoint?: () => { phoneNumber?: string } }>;
   getInitialConnection?: () => { destroy?: () => void };
@@ -38,6 +39,7 @@ type IncomingCall = {
 type AmazonConnectContextValue = {
   callActive: boolean;
   callSeconds: number;
+  activeContactId: string | null;
   ccpReady: boolean;
   connectionStatus: "loading" | "initializing" | "ready" | "error";
   callStatus: "idle" | "connecting" | "connected";
@@ -64,6 +66,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   const [agent, setAgent] = useState<ConnectAgent | null>(null);
   const [callActive, setCallActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
+  const [activeContactId, setActiveContactId] = useState<string | null>(null);
   const [ccpReady, setCcpReady] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"loading" | "initializing" | "ready" | "error">("loading");
   const [callStatus, setCallStatus] = useState<"idle" | "connecting" | "connected">("idle");
@@ -82,7 +85,19 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
 
   const attachContactListeners = useCallback((contact: ConnectContact) => {
     activeContactRef.current = contact;
+    const contactId = typeof (contact as { getContactId?: () => string }).getContactId === "function"
+      ? (contact as { getContactId?: () => string }).getContactId?.() ?? null
+      : null;
+    if (contactId) {
+      setActiveContactId(contactId);
+    }
     contact.onConnected?.(() => {
+      const connectedContactId = typeof (contact as { getContactId?: () => string }).getContactId === "function"
+        ? (contact as { getContactId?: () => string }).getContactId?.() ?? null
+        : null;
+      if (connectedContactId) {
+        setActiveContactId(connectedContactId);
+      }
       setCallActive(true);
       setCallSeconds(0);
       setCallStatus("connected");
@@ -91,6 +106,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       setCallActive(false);
       setCallSeconds(0);
       setCallStatus("idle");
+      setActiveContactId(null);
       activeContactRef.current = null;
     });
   }, []);
@@ -192,6 +208,12 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       agent.connect?.(endpoint, {
         success: (contact) => {
           attachContactListeners(contact);
+          const outboundContactId = typeof (contact as { getContactId?: () => string }).getContactId === "function"
+            ? (contact as { getContactId?: () => string }).getContactId?.() ?? null
+            : null;
+          if (outboundContactId) {
+            setActiveContactId(outboundContactId);
+          }
         },
         failure: () => setCallStatus("idle"),
       });
@@ -203,6 +225,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     activeContactRef.current?.getInitialConnection?.()?.destroy?.();
     setCallActive(false);
     setCallStatus("idle");
+    setActiveContactId(null);
   }, []);
 
   const sendCallDigit = useCallback((digit: string) => {
@@ -222,6 +245,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     () => ({
       callActive,
       callSeconds,
+      activeContactId,
       ccpReady,
       connectionStatus,
       callStatus,
@@ -229,7 +253,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       endActiveCall,
       sendCallDigit,
     }),
-    [callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit, startOutboundCall],
+    [activeContactId, callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit, startOutboundCall],
   );
 
   return (
