@@ -163,7 +163,8 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
     ["logo", config.branding.logoUrl],
     ["heroImageUrl", config.branding.heroImageUrl],
     ["heroUrl", config.branding.heroImageUrl],
-    ["featureImageUrl", config.branding.heroImageUrl],
+    ["featureImageUrl", config.branding.featureImageUrl || config.branding.heroImageUrl],
+    ["defaultImageUrl", config.branding.featureImageUrl || config.branding.heroImageUrl],
     ["primaryColor", config.branding.primaryColor],
     ["secondaryColor", config.branding.secondaryColor],
   ];
@@ -194,6 +195,7 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
   }
 
   const primaryLocation = config.geo.primaryLocation || config.business.city;
+  const serviceRegion = primaryLocation ? `${primaryLocation} area` : "";
   if (primaryLocation) {
     updated = replaceQuotedKeyValue(updated, "city", primaryLocation);
     updated = replaceQuotedKeyValue(updated, "location", primaryLocation);
@@ -210,6 +212,11 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
     }
     if (primaryLocation) {
       updated = replaceQuotedKeyValue(updated, "primaryLocationLower", primaryLocation.toLowerCase());
+      updated = replaceQuotedKeyValue(updated, "metroArea", primaryLocation);
+      updated = replaceQuotedKeyValue(updated, "fullAddressLine", primaryLocation);
+    }
+    if (serviceRegion) {
+      updated = replaceQuotedKeyValue(updated, "serviceRegion", serviceRegion);
     }
     if (businessHandle) {
       updated = replaceQuotedKeyValue(updated, "handle", businessHandle);
@@ -327,7 +334,7 @@ async function patchGeneratedRepoSiteConfig(params: {
     return true;
   };
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
     let patchedAny = false;
 
     for (const path of allPaths) {
@@ -336,7 +343,7 @@ async function patchGeneratedRepoSiteConfig(params: {
     }
 
     if (patchedAny) return null;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   return `Could not find any patchable site or area config files in ${params.repoFullName} on branch ${params.branch}.`;
@@ -621,8 +628,12 @@ export async function POST(request: Request) {
           ? frontendEnv.NEXT_PUBLIC_FEATURE_IMAGE_URL.trim()
           : typeof frontendEnv.NEXT_PUBLIC_HERO_URL === "string" && frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
             ? frontendEnv.NEXT_PUBLIC_HERO_URL.trim()
-            : templateConfig.branding.heroImageUrl,
+            : templateConfig.branding.featureImageUrl || templateConfig.branding.heroImageUrl,
     };
+
+    if (!siteConfigPatchWarning) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
 
     const vercelProjectName = slugify(`felix-${lead.businessName}`, `felix-${lead.id.slice(0, 8)}`);
 

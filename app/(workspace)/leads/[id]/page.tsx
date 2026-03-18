@@ -33,6 +33,7 @@ type LeadRecord = {
     templateBranding?: {
       logoUrl?: string;
       heroImageUrl?: string;
+      featureImageUrl?: string;
       primaryColor?: string;
       secondaryColor?: string;
       googleDriveFolderUrl?: string;
@@ -51,6 +52,7 @@ type LeadRecord = {
     templateBranding?: {
       logoUrl?: string;
       heroImageUrl?: string;
+      featureImageUrl?: string;
       primaryColor?: string;
       secondaryColor?: string;
       googleDriveFolderUrl?: string;
@@ -348,6 +350,7 @@ export default function LeadExecutionPage() {
   const [deployStartedAt, setDeployStartedAt] = useState<number | null>(null);
   const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
   const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
+  const [brandingFeatureImageUrl, setBrandingFeatureImageUrl] = useState("");
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
   const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
   const [brandingGoogleDriveFolderUrl, setBrandingGoogleDriveFolderUrl] = useState("");
@@ -878,6 +881,7 @@ export default function LeadExecutionPage() {
     const enrichmentColors = Array.isArray(enrichmentStructured?.brandColors) ? enrichmentStructured.brandColors.filter(Boolean) : [];
     setBrandingLogoUrl(branding?.logoUrl || enrichmentStructured?.logoUrl || "");
     setBrandingHeroImageUrl(branding?.heroImageUrl || "");
+    setBrandingFeatureImageUrl(branding?.featureImageUrl || branding?.heroImageUrl || "");
     setBrandingPrimaryColor(branding?.primaryColor || enrichmentColors[0] || "#0f172a");
     setBrandingSecondaryColor(branding?.secondaryColor || enrichmentColors[1] || enrichmentColors[0] || "#2563eb");
     setBrandingGoogleDriveFolderUrl(branding?.googleDriveFolderUrl || "");
@@ -1074,6 +1078,7 @@ export default function LeadExecutionPage() {
       branding: {
         logoUrl: brandingLogoUrl.trim(),
         heroImageUrl: brandingHeroImageUrl.trim(),
+        featureImageUrl: brandingFeatureImageUrl.trim(),
         primaryColor: brandingPrimaryColor,
         secondaryColor: brandingSecondaryColor,
       },
@@ -1100,7 +1105,7 @@ export default function LeadExecutionPage() {
             NEXT_PUBLIC_SECONDARY_COLOR: brandingSecondaryColor,
             NEXT_PUBLIC_LOGO_URL: brandingLogoUrl.trim(),
             NEXT_PUBLIC_HERO_URL: brandingHeroImageUrl.trim(),
-            NEXT_PUBLIC_FEATURE_IMAGE_URL: brandingHeroImageUrl.trim(),
+            NEXT_PUBLIC_FEATURE_IMAGE_URL: brandingFeatureImageUrl.trim(),
             NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL: brandingGoogleDriveFolderUrl.trim(),
           },
         }),
@@ -1134,6 +1139,7 @@ export default function LeadExecutionPage() {
                   templateBranding: {
                     logoUrl: brandingLogoUrl.trim(),
                     heroImageUrl: brandingHeroImageUrl.trim(),
+                    featureImageUrl: brandingFeatureImageUrl.trim(),
                     primaryColor: brandingPrimaryColor,
                     secondaryColor: brandingSecondaryColor,
                     googleDriveFolderUrl: brandingGoogleDriveFolderUrl.trim(),
@@ -1153,7 +1159,7 @@ export default function LeadExecutionPage() {
     }
   }
 
-  async function handleBrandingFileUpload(file: File | undefined, target: "logo" | "hero") {
+  async function handleBrandingFileUpload(file: File | undefined, target: "logo" | "hero" | "feature") {
     if (!file) return;
 
     setDeployError("");
@@ -1177,8 +1183,10 @@ export default function LeadExecutionPage() {
 
       if (target === "logo") {
         setBrandingLogoUrl(payload.url);
-      } else {
+      } else if (target === "hero") {
         setBrandingHeroImageUrl(payload.url);
+      } else {
+        setBrandingFeatureImageUrl(payload.url);
       }
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : "Unable to process the uploaded image.");
@@ -2206,6 +2214,22 @@ export default function LeadExecutionPage() {
                   type="file"
                   accept="image/*"
                   onChange={(event) => void handleBrandingFileUpload(event.target.files?.[0], "hero")}
+                  className="w-full text-[11px] text-indigo-100 file:mr-2 file:rounded file:border-0 file:bg-white/20 file:px-2 file:py-1 file:text-[11px] file:text-white"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="block">Feature image URL or upload</span>
+                <input
+                  value={brandingFeatureImageUrl}
+                  onChange={(event) => setBrandingFeatureImageUrl(event.target.value)}
+                  placeholder="https://..."
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => void handleBrandingFileUpload(event.target.files?.[0], "feature")}
                   className="w-full text-[11px] text-indigo-100 file:mr-2 file:rounded file:border-0 file:bg-white/20 file:px-2 file:py-1 file:text-[11px] file:text-white"
                 />
               </label>
