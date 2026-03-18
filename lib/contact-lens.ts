@@ -472,6 +472,8 @@ export function normalizeContactLensPayload(payload: unknown): ContactLensWebhoo
     ["detail", "ContactData", "ContactId"],
     ["detail", "ContactData", "InitialContactId"],
     ["detail", "contact", "initialContactId"],
+    ["CustomerMetadata", "ContactId"],
+    ["customerMetadata", "contactId"],
   ]));
 
   if (!contactId) {

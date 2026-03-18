@@ -74,6 +74,25 @@ export async function getCallAnalyticsByLeadAndContactId(leadId: string, contact
   return rows[0] ?? null;
 }
 
+export async function getCallAnalyticsByLeadId(leadId: string, limit = 25) {
+  const url = new URL("/rest/v1/call_analytics", supabaseUrl);
+  url.searchParams.set("lead_id", `eq.${leadId}`);
+  url.searchParams.set("select", "*");
+  url.searchParams.set("order", "created_at.desc");
+  url.searchParams.set("limit", String(limit));
+
+  const response = await fetch(url, {
+    headers: getSupabaseHeaders(),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  return (await response.json()) as CallAnalyticsRecord[];
+}
+
 export async function upsertCallAnalytics(record: CallAnalyticsRecord) {
   const url = new URL("/rest/v1/call_analytics", supabaseUrl);
   url.searchParams.set("on_conflict", "contact_id");

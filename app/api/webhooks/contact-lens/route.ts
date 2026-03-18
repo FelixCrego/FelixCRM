@@ -5,8 +5,10 @@ import {
   buildContactLensLeadNote,
   isContactLensWebhookAuthorized,
   normalizeContactLensPayload,
+  type ContactLensWebhookPayload,
   toContactLensCrmRecord,
 } from "@/lib/contact-lens";
+import { hydrateContactLensPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 
 type CallAnalyticsRecord = {
   lead_id: string;
@@ -28,6 +30,22 @@ type CallAnalyticsRecord = {
   source_event_time?: string | null;
   raw_payload?: unknown;
 };
+
+type HydratedAnalytics = Partial<
+  Pick<
+    ContactLensWebhookPayload,
+    | "overallSentiment"
+    | "analysisS3Uri"
+    | "transcriptText"
+    | "transcriptJson"
+    | "aiSummary"
+    | "agentTalkTimePct"
+    | "customerTalkTimePct"
+    | "interruptions"
+    | "eventSource"
+    | "sourceEventTime"
+  >
+>;
 
 function coalesceValue<T>(incoming: T | null | undefined, existing: T | null | undefined): T | null | undefined {
   return incoming ?? existing;
@@ -75,12 +93,36 @@ export async function POST(request: Request) {
 
     const rawPayload = await request.json();
     const payload = normalizeContactLensPayload(rawPayload);
-    const existing = await getCallAnalyticsByContactId(payload.contactId).catch(() => null);
+    const hydratedPayload: HydratedAnalytics =
+      !payload.aiSummary &&
+      !payload.overallSentiment &&
+      !payload.transcriptText &&
+      !payload.transcriptJson &&
+      payload.recordingS3Uri
+        ? await hydrateContactLensPayloadFromS3(payload).catch((error) => {
+            console.warn("Contact Lens S3 hydration failed:", error);
+            return {} as HydratedAnalytics;
+          })
+        : {};
+    const resolvedPayload = {
+      ...payload,
+      overallSentiment: payload.overallSentiment ?? hydratedPayload.overallSentiment ?? null,
+      analysisS3Uri: payload.analysisS3Uri ?? hydratedPayload.analysisS3Uri ?? null,
+      transcriptText: payload.transcriptText ?? hydratedPayload.transcriptText ?? null,
+      transcriptJson: payload.transcriptJson ?? hydratedPayload.transcriptJson ?? null,
+      aiSummary: payload.aiSummary ?? hydratedPayload.aiSummary ?? null,
+      agentTalkTimePct: payload.agentTalkTimePct ?? hydratedPayload.agentTalkTimePct ?? null,
+      customerTalkTimePct: payload.customerTalkTimePct ?? hydratedPayload.customerTalkTimePct ?? null,
+      interruptions: payload.interruptions ?? hydratedPayload.interruptions ?? null,
+      eventSource: payload.eventSource ?? hydratedPayload.eventSource ?? null,
+      sourceEventTime: payload.sourceEventTime ?? hydratedPayload.sourceEventTime ?? null,
+    };
+    const existing = await getCallAnalyticsByContactId(resolvedPayload.contactId).catch(() => null);
     const fallbackLeadId =
       existing?.lead_id ||
-      (await findLeadIdByContactId(payload.contactId).catch(() => null)) ||
-      (payload.customerPhone ? await findLeadIdByPhone(payload.customerPhone).catch(() => null) : null);
-    const leadId = payload.leadId || fallbackLeadId || null;
+      (await findLeadIdByContactId(resolvedPayload.contactId).catch(() => null)) ||
+      (resolvedPayload.customerPhone ? await findLeadIdByPhone(resolvedPayload.customerPhone).catch(() => null) : null);
+    const leadId = resolvedPayload.leadId || fallbackLeadId || null;
 
     if (!leadId) {
       return NextResponse.json(
@@ -89,35 +131,35 @@ export async function POST(request: Request) {
       );
     }
 
-    const mergedTranscriptJson = mergeTranscriptJson(existing?.transcript_json, payload.transcriptJson);
+    const mergedTranscriptJson = mergeTranscriptJson(existing?.transcript_json, resolvedPayload.transcriptJson);
     const mergedTranscriptText =
-      payload.transcriptText ??
+      resolvedPayload.transcriptText ??
       transcriptJsonToText(mergedTranscriptJson) ??
       existing?.transcript_text ??
       null;
 
     await upsertCallAnalytics({
-      ...toContactLensCrmRecord(payload, leadId),
-      duration_seconds: coalesceValue(payload.durationSeconds, existing?.duration_seconds),
-      overall_sentiment: coalesceValue(payload.overallSentiment, existing?.overall_sentiment),
-      recording_url: coalesceValue(payload.recordingUrl, existing?.recording_url),
-      recording_url_expires_at: coalesceValue(payload.recordingUrlExpiresAt, existing?.recording_url_expires_at),
-      recording_s3_uri: coalesceValue(payload.recordingS3Uri, existing?.recording_s3_uri),
-      analysis_s3_uri: coalesceValue(payload.analysisS3Uri, existing?.analysis_s3_uri),
+      ...toContactLensCrmRecord(resolvedPayload, leadId),
+      duration_seconds: coalesceValue(resolvedPayload.durationSeconds, existing?.duration_seconds),
+      overall_sentiment: coalesceValue(resolvedPayload.overallSentiment, existing?.overall_sentiment),
+      recording_url: coalesceValue(resolvedPayload.recordingUrl, existing?.recording_url),
+      recording_url_expires_at: coalesceValue(resolvedPayload.recordingUrlExpiresAt, existing?.recording_url_expires_at),
+      recording_s3_uri: coalesceValue(resolvedPayload.recordingS3Uri, existing?.recording_s3_uri),
+      analysis_s3_uri: coalesceValue(resolvedPayload.analysisS3Uri, existing?.analysis_s3_uri),
       transcript_text: mergedTranscriptText,
       transcript_json: mergedTranscriptJson,
-      ai_summary: coalesceValue(payload.aiSummary, existing?.ai_summary),
-      agent_talk_time_pct: coalesceValue(payload.agentTalkTimePct, existing?.agent_talk_time_pct),
-      customer_talk_time_pct: coalesceValue(payload.customerTalkTimePct, existing?.customer_talk_time_pct),
-      interruptions: coalesceValue(payload.interruptions, existing?.interruptions),
-      event_source: coalesceValue(payload.eventSource, existing?.event_source),
-      customer_phone: coalesceValue(payload.customerPhone, existing?.customer_phone),
-      source_event_time: coalesceValue(payload.sourceEventTime, existing?.source_event_time),
-      raw_payload: payload.rawPayload,
+      ai_summary: coalesceValue(resolvedPayload.aiSummary, existing?.ai_summary),
+      agent_talk_time_pct: coalesceValue(resolvedPayload.agentTalkTimePct, existing?.agent_talk_time_pct),
+      customer_talk_time_pct: coalesceValue(resolvedPayload.customerTalkTimePct, existing?.customer_talk_time_pct),
+      interruptions: coalesceValue(resolvedPayload.interruptions, existing?.interruptions),
+      event_source: coalesceValue(resolvedPayload.eventSource, existing?.event_source),
+      customer_phone: coalesceValue(resolvedPayload.customerPhone, existing?.customer_phone),
+      source_event_time: coalesceValue(resolvedPayload.sourceEventTime, existing?.source_event_time),
+      raw_payload: resolvedPayload.rawPayload,
     });
 
     try {
-      await createLeadNote(leadId, buildContactLensLeadNote({ ...payload, leadId }), "call", payload.contactId);
+      await createLeadNote(leadId, buildContactLensLeadNote({ ...resolvedPayload, leadId }), "call", resolvedPayload.contactId);
     } catch (noteError) {
       console.warn("Contact Lens note creation failed:", noteError);
     }

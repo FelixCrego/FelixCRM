@@ -725,6 +725,12 @@ export default function LeadExecutionPage() {
     const fetchCallIntel = async () => {
       setIsLoadingIntel(true);
 
+      await fetch("/api/call-analytics/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }),
+      }).catch(() => null);
+
       const { data, error } = await supabase
         .from("call_analytics")
         .select("*")
