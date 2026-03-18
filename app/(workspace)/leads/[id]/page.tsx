@@ -354,9 +354,6 @@ export default function LeadExecutionPage() {
   const [callIntelHistory, setCallIntelHistory] = useState<CallIntelRecord[]>([]);
   const [selectedCallIntelId, setSelectedCallIntelId] = useState<string | null>(null);
   const [isLoadingIntel, setIsLoadingIntel] = useState(false);
-  const [resolvedRecordingUrl, setResolvedRecordingUrl] = useState<string | null>(null);
-  const [resolvedRecordingError, setResolvedRecordingError] = useState<string>("");
-  const [isLoadingRecording, setIsLoadingRecording] = useState(false);
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
   const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
@@ -744,62 +741,10 @@ export default function LeadExecutionPage() {
 
   const selectedCallIntel = callIntelHistory.find((entry) => entry.id === selectedCallIntelId) ?? callIntelHistory[0] ?? null;
   const callIntel = selectedCallIntel;
-  const playbackRecordingUrl = resolvedRecordingUrl ?? callIntel?.recording_url ?? null;
-
-  useEffect(() => {
-    if (activeTab !== "Call Audio & AI" || !leadId || !callIntel?.contact_id) {
-      setResolvedRecordingUrl(null);
-      setResolvedRecordingError("");
-      setIsLoadingRecording(false);
-      return;
-    }
-
-    if (!callIntel.recording_url && !callIntel.recording_s3_uri) {
-      setResolvedRecordingUrl(null);
-      setResolvedRecordingError("");
-      setIsLoadingRecording(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadPlayableRecording() {
-      setIsLoadingRecording(true);
-      setResolvedRecordingError("");
-
-      try {
-        const response = await fetch(
-          `/api/call-recordings?leadId=${encodeURIComponent(leadId)}&contactId=${encodeURIComponent(callIntel.contact_id ?? "")}`,
-          { cache: "no-store" },
-        );
-        const payload = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
-
-        if (cancelled) return;
-
-        if (!response.ok || !payload?.url) {
-          setResolvedRecordingUrl(callIntel.recording_url ?? null);
-          setResolvedRecordingError(payload?.error || "Unable to load the recording.");
-          setIsLoadingRecording(false);
-          return;
-        }
-
-        setResolvedRecordingUrl(payload.url);
-        setResolvedRecordingError("");
-        setIsLoadingRecording(false);
-      } catch {
-        if (cancelled) return;
-        setResolvedRecordingUrl(callIntel.recording_url ?? null);
-        setResolvedRecordingError("Unable to load the recording.");
-        setIsLoadingRecording(false);
-      }
-    }
-
-    void loadPlayableRecording();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, callIntel?.contact_id, callIntel?.recording_s3_uri, callIntel?.recording_url, leadId]);
+  const playbackRecordingUrl =
+    leadId && callIntel?.contact_id && (callIntel.recording_s3_uri || callIntel.recording_url)
+      ? `/api/call-recordings/stream?leadId=${encodeURIComponent(leadId)}&contactId=${encodeURIComponent(callIntel.contact_id)}`
+      : callIntel?.recording_url ?? null;
 
   useEffect(() => {
     if (!researchStorageKey || typeof window === "undefined") return;
@@ -2534,22 +2479,10 @@ export default function LeadExecutionPage() {
                         </div>
                       )}
 
-                      {isLoadingRecording && (
-                        <div className="mt-2 rounded-lg border border-zinc-800/80 bg-zinc-950 p-3 text-xs text-zinc-400">
-                          Loading playable recording...
-                        </div>
-                      )}
-
                       {!playbackRecordingUrl && callIntel.recording_s3_uri && (
                         <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
                           <p className="font-semibold uppercase tracking-widest text-amber-300">Recording Sync Complete</p>
                           <p className="mt-1 text-amber-100/90">The recording exists in Amazon S3 but a playable URL is not available yet.</p>
-                        </div>
-                      )}
-
-                      {!!resolvedRecordingError && !isLoadingRecording && (
-                        <div className="mt-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-200">
-                          {resolvedRecordingError}
                         </div>
                       )}
 
