@@ -1625,7 +1625,10 @@ export default function LeadExecutionPage() {
 
     setNotesLoading(true);
     setNotesError("");
-    const response = await fetch(activeTab === "SMS" ? "/api/sms/send" : "/api/lead-notes", {
+    const route =
+      activeTab === "SMS" ? "/api/sms/send" : activeTab === "Email" ? "/api/email/send" : "/api/lead-notes";
+
+    const response = await fetch(route, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
@@ -1635,6 +1638,12 @@ export default function LeadExecutionPage() {
               message: content,
               phone: dialNumber || leadPhone,
             }
+          : activeTab === "Email"
+            ? {
+                leadId,
+                message: content,
+                email: lead?.email || leadContacts.find((contact) => contact.emails.length > 0)?.emails[0] || "",
+              }
           : {
               channel: activeTab === "Notes" ? "notes" : "email",
               leadId,
@@ -1647,7 +1656,14 @@ export default function LeadExecutionPage() {
     const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
 
     if (!response.ok || !payload?.note) {
-      setNotesError(payload?.error || (activeTab === "SMS" ? "Unable to send SMS." : "Unable to save note."));
+      setNotesError(
+        payload?.error ||
+          (activeTab === "SMS"
+            ? "Unable to send SMS."
+            : activeTab === "Email"
+              ? "Unable to send email."
+              : "Unable to save note."),
+      );
       setNotesLoading(false);
       return;
     }
@@ -2867,7 +2883,7 @@ export default function LeadExecutionPage() {
                 disabled={notesLoading || !notesDraft.trim()}
                 className="rounded-md bg-indigo-500 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-700"
               >
-                {activeTab === "SMS" ? "Send SMS" : activeTab === "Email" ? "Save Email" : "Save Note"}
+                {activeTab === "SMS" ? "Send SMS" : activeTab === "Email" ? "Send Email" : "Save Note"}
               </button>
               </div>
             ) : null}
