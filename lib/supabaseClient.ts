@@ -9,7 +9,7 @@ type PollingHandler<TRecord> = (payload: InsertCallbackPayload<TRecord>) => void
 type PollingChannel<TRecord> = {
   on: (
     eventType: "postgres_changes",
-    filter: { event: "INSERT"; schema: string; table: string },
+    filter: { event: string; schema: string; table: string; filter?: string },
     callback: PollingHandler<TRecord>,
   ) => PollingChannel<TRecord>;
   subscribe: () => PollingChannel<TRecord>;
@@ -23,14 +23,18 @@ class RealtimePollingChannel<TRecord extends { id?: string; created_at?: string 
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly seenIds = new Set<string>();
   private hasSyncedInitialState = false;
+  private subscribedTable: string;
 
-  constructor(private readonly table: string) {}
+  constructor(table: string) {
+    this.subscribedTable = table;
+  }
 
   on(
     _eventType: "postgres_changes",
-    _filter: { event: "INSERT"; schema: string; table: string },
+    filter: { event: string; schema: string; table: string; filter?: string },
     callback: PollingHandler<TRecord>,
   ) {
+    this.subscribedTable = filter.table;
     this.callback = callback;
     return this;
   }
@@ -38,7 +42,7 @@ class RealtimePollingChannel<TRecord extends { id?: string; created_at?: string 
   subscribe() {
     const poll = async () => {
       const response = await restClient
-        .from<TRecord>(this.table)
+        .from<TRecord>(this.subscribedTable)
         .select("*")
         .order("created_at", { ascending: true })
         .maybeMany();
@@ -88,8 +92,8 @@ export const supabase = {
       return restClient.from<TRecord>(table).insert(records);
     },
   }),
-  channel: <TRecord extends { id?: string; created_at?: string }>(_name: string) => {
-    return new RealtimePollingChannel<TRecord>("chat_messages");
+  channel: <TRecord extends { id?: string; created_at?: string }>(name: string) => {
+    return new RealtimePollingChannel<TRecord>(name);
   },
   removeChannel: <TRecord extends { id?: string; created_at?: string }>(channel: RealtimePollingChannel<TRecord>) => {
     channel.stop();
