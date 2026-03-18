@@ -499,6 +499,7 @@ export default function LeadExecutionPage() {
   const [newContactEmail, setNewContactEmail] = useState("");
   const [savingContacts, setSavingContacts] = useState(false);
   const [contactsError, setContactsError] = useState("");
+  const [recoveringContactId, setRecoveringContactId] = useState<string | null>(null);
   const supabase = useMemo(() => createClientComponentClient(), []);
   const captureContactId = useCallback((contact: AwsActiveContact | null | undefined, attempts = 10) => {
     const contactId = contact?.getContactId?.() ?? null;
@@ -575,6 +576,40 @@ export default function LeadExecutionPage() {
       cancelled = true;
     };
   }, [currentContactId, leadId]);
+
+  useEffect(() => {
+    if (!leadId || !currentContactId || callStatus !== "idle" || recoveringContactId === currentContactId) return;
+
+    let cancelled = false;
+    setRecoveringContactId(currentContactId);
+
+    const recoverLatestCall = async () => {
+      await fetch("/api/call-analytics/recover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId,
+          contactId: currentContactId,
+        }),
+      }).catch(() => null);
+
+      if (!cancelled) {
+        window.setTimeout(() => {
+          fetch("/api/call-analytics/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ leadId, contactId: currentContactId }),
+          }).catch(() => null);
+        }, 3000);
+      }
+    };
+
+    recoverLatestCall().catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [callStatus, currentContactId, leadId, recoveringContactId]);
 
 
   useEffect(() => {
