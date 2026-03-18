@@ -248,6 +248,22 @@ function slugify(input: string, fallback: string): string {
   return clean || fallback;
 }
 
+function buildRepoNameCandidates(businessName: string, leadId: string): string[] {
+  const base = slugify(businessName, `felix-${leadId.slice(0, 8)}`);
+  const suffix = leadId.slice(0, 8).toLowerCase();
+  return Array.from(new Set([
+    base,
+    `${base}-${suffix}`.slice(0, 63),
+    `felix-${base}-${suffix}`.slice(0, 63),
+    `felix-${suffix}`,
+  ]));
+}
+
+function isGithubNameAlreadyExistsResponse(status: number, bodyText: string): boolean {
+  if (status !== 422) return false;
+  return /name already exists on this account/i.test(bodyText);
+}
+
 function toHttpsUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -325,7 +341,7 @@ export async function POST(request: Request) {
       configOverrides,
     );
 
-    const repoName = slugify(lead.businessName, `felix-${lead.id.slice(0, 8)}`);
+    const repoNameCandidates = buildRepoNameCandidates(lead.businessName, lead.id);
     const githubHeaders = {
       Authorization: `Bearer ${githubToken}`,
       Accept: "application/vnd.github+json",
@@ -336,61 +352,84 @@ export async function POST(request: Request) {
     let createdRepo: { id?: number; full_name?: string; default_branch?: string } | null = null;
     let repoDefaultBranch = process.env.VERCEL_TEMPLATE_BRANCH || "main";
 
-    const gitRepoCreateResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`, {
-      method: "POST",
-      headers: githubHeaders,
-      body: JSON.stringify({
-        owner: githubOwner,
-        name: repoName,
-        description: `Felix CRM generated site for ${lead.businessName}`,
-        include_all_branches: false,
-        private: true,
-      }),
-    });
+    let lastTemplateErrorText = "";
+    let templateNotFound = false;
 
-    if (gitRepoCreateResponse.ok) {
-      createdRepo = (await gitRepoCreateResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
-      repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
-    } else if (gitRepoCreateResponse.status === 404) {
-      let forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+    for (const repoName of repoNameCandidates) {
+      const gitRepoCreateResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/generate`, {
         method: "POST",
         headers: githubHeaders,
         body: JSON.stringify({
+          owner: githubOwner,
           name: repoName,
-          organization: githubOwner,
-          default_branch_only: true,
+          description: `Felix CRM generated site for ${lead.businessName}`,
+          include_all_branches: false,
+          private: true,
         }),
       });
 
-      if (!forkRepoResponse.ok) {
-        forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+      if (gitRepoCreateResponse.ok) {
+        createdRepo = (await gitRepoCreateResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
+        repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
+        break;
+      }
+
+      const templateErrorText = await gitRepoCreateResponse.text();
+      lastTemplateErrorText = templateErrorText || gitRepoCreateResponse.statusText;
+
+      if (isGithubNameAlreadyExistsResponse(gitRepoCreateResponse.status, templateErrorText)) {
+        continue;
+      }
+
+      if (gitRepoCreateResponse.status === 404) {
+        templateNotFound = true;
+        let forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
           method: "POST",
           headers: githubHeaders,
           body: JSON.stringify({
             name: repoName,
+            organization: githubOwner,
             default_branch_only: true,
           }),
         });
-      }
 
-      if (!forkRepoResponse.ok) {
+        if (!forkRepoResponse.ok) {
+          forkRepoResponse = await fetch(`https://api.github.com/repos/${templateRepo.owner}/${templateRepo.repo}/forks`, {
+            method: "POST",
+            headers: githubHeaders,
+            body: JSON.stringify({
+              name: repoName,
+              default_branch_only: true,
+            }),
+          });
+        }
+
+        if (forkRepoResponse.ok) {
+          createdRepo = (await forkRepoResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
+          repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
+          break;
+        }
+
         await setLeadDeployment(leadId, { siteStatus: "FAILED" });
-        const templateError = await gitRepoCreateResponse.text();
         const forkError = await forkRepoResponse.text();
         return NextResponse.json(
           {
-            error: `GitHub template clone failed and fork fallback failed: template=${templateError || gitRepoCreateResponse.statusText}; fork=${forkError || forkRepoResponse.statusText}`,
+            error: `GitHub template clone failed and fork fallback failed: template=${lastTemplateErrorText}; fork=${forkError || forkRepoResponse.statusText}`,
           },
           { status: 500 },
         );
       }
 
-      createdRepo = (await forkRepoResponse.json()) as { id?: number; full_name?: string; default_branch?: string };
-      repoDefaultBranch = createdRepo.default_branch || repoDefaultBranch;
-    } else {
       await setLeadDeployment(leadId, { siteStatus: "FAILED" });
-      const errorText = await gitRepoCreateResponse.text();
-      return NextResponse.json({ error: `GitHub template clone failed: ${errorText || gitRepoCreateResponse.statusText}` }, { status: 500 });
+      return NextResponse.json({ error: `GitHub template clone failed: ${lastTemplateErrorText}` }, { status: 500 });
+    }
+
+    if (!createdRepo) {
+      await setLeadDeployment(leadId, { siteStatus: "FAILED" });
+      const errorMessage = templateNotFound
+        ? `GitHub template clone failed: ${lastTemplateErrorText}`
+        : `GitHub template clone failed after trying multiple repo names: ${lastTemplateErrorText || "repository name already exists on this account"}`;
+      return NextResponse.json({ error: errorMessage }, { status: 500 });
     }
 
     const clonedRepoFullName = createdRepo.full_name;
