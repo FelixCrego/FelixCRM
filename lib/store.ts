@@ -823,6 +823,58 @@ export async function setLeadResearchSummary(leadId: string, research: LeadEnric
   }, { id: `eq.${leadId}` }));
 }
 
+export async function setLeadDemoBooking(
+  leadId: string,
+  booking: { date: string; time: string; timeZone: string; meetLink: string; bookedAt?: string },
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save booked demos.");
+
+  const rows = await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(table, undefined, {
+      select: isSnakeLeadsTable(table) ? "source_payload" : "sourcePayload",
+      id: `eq.${leadId}`,
+      limit: "1",
+    }),
+  );
+  const existing = rows[0];
+  const existingPayload = existing?.sourcePayload ?? existing?.source_payload;
+  const payload = existingPayload && typeof existingPayload === "object" ? (existingPayload as Record<string, unknown>) : {};
+
+  const nextDemoBooking = {
+    date: booking.date,
+    time: booking.time,
+    timeZone: booking.timeZone,
+    meetLink: booking.meetLink,
+    bookedAt: booking.bookedAt ?? new Date().toISOString(),
+  };
+
+  await withLeadTableFallback((table) =>
+    supabaseRequest(
+      table,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(
+          isSnakeLeadsTable(table)
+            ? {
+                source_payload: {
+                  ...payload,
+                  demoBooking: nextDemoBooking,
+                },
+              }
+            : {
+                sourcePayload: {
+                  ...payload,
+                  demoBooking: nextDemoBooking,
+                },
+              },
+        ),
+      },
+      { id: `eq.${leadId}` },
+    ),
+  );
+}
+
 
 export type LeadContactRecord = {
   id: string;

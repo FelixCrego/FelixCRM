@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { z } from "zod";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { setLeadDemoBooking } from "@/lib/store";
 
 export const runtime = "nodejs";
 
@@ -188,6 +189,15 @@ export async function POST(request: Request) {
       rep_id: user.id,
       rep_email: user.email ?? null,
     });
+
+    if (payload.leadId) {
+      await setLeadDemoBooking(payload.leadId, {
+        date: payload.date,
+        time: payload.time,
+        timeZone: payload.timeZone,
+        meetLink,
+      }).catch(() => null);
+    }
 
     return NextResponse.json(
       {
