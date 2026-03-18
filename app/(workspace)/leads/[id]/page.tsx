@@ -35,6 +35,7 @@ type LeadRecord = {
       heroImageUrl?: string;
       primaryColor?: string;
       secondaryColor?: string;
+      googleDriveFolderUrl?: string;
     };
     demoBooking?: {
       date?: string;
@@ -52,6 +53,7 @@ type LeadRecord = {
       heroImageUrl?: string;
       primaryColor?: string;
       secondaryColor?: string;
+      googleDriveFolderUrl?: string;
     };
     demoBooking?: {
       date?: string;
@@ -348,7 +350,8 @@ export default function LeadExecutionPage() {
   const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
   const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<"garage-door" | "new-template">("garage-door");
+  const [brandingGoogleDriveFolderUrl, setBrandingGoogleDriveFolderUrl] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<"garage-door" | "new-template">("new-template");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
   const [callIntelHistory, setCallIntelHistory] = useState<CallIntelRecord[]>([]);
@@ -877,6 +880,7 @@ export default function LeadExecutionPage() {
     setBrandingHeroImageUrl(branding?.heroImageUrl || "");
     setBrandingPrimaryColor(branding?.primaryColor || enrichmentColors[0] || "#0f172a");
     setBrandingSecondaryColor(branding?.secondaryColor || enrichmentColors[1] || enrichmentColors[0] || "#2563eb");
+    setBrandingGoogleDriveFolderUrl(branding?.googleDriveFolderUrl || "");
   }, [lead?.enrichment, lead?.id, lead?.sourcePayload, lead?.source_payload]);
 
   const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
@@ -1073,6 +1077,9 @@ export default function LeadExecutionPage() {
         primaryColor: brandingPrimaryColor,
         secondaryColor: brandingSecondaryColor,
       },
+      links: {
+        googleDriveFolderUrl: brandingGoogleDriveFolderUrl.trim(),
+      },
       research: {
         summary: researchInsight.trim(),
       },
@@ -1094,6 +1101,7 @@ export default function LeadExecutionPage() {
             NEXT_PUBLIC_LOGO_URL: brandingLogoUrl.trim(),
             NEXT_PUBLIC_HERO_URL: brandingHeroImageUrl.trim(),
             NEXT_PUBLIC_FEATURE_IMAGE_URL: brandingHeroImageUrl.trim(),
+            NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL: brandingGoogleDriveFolderUrl.trim(),
           },
         }),
       });
@@ -1128,6 +1136,7 @@ export default function LeadExecutionPage() {
                     heroImageUrl: brandingHeroImageUrl.trim(),
                     primaryColor: brandingPrimaryColor,
                     secondaryColor: brandingSecondaryColor,
+                    googleDriveFolderUrl: brandingGoogleDriveFolderUrl.trim(),
                   },
                 },
               }
@@ -2164,8 +2173,8 @@ export default function LeadExecutionPage() {
                   onChange={(event) => setSelectedTemplateId(event.target.value as "garage-door" | "new-template")}
                   className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none"
                 >
+                  <option value="new-template">MobileDetailer</option>
                   <option value="garage-door">Garage Door</option>
-                  <option value="new-template">New Template</option>
                 </select>
               </label>
 
@@ -2199,6 +2208,19 @@ export default function LeadExecutionPage() {
                   onChange={(event) => void handleBrandingFileUpload(event.target.files?.[0], "hero")}
                   className="w-full text-[11px] text-indigo-100 file:mr-2 file:rounded file:border-0 file:bg-white/20 file:px-2 file:py-1 file:text-[11px] file:text-white"
                 />
+              </label>
+
+              <label className="space-y-1">
+                <span className="block">Google Drive folder URL</span>
+                <input
+                  value={brandingGoogleDriveFolderUrl}
+                  onChange={(event) => setBrandingGoogleDriveFolderUrl(event.target.value)}
+                  placeholder="https://drive.google.com/drive/folders/..."
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                />
+                <span className="block text-[11px] text-indigo-200/80">
+                  Saved into the deploy config and exposed to the build as <code>NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL</code>.
+                </span>
               </label>
 
               <div className="grid grid-cols-2 gap-2">

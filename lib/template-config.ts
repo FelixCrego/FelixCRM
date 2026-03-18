@@ -44,6 +44,7 @@ export type TemplateConfig = {
   };
   links: {
     googleBusinessProfile: string;
+    googleDriveFolderUrl: string;
     socials: Array<{
       label: string;
       url: string;
@@ -171,6 +172,7 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
     },
     links: {
       googleBusinessProfile: "",
+      googleDriveFolderUrl: "",
       socials: mapSocialLinks(lead.socialLinks),
     },
     research: {
@@ -233,6 +235,7 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
     },
     links: {
       googleBusinessProfile: asString(linksOverrides.googleBusinessProfile) || defaultConfig.links.googleBusinessProfile,
+      googleDriveFolderUrl: asString(linksOverrides.googleDriveFolderUrl) || defaultConfig.links.googleDriveFolderUrl,
       socials: Array.isArray(linksOverrides.socials)
         ? (linksOverrides.socials as Array<{ label?: unknown; url?: unknown }>)
             .map((item) => ({ label: asString(item.label), url: asString(item.url) }))

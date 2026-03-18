@@ -512,6 +512,10 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_HERO_SUBHEADLINE: templateConfig.content.hero.subheadline,
       NEXT_PUBLIC_HERO_CTA_LABEL: templateConfig.content.hero.ctaLabel,
       NEXT_PUBLIC_GOOGLE_BUSINESS_PROFILE: templateConfig.links.googleBusinessProfile,
+      NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL:
+        typeof frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL === "string" && frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
+          ? frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
+          : templateConfig.links.googleDriveFolderUrl,
       NEXT_PUBLIC_SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
       NEXT_PUBLIC_PRIMARY_COLOR:
         typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" && frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()
