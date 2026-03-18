@@ -22,20 +22,6 @@ function getRegion(record: CallAnalyticsLookup) {
 }
 
 async function getPlayableRecording(record: CallAnalyticsLookup) {
-  const validation = validateAmazonS3PresignedUrl(record.recording_url ?? null);
-  const storedUrlStillValid =
-    validation.isValid &&
-    !isExpiredIsoTimestamp(record.recording_url_expires_at ?? null) &&
-    !isExpiredIsoTimestamp(validation.expiresAt);
-
-  if (storedUrlStillValid && record.recording_url) {
-    return {
-      url: record.recording_url,
-      expiresAt: validation.expiresAt ?? record.recording_url_expires_at ?? null,
-      source: "stored",
-    } as const;
-  }
-
   const s3Object = parseAmazonS3Uri(record.recording_s3_uri ?? null);
   const region = getRegion(record);
 
@@ -69,6 +55,20 @@ async function getPlayableRecording(record: CallAnalyticsLookup) {
     } catch {
       // Fall back to the stored URL below when AWS signing is unavailable.
     }
+  }
+
+  const validation = validateAmazonS3PresignedUrl(record.recording_url ?? null);
+  const storedUrlStillValid =
+    validation.isValid &&
+    !isExpiredIsoTimestamp(record.recording_url_expires_at ?? null) &&
+    !isExpiredIsoTimestamp(validation.expiresAt);
+
+  if (storedUrlStillValid && record.recording_url) {
+    return {
+      url: record.recording_url,
+      expiresAt: validation.expiresAt ?? record.recording_url_expires_at ?? null,
+      source: "stored",
+    } as const;
   }
 
   if (record.recording_url) {
