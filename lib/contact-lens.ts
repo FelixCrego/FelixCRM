@@ -56,6 +56,12 @@ export type AmazonS3ObjectReference = {
 };
 
 type RawPayload = Record<string, unknown>;
+type TranscriptLine = {
+  time?: string;
+  speaker?: string;
+  sentiment?: string;
+  text?: string;
+};
 
 function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -123,6 +129,135 @@ function parseIsoDate(value: unknown): string | null {
   if (!text) return null;
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function formatSecondsFromMillis(value: number): string {
+  const totalSeconds = Math.max(Math.round(value / 1000), 0);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function scoreToSentiment(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  if (value >= 1) return "POSITIVE";
+  if (value <= -1) return "NEGATIVE";
+  return "NEUTRAL";
+}
+
+function mapParticipantLabel(value: string | null): string | null {
+  if (!value) return null;
+  if (value === "AGENT") return "Agent";
+  if (value === "CUSTOMER") return "Customer";
+  return value;
+}
+
+function extractAwsTranscript(payload: RawPayload): TranscriptLine[] | null {
+  const detail = getNestedRecord(payload.detail) ?? {};
+  const transcript = payload.Transcript ?? payload.transcript ?? detail.Transcript ?? detail.transcript;
+  const rows = getArray(transcript);
+  if (!rows.length) return null;
+
+  const normalized: TranscriptLine[] = [];
+  for (const row of rows) {
+    const item = getNestedRecord(row);
+    if (!item) continue;
+    const text = getString(item.Content ?? item.content ?? item.Text ?? item.text);
+    if (!text) continue;
+
+    const millis =
+      getNumber(item.BeginOffsetMillis ?? item.beginOffsetMillis ?? item.BeginOffsetMs ?? item.beginOffsetMs);
+    const participantId = getString(item.ParticipantId ?? item.participantId ?? item.ParticipantRole ?? item.participantRole);
+    const sentiment = getString(item.Sentiment ?? item.sentiment);
+
+    normalized.push({
+      time: millis !== null ? formatSecondsFromMillis(millis) : undefined,
+      speaker: mapParticipantLabel(participantId) ?? undefined,
+      sentiment: sentiment ?? undefined,
+      text,
+    });
+  }
+
+  return normalized.length ? normalized : null;
+}
+
+function extractAwsTranscriptText(payload: RawPayload): string | null {
+  const transcript = extractAwsTranscript(payload);
+  if (!transcript?.length) return null;
+  return transcript
+    .map((line) => `${line.speaker || "Unknown"}: ${line.text || ""}`.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractAwsPostContactSummary(payload: RawPayload): string | null {
+  return (
+    findFirstString(payload, [
+      ["ConversationCharacteristics", "ContactSummary", "PostContactSummary", "Content"],
+      ["conversationCharacteristics", "contactSummary", "postContactSummary", "content"],
+      ["PostContactSummary", "Content"],
+      ["postContactSummary", "content"],
+      ["ContactSummary", "PostContactSummary", "Content"],
+      ["contactSummary", "postContactSummary", "content"],
+    ]) ??
+    null
+  );
+}
+
+function extractAwsOverallSentiment(payload: RawPayload): string | null {
+  const customerScore = findFirstNumber(payload, [
+    ["ConversationCharacteristics", "Sentiment", "OverallSentiment", "CUSTOMER"],
+    ["conversationCharacteristics", "sentiment", "overallSentiment", "CUSTOMER"],
+    ["ConversationCharacteristics", "Sentiment", "OverallSentiment", "Customer"],
+    ["conversationCharacteristics", "sentiment", "overallSentiment", "customer"],
+  ]);
+  const agentScore = findFirstNumber(payload, [
+    ["ConversationCharacteristics", "Sentiment", "OverallSentiment", "AGENT"],
+    ["conversationCharacteristics", "sentiment", "overallSentiment", "AGENT"],
+    ["ConversationCharacteristics", "Sentiment", "OverallSentiment", "Agent"],
+    ["conversationCharacteristics", "sentiment", "overallSentiment", "agent"],
+  ]);
+
+  return scoreToSentiment(customerScore) ?? scoreToSentiment(agentScore);
+}
+
+function extractAwsInterruptions(payload: RawPayload): number | null {
+  return findFirstNumber(payload, [
+    ["ConversationCharacteristics", "Interruptions", "TotalCount"],
+    ["conversationCharacteristics", "interruptions", "totalCount"],
+  ]);
+}
+
+function extractAwsTalkTimePcts(payload: RawPayload): { agentTalkTimePct: number | null; customerTalkTimePct: number | null } {
+  const totalMillis =
+    findFirstNumber(payload, [
+      ["ConversationCharacteristics", "TalkTime", "TotalTimeMillis"],
+      ["conversationCharacteristics", "talkTime", "totalTimeMillis"],
+    ]) ??
+    findFirstNumber(payload, [
+      ["ConversationCharacteristics", "TotalConversationDurationMillis"],
+      ["conversationCharacteristics", "totalConversationDurationMillis"],
+    ]);
+
+  const agentMillis = findFirstNumber(payload, [
+    ["ConversationCharacteristics", "TalkTime", "DetailsByParticipant", "AGENT", "TotalTimeMillis"],
+    ["conversationCharacteristics", "talkTime", "detailsByParticipant", "AGENT", "totalTimeMillis"],
+    ["conversationCharacteristics", "talkTime", "detailsByParticipant", "agent", "totalTimeMillis"],
+  ]);
+  const customerMillis = findFirstNumber(payload, [
+    ["ConversationCharacteristics", "TalkTime", "DetailsByParticipant", "CUSTOMER", "TotalTimeMillis"],
+    ["conversationCharacteristics", "talkTime", "detailsByParticipant", "CUSTOMER", "totalTimeMillis"],
+    ["conversationCharacteristics", "talkTime", "detailsByParticipant", "customer", "totalTimeMillis"],
+  ]);
+
+  if (!totalMillis || totalMillis <= 0) {
+    return { agentTalkTimePct: null, customerTalkTimePct: null };
+  }
+
+  return {
+    agentTalkTimePct: agentMillis !== null ? Math.round((agentMillis / totalMillis) * 100) : null,
+    customerTalkTimePct: customerMillis !== null ? Math.round((customerMillis / totalMillis) * 100) : null,
+  };
 }
 
 function extractContactIdFromArn(value: string | null): string | null {
@@ -350,6 +485,12 @@ export function normalizeContactLensPayload(payload: unknown): ContactLensWebhoo
     findFirstString(record, [["recording_s3_uri"], ["recordingS3Uri"]]) ??
     s3UriFromUrl ??
     buildS3Uri(s3Bucket, s3ObjectKey ? decodeURIComponent(s3ObjectKey.replace(/\+/g, " ")) : null);
+  const awsTranscriptJson = extractAwsTranscript(record);
+  const awsTranscriptText = extractAwsTranscriptText(record);
+  const awsSummary = extractAwsPostContactSummary(record);
+  const awsOverallSentiment = extractAwsOverallSentiment(record);
+  const awsInterruptions = extractAwsInterruptions(record);
+  const awsTalkTimePcts = extractAwsTalkTimePcts(record);
 
   return {
     leadId,
@@ -365,17 +506,22 @@ export function normalizeContactLensPayload(payload: unknown): ContactLensWebhoo
       ])) ??
       normalizePhone(attributes.customer_phone ?? attributes.customerPhone),
     durationSeconds: findFirstNumber(record, [["duration_seconds"], ["durationSeconds"], ["detail", "duration_seconds"], ["detail", "durationSeconds"]]),
-    overallSentiment: findFirstString(record, [["overall_sentiment"], ["overallSentiment"], ["sentiment"], ["detail", "sentiment"]]),
+    overallSentiment:
+      findFirstString(record, [["overall_sentiment"], ["overallSentiment"], ["sentiment"], ["detail", "sentiment"]]) ??
+      awsOverallSentiment,
     recordingUrl: recordingUrl,
     recordingUrlExpiresAt: recordingUrlValidation.expiresAt,
     recordingS3Uri,
     analysisS3Uri: findFirstString(record, [["analysis_s3_uri"], ["analysisS3Uri"], ["detail", "analysis_s3_uri"], ["detail", "analysisS3Uri"]]),
-    transcriptText: findFirstString(record, [["transcript_text"], ["transcriptText"], ["detail", "transcript_text"], ["detail", "transcriptText"]]),
-    transcriptJson: record.transcript_json ?? record.transcriptJson ?? detail.transcript_json ?? detail.transcriptJson ?? null,
-    aiSummary: findFirstString(record, [["ai_summary"], ["aiSummary"], ["summary"], ["detail", "summary"]]),
-    agentTalkTimePct: findFirstNumber(record, [["agent_talk_time_pct"], ["agentTalkTimePct"]]),
-    customerTalkTimePct: findFirstNumber(record, [["customer_talk_time_pct"], ["customerTalkTimePct"]]),
-    interruptions: findFirstNumber(record, [["interruptions"]]),
+    transcriptText:
+      findFirstString(record, [["transcript_text"], ["transcriptText"], ["detail", "transcript_text"], ["detail", "transcriptText"]]) ??
+      awsTranscriptText,
+    transcriptJson: record.transcript_json ?? record.transcriptJson ?? detail.transcript_json ?? detail.transcriptJson ?? awsTranscriptJson ?? null,
+    aiSummary: findFirstString(record, [["ai_summary"], ["aiSummary"], ["summary"], ["detail", "summary"]]) ?? awsSummary,
+    agentTalkTimePct: findFirstNumber(record, [["agent_talk_time_pct"], ["agentTalkTimePct"]]) ?? awsTalkTimePcts.agentTalkTimePct,
+    customerTalkTimePct:
+      findFirstNumber(record, [["customer_talk_time_pct"], ["customerTalkTimePct"]]) ?? awsTalkTimePcts.customerTalkTimePct,
+    interruptions: findFirstNumber(record, [["interruptions"]]) ?? awsInterruptions,
     eventSource: findFirstString(record, [["event_source"], ["eventSource"], ["detail-type"]]),
     sourceEventTime: parseIsoDate(findFirstString(record, [["source_event_time"], ["sourceEventTime"], ["time"], ["detail", "time"]])),
     rawPayload: payload,
