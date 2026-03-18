@@ -1,15 +1,16 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads } from "@/lib/store";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { canUserViewAllLeads, createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads } from "@/lib/store";
+import { getAuthenticatedUser, getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET(request: Request) {
   try {
-    const userId = await getAuthenticatedUserId();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await releaseStaleLeads();
     const scope = new URL(request.url).searchParams.get("scope");
-    const leads = scope === "all" ? await listClaimableLeads(200) : await listLeads(userId);
+    const includeAll = await canUserViewAllLeads(user.id, user.email);
+    const leads = scope === "all" ? await listClaimableLeads(200) : await listLeads(user.id, { includeAll });
     return NextResponse.json({ leads });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load leads." }, { status: 500 });

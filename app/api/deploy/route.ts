@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getLeadById, setLeadDeployment } from "@/lib/store";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { canUserManageAllLeads, getLeadById, setLeadDeployment } from "@/lib/store";
+import { getAuthenticatedUser } from "@/lib/auth";
 import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION, type TemplateConfig } from "@/lib/template-config";
 
 function normalizeRepoSlug(value: string | undefined): { owner: string; repo: string } | null {
@@ -256,14 +256,14 @@ function firstDeploymentAlias(payload: Record<string, unknown>): string | undefi
 
 export async function POST(request: Request) {
   try {
-    const ownerId = await getAuthenticatedUserId();
-    if (!ownerId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await request.json();
     const leadId = String(body.leadId ?? "");
     if (!leadId) return NextResponse.json({ error: "leadId required" }, { status: 400 });
 
-    const lead = await getLeadById(leadId, ownerId);
+    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserManageAllLeads(user.id, user.email) });
     if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
     await setLeadDeployment(leadId, { siteStatus: "BUILDING" });

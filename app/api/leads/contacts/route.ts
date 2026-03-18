@@ -1,13 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth";
-import { setLeadContacts, type LeadContactRecord } from "@/lib/store";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { canUserManageAllLeads, setLeadContacts, type LeadContactRecord } from "@/lib/store";
 
 export async function POST(request: Request) {
   try {
-    const userId = await getAuthenticatedUserId();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = (await request.json()) as { leadId?: string; contacts?: LeadContactRecord[] };
     const leadId = typeof body.leadId === "string" ? body.leadId.trim() : "";
@@ -17,7 +17,8 @@ export async function POST(request: Request) {
     }
 
     const contacts = Array.isArray(body.contacts) ? body.contacts : [];
-    const savedContacts = await setLeadContacts(leadId, userId, contacts);
+    const bypassOwnership = await canUserManageAllLeads(user.id, user.email);
+    const savedContacts = await setLeadContacts(leadId, user.id, contacts, { bypassOwnership });
 
     return NextResponse.json({ contacts: savedContacts });
   } catch (error) {

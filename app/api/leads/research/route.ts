@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { runLeadResearch } from "@/lib/scraper";
-import { getLeadById, setLeadResearchSummary } from "@/lib/store";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { canUserManageAllLeads, getLeadById, setLeadResearchSummary } from "@/lib/store";
+import { getAuthenticatedUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const ownerId = await getAuthenticatedUserId();
-  if (!ownerId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = await getAuthenticatedUser();
+  if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
   const leadId = String(body.leadId ?? "").trim();
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "leadId is required." }, { status: 400 });
   }
 
-  const lead = await getLeadById(leadId, ownerId);
+  const lead = await getLeadById(leadId, user.id, { includeAll: await canUserManageAllLeads(user.id, user.email) });
   if (!lead) {
     return NextResponse.json({ error: "Lead not found." }, { status: 404 });
   }

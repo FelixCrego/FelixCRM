@@ -1,8 +1,10 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { createLeadNote, listLeadNotes } from "@/lib/store";
+import { createLeadNote, listLeadNotes, sanitizeLeadNotesForLead } from "@/lib/store";
 import { getAuthenticatedUserId } from "@/lib/auth";
+import { upsertCallAnalytics } from "@/lib/call-analytics-store";
+import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 
 export async function GET(request: Request) {
   try {
@@ -12,7 +14,14 @@ export async function GET(request: Request) {
     const leadId = new URL(request.url).searchParams.get("leadId")?.trim();
     if (!leadId) return NextResponse.json({ error: "leadId is required" }, { status: 400 });
 
-    const notes = await listLeadNotes(leadId);
+    await sanitizeLeadNotesForLead(leadId).catch((error) => {
+      console.warn("Unable to sanitize lead notes before read:", error);
+    });
+
+    const notes = (await listLeadNotes(leadId)).map((note) => ({
+      ...note,
+      content: sanitizeContactLensNoteContent(note.content),
+    }));
     return NextResponse.json({ notes });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load notes." }, { status: 500 });
@@ -33,6 +42,19 @@ export async function POST(request: Request) {
     if (!content) return NextResponse.json({ error: "content is required" }, { status: 400 });
 
     const note = await createLeadNote(leadId, content, channel, body?.contactId?.trim() || null);
+
+    if (body?.contactId?.trim()) {
+      try {
+        await upsertCallAnalytics({
+          lead_id: leadId,
+          contact_id: body.contactId.trim(),
+          event_source: "crm-disposition",
+        });
+      } catch (error) {
+        console.warn("Unable to initialize call_analytics row from lead note:", error);
+      }
+    }
+
     return NextResponse.json({ note });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to save note." }, { status: 500 });

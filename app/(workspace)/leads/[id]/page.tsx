@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
+import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 import { createClientComponentClient } from "@/lib/supabase-client";
 import FollowUpEngine from "./FollowUpEngine";
 
@@ -138,15 +139,20 @@ type CallIntelTranscriptLine = {
 };
 
 type CallIntelRecord = {
+  id?: string;
+  contact_id?: string | null;
   lead_id?: string;
   created_at?: string;
   duration_seconds?: number | string | null;
   overall_sentiment?: string | null;
   recording_url?: string | null;
+  recording_s3_uri?: string | null;
+  analysis_s3_uri?: string | null;
   ai_summary?: string | null;
   agent_talk_time_pct?: number | string | null;
   customer_talk_time_pct?: number | string | null;
   interruptions?: number | string | null;
+  transcript_text?: string | null;
   transcript_json?: CallIntelTranscriptLine[] | null;
 };
 
@@ -337,13 +343,15 @@ export default function LeadExecutionPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<"garage-door" | "new-template">("garage-door");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
-  const [callIntel, setCallIntel] = useState<CallIntelRecord | null>(null);
+  const [callIntelHistory, setCallIntelHistory] = useState<CallIntelRecord[]>([]);
+  const [selectedCallIntelId, setSelectedCallIntelId] = useState<string | null>(null);
   const [isLoadingIntel, setIsLoadingIntel] = useState(false);
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
   const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
   const [currentContactId, setCurrentContactId] = useState<string | null>(null);
   const activeContactRef = useRef<AwsActiveContact | null>(null);
+  const linkedContactIdRef = useRef<string | null>(null);
   const [selectedDisposition, setSelectedDisposition] = useState("");
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
@@ -400,6 +408,21 @@ export default function LeadExecutionPage() {
   const [savingContacts, setSavingContacts] = useState(false);
   const [contactsError, setContactsError] = useState("");
   const supabase = useMemo(() => createClientComponentClient(), []);
+  const captureContactId = useCallback((contact: AwsActiveContact | null | undefined, attempts = 10) => {
+    const contactId = contact?.getContactId?.() ?? null;
+    if (contactId) {
+      setCurrentContactId(contactId);
+      return;
+    }
+
+    if (!contact || attempts <= 0 || typeof window === "undefined") {
+      return;
+    }
+
+    window.setTimeout(() => {
+      captureContactId(contact, attempts - 1);
+    }, 750);
+  }, []);
 
   useEffect(() => {
     type ConnectWindow = Window & {
@@ -411,12 +434,13 @@ export default function LeadExecutionPage() {
     const windowWithConnect = window as ConnectWindow;
     windowWithConnect.connect?.contact?.((contact) => {
       activeContactRef.current = contact;
+      captureContactId(contact);
 
       contact.onConnected?.(() => {
         activeContactRef.current = contact;
         const contactId = contact.getContactId?.() ?? null;
         console.log("AWS Call Connected. Contact ID:", contactId);
-        setCurrentContactId(contactId);
+        captureContactId(contact, 12);
       });
 
       contact.onEnded?.(() => {
@@ -424,7 +448,41 @@ export default function LeadExecutionPage() {
         setShowDisposition(true);
       });
     });
-  }, []);
+  }, [captureContactId]);
+
+  useEffect(() => {
+    if (!leadId || !currentContactId || linkedContactIdRef.current === currentContactId) return;
+
+    let cancelled = false;
+
+    const linkCallToLead = async () => {
+      const response = await fetch("/api/call-analytics/link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId,
+          contactId: currentContactId,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error || "Unable to link call to lead.");
+      }
+
+      if (!cancelled) {
+        linkedContactIdRef.current = currentContactId;
+      }
+    };
+
+    linkCallToLead().catch((error) => {
+      console.error("Failed to link Amazon Connect contact to lead", error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentContactId, leadId]);
 
 
   useEffect(() => {
@@ -644,23 +702,25 @@ export default function LeadExecutionPage() {
         .select("*")
         .eq("lead_id", leadId)
         .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
+        .limit(25)
+        .maybeMany();
 
       if (!mounted) return;
 
       if (error) {
-        if (error.code === "PGRST116") {
-          setCallIntel(null);
-          setIsLoadingIntel(false);
-          return;
-        }
-        setCallIntel(null);
+        setCallIntelHistory([]);
+        setSelectedCallIntelId(null);
         setIsLoadingIntel(false);
         return;
       }
 
-      setCallIntel(data as CallIntelRecord | null);
+      const rows = Array.isArray(data) ? (data as CallIntelRecord[]) : [];
+      setCallIntelHistory(rows);
+      setSelectedCallIntelId((current) => {
+        if (!rows.length) return null;
+        if (current && rows.some((row) => row.id === current)) return current;
+        return rows[0]?.id ?? null;
+      });
       setIsLoadingIntel(false);
     };
 
@@ -670,6 +730,9 @@ export default function LeadExecutionPage() {
       mounted = false;
     };
   }, [activeTab, leadId, supabase]);
+
+  const selectedCallIntel = callIntelHistory.find((entry) => entry.id === selectedCallIntelId) ?? callIntelHistory[0] ?? null;
+  const callIntel = selectedCallIntel;
 
   useEffect(() => {
     if (!researchStorageKey || typeof window === "undefined") return;
@@ -752,7 +815,14 @@ export default function LeadExecutionPage() {
         return;
       }
 
-      setNotes(Array.isArray(payload?.notes) ? payload.notes : []);
+      setNotes(
+        Array.isArray(payload?.notes)
+          ? payload.notes.map((note) => ({
+              ...note,
+              content: sanitizeContactLensNoteContent(note.content),
+            }))
+          : [],
+      );
       setNotesLoading(false);
     }
 
@@ -1556,9 +1626,11 @@ export default function LeadExecutionPage() {
 
   const handleCall = () => {
     setCcpStatus("READY");
+    setCurrentContactId(null);
+    linkedContactIdRef.current = null;
     type ConnectWindow = Window & {
       connect?: {
-        agent?: (callback: (agent: { connect?: (endpoint: { phoneNumber: string }, callbacks?: { success?: () => void; failure?: (error: unknown) => void }) => void }) => void) => void;
+        agent?: (callback: (agent: { connect?: (endpoint: { phoneNumber: string }, options?: { success?: (contact?: AwsActiveContact) => void; failure?: (error: unknown) => void }) => void }) => void) => void;
         Endpoint?: { byPhoneNumber?: (phoneNumber: string) => { phoneNumber: string } };
       };
     };
@@ -1576,10 +1648,11 @@ export default function LeadExecutionPage() {
       const endpoint = windowWithConnect.connect?.Endpoint?.byPhoneNumber?.(formattedNumber);
       if (!endpoint || !agent.connect) return;
 
-      agent.connect(endpoint, {
-        success: function () {
-          console.log("Call initiated successfully to", formattedNumber);
-        },
+        agent.connect(endpoint, {
+          success: function (contact) {
+            captureContactId(contact ?? null, 12);
+            console.log("Call initiated successfully to", formattedNumber);
+          },
         failure: function (err: unknown) {
           console.error("Call failed to initiate:", err);
         },
@@ -2300,7 +2373,7 @@ export default function LeadExecutionPage() {
                     </span>
                     <p className="text-sm font-bold uppercase tracking-widest text-zinc-400">Querying AWS Contact Lens...</p>
                   </div>
-                ) : !callIntel ? (
+                ) : !selectedCallIntel ? (
                   <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-zinc-800/50 bg-zinc-900/20 p-8">
                     <svg className="mb-4 h-12 w-12 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
                     <p className="text-sm font-bold uppercase tracking-widest text-zinc-500">No Call Intel Found</p>
@@ -2308,6 +2381,58 @@ export default function LeadExecutionPage() {
                   </div>
                 ) : (
                   <>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
+                      <div className="mb-3 flex items-center justify-between">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-zinc-400">Call History</h3>
+                        <span className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] font-bold text-zinc-400">
+                          {callIntelHistory.length} calls
+                        </span>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        {callIntelHistory.map((entry, index) => {
+                          const isActive = entry.id === callIntel?.id;
+                          const sentiment = entry.overall_sentiment?.toUpperCase();
+                          const sentimentClass =
+                            sentiment === "POSITIVE"
+                              ? "text-emerald-400"
+                              : sentiment === "NEGATIVE"
+                                ? "text-red-400"
+                                : "text-zinc-500";
+
+                          return (
+                            <button
+                              key={entry.id ?? `${entry.contact_id ?? "call"}-${index}`}
+                              type="button"
+                              onClick={() => setSelectedCallIntelId(entry.id ?? null)}
+                              className={`rounded-xl border px-3 py-3 text-left transition ${
+                                isActive
+                                  ? "border-indigo-500/50 bg-indigo-500/10"
+                                  : "border-zinc-800 bg-zinc-950/60 hover:border-zinc-700 hover:bg-zinc-900"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-xs font-bold uppercase tracking-widest text-zinc-300">Call {callIntelHistory.length - index}</p>
+                                  <p className="mt-1 text-[11px] text-zinc-500">
+                                    {entry.created_at ? new Date(entry.created_at).toLocaleString() : "Unknown time"}
+                                  </p>
+                                </div>
+                                {entry.overall_sentiment ? (
+                                  <span className={`text-[10px] font-black uppercase tracking-widest ${sentimentClass}`}>
+                                    {entry.overall_sentiment}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+                                <span>Duration: {entry.duration_seconds || "00:00"}s</span>
+                                <span>{entry.transcript_text || entry.transcript_json ? "Transcript" : entry.recording_url ? "Recording" : "Pending"}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
                       <div className="mb-3 flex items-start justify-between">
                         <div>
@@ -2337,6 +2462,20 @@ export default function LeadExecutionPage() {
                           <audio controls className="h-8 w-full" src={callIntel.recording_url}>
                             Your browser does not support the audio element.
                           </audio>
+                        </div>
+                      )}
+
+                      {!callIntel.recording_url && callIntel.recording_s3_uri && (
+                        <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+                          <p className="font-semibold uppercase tracking-widest text-amber-300">Recording Located In S3</p>
+                          <p className="mt-1 break-all text-amber-100/90">{callIntel.recording_s3_uri}</p>
+                        </div>
+                      )}
+
+                      {callIntel.analysis_s3_uri && (
+                        <div className="mt-2 rounded-lg border border-zinc-800/80 bg-zinc-950 p-3 text-xs text-zinc-400">
+                          <p className="font-semibold uppercase tracking-widest text-zinc-500">Analysis Artifact</p>
+                          <p className="mt-1 break-all">{callIntel.analysis_s3_uri}</p>
                         </div>
                       )}
                     </div>
@@ -2387,6 +2526,11 @@ export default function LeadExecutionPage() {
                               </div>
                             </div>
                           ))
+                        ) : callIntel.transcript_text ? (
+                          <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/50 p-4">
+                            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-zinc-500">Transcript</p>
+                            <pre className="whitespace-pre-wrap font-sans text-sm leading-snug text-zinc-300">{callIntel.transcript_text}</pre>
+                          </div>
                         ) : (
                           <p className="py-4 text-center text-xs italic text-zinc-500">Transcript data unavailable or processing.</p>
                         )}
@@ -2400,6 +2544,7 @@ export default function LeadExecutionPage() {
                 {filteredNotes.map((note) => {
                 const isCall = note.activity_type === "CALL" || note.aws_contact_id;
                 const createdAt = getNoteCreatedAt(note);
+                const safeContent = sanitizeContactLensNoteContent(note.content);
 
                 if (isCall) {
                   return (
@@ -2418,7 +2563,7 @@ export default function LeadExecutionPage() {
 
                       <p className="mb-4 text-sm leading-relaxed text-zinc-300">
                         <span className="mr-2 font-semibold text-zinc-500">Disposition:</span>
-                        {note.content}
+                        {safeContent}
                       </p>
 
                       {note.aws_contact_id ? (
@@ -2464,7 +2609,7 @@ export default function LeadExecutionPage() {
                     <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                       {note.activity_type || "NOTE"} • {new Date(createdAt).toLocaleString()}
                     </div>
-                    <p className="text-sm text-zinc-300">{note.content}</p>
+                    <p className="text-sm text-zinc-300">{safeContent}</p>
                   </div>
                 );
               })}

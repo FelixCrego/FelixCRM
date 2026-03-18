@@ -156,6 +156,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [currentPage, setCurrentPage] = useState(1);
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
+  const [remoteSearchLeads, setRemoteSearchLeads] = useState<Lead[]>([]);
   const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
   const [calculatorCallToDemoRate, setCalculatorCallToDemoRate] = useState(20);
   const [calculatorShowRate, setCalculatorShowRate] = useState(70);
@@ -180,12 +181,47 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     }
   }, []);
 
+  useEffect(() => {
+    const query = search.trim();
+    if (query.length < 2) {
+      setRemoteSearchLeads([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/search/global?q=${encodeURIComponent(query)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as { leads?: Lead[] } | null;
+        if (!response.ok || !Array.isArray(payload?.leads)) {
+          setRemoteSearchLeads([]);
+          return;
+        }
+
+        const normalized = payload.leads.map(normalizeLead).filter((lead): lead is Lead => Boolean(lead));
+        setRemoteSearchLeads(normalized);
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setRemoteSearchLeads([]);
+        }
+      }
+    }, 150);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [search]);
+
   const displayLeads = useMemo(() => {
     const mergedLeads = createdLeads.length > 0 ? [...createdLeads, ...normalizedServerLeads] : normalizedServerLeads.length > 0 ? normalizedServerLeads : storageLeads;
     const shouldIncludeClosed = viewMode === "closed";
-
-    return mergedLeads.filter((lead) => (shouldIncludeClosed ? lead.status === "CLOSED" : lead.status !== "CLOSED"));
-  }, [createdLeads, normalizedServerLeads, storageLeads, viewMode]);
+    const baseLeads = search.trim().length >= 2 && remoteSearchLeads.length > 0 ? remoteSearchLeads : mergedLeads;
+    return baseLeads.filter((lead) => (shouldIncludeClosed ? lead.status === "CLOSED" : lead.status !== "CLOSED"));
+  }, [createdLeads, normalizedServerLeads, remoteSearchLeads, search, storageLeads, viewMode]);
 
   async function handleAddLead() {
     setAddLeadError(null);
@@ -537,7 +573,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search business, phone, or email"
+              placeholder="Search all leads by business, phone, or email"
               className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
             />
           </label>

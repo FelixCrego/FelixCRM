@@ -1,20 +1,20 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
-import { getLeadById, getProfile, saveScript } from "@/lib/store";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { canUserManageAllLeads, getLeadById, getProfile, saveScript } from "@/lib/store";
+import { getAuthenticatedUser } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
-    const ownerId = await getAuthenticatedUserId();
-    if (!ownerId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await request.json();
     const leadId = String(body.leadId ?? "");
     const type = (body.type ?? "EMAIL") as "EMAIL" | "SMS";
-    const lead = await getLeadById(leadId, ownerId);
+    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserManageAllLeads(user.id, user.email) });
     if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
-    const profile = await getProfile(ownerId);
+    const profile = await getProfile(user.id);
 
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ error: "OPENAI_API_KEY is required to generate scripts." }, { status: 500 });
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     if (!content) {
       return NextResponse.json({ error: "Script generation returned no content." }, { status: 502 });
     }
-    const script = await saveScript(ownerId, { content, type, leadId });
+    const script = await saveScript(user.id, { content, type, leadId });
     return NextResponse.json({ script });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });

@@ -25,7 +25,7 @@ import {
   CircleDollarSign,
   Menu,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
 import type { UserRole } from "@/lib/types";
 
@@ -47,13 +47,36 @@ type MagicSuggestion = {
   run: () => void | Promise<void>;
 };
 
+type MagicLeadResult = {
+  id: string;
+  businessName: string;
+  phone?: string | null;
+  email?: string | null;
+  city?: string | null;
+};
+
+type MagicNoteResult = {
+  id: string;
+  leadId: string;
+  leadName: string;
+  snippet: string;
+};
+
+type MagicDemoResult = {
+  id: string;
+  leadId: string;
+  leadName: string;
+  scheduledFor: string;
+};
+
 const roleOptions: UserRole[] = ["REP", "TEAM_LEAD", "MANAGER", "SUPER_ADMIN"];
 
 const navByRole: Record<UserRole, NavItem[]> = {
   REP: [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
-    { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
@@ -62,8 +85,9 @@ const navByRole: Record<UserRole, NavItem[]> = {
   ],
   TEAM_LEAD: [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
-    { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
@@ -73,8 +97,9 @@ const navByRole: Record<UserRole, NavItem[]> = {
   ],
   MANAGER: [
     { href: "/dashboard", label: "Manager Dashboard", icon: Gauge },
+    { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
-    { href: "/leads", label: "My Leads", icon: Users },
+    { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
@@ -87,6 +112,12 @@ const navByRole: Record<UserRole, NavItem[]> = {
   ],
   SUPER_ADMIN: [
     { href: "/dashboard", label: "Global Command Center", icon: Shield },
+    { href: "/search", label: "Global Search", icon: Search },
+    { href: "/leads", label: "Lead Directory", icon: Users },
+    { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
+    { href: "/pipeline", label: "Pipeline", icon: Flame },
+    { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/billing", label: "Billing/Stripe", icon: Banknote },
     { href: "/user-management", label: "User Management", icon: Users },
     { href: "/system-logs", label: "System Logs", icon: ScrollText },
@@ -105,6 +136,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [magicBarValue, setMagicBarValue] = useState("");
   const [magicBarStatus, setMagicBarStatus] = useState("");
+  const [magicLeadResults, setMagicLeadResults] = useState<MagicLeadResult[]>([]);
+  const [magicNoteResults, setMagicNoteResults] = useState<MagicNoteResult[]>([]);
+  const [magicDemoResults, setMagicDemoResults] = useState<MagicDemoResult[]>([]);
   const [isGeneratingPlaybook, setIsGeneratingPlaybook] = useState(false);
   const [playbookCards, setPlaybookCards] = useState<PlaybookCard[]>([
     { title: "Cold Openers", body: "Generate role-aware scripts and send sequences aligned to your current pipeline stage." },
@@ -137,6 +171,52 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     const dedupedByHref = new Map(allNavItems.map((item) => [item.href, item]));
     return Array.from(dedupedByHref.values());
   }, []);
+
+  useEffect(() => {
+    const normalized = magicBarValue.trim().toLowerCase();
+    if (normalized.length < 2) {
+      setMagicLeadResults([]);
+      setMagicNoteResults([]);
+      setMagicDemoResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/search/global?q=${encodeURIComponent(normalized)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          leads?: MagicLeadResult[];
+          notes?: MagicNoteResult[];
+          demos?: MagicDemoResult[];
+        } | null;
+        if (!response.ok) {
+          setMagicLeadResults([]);
+          setMagicNoteResults([]);
+          setMagicDemoResults([]);
+          return;
+        }
+
+        setMagicLeadResults(Array.isArray(payload?.leads) ? payload.leads : []);
+        setMagicNoteResults(Array.isArray(payload?.notes) ? payload.notes : []);
+        setMagicDemoResults(Array.isArray(payload?.demos) ? payload.demos : []);
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setMagicLeadResults([]);
+          setMagicNoteResults([]);
+          setMagicDemoResults([]);
+        }
+      }
+    }, 150);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [magicBarValue]);
 
   const suggestions = useMemo<MagicSuggestion[]>(() => {
     const normalized = magicBarValue.trim().toLowerCase();
@@ -189,9 +269,37 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       }
     });
 
+    magicLeadResults.forEach((lead) => {
+      const hintParts = [lead.city, lead.phone].filter(Boolean);
+      items.push({
+        id: `lead-${lead.id}`,
+        label: lead.businessName,
+        hint: hintParts.join(" • ") || "Lead",
+        run: () => router.push(`/leads/${lead.id}`),
+      });
+    });
+
+    magicNoteResults.forEach((note) => {
+      items.push({
+        id: `note-${note.id}`,
+        label: `Note in ${note.leadName}`,
+        hint: note.snippet,
+        run: () => router.push(`/leads/${note.leadId}`),
+      });
+    });
+
+    magicDemoResults.forEach((demo) => {
+      items.push({
+        id: `demo-${demo.id}`,
+        label: `Demo: ${demo.leadName}`,
+        hint: demo.scheduledFor,
+        run: () => router.push(`/leads/${demo.leadId}`),
+      });
+    });
+
     const deduped = new Map(items.map((item) => [item.id, item]));
     return Array.from(deduped.values()).slice(0, 6);
-  }, [magicBarValue, navTargets, router]);
+  }, [magicBarValue, magicDemoResults, magicLeadResults, magicNoteResults, navTargets, router]);
 
   const runSuggestion = async (suggestion: MagicSuggestion) => {
     await suggestion.run();
@@ -303,7 +411,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                         ))}
                       </div>
                     ) : (
-                      <p className="px-3 py-2 text-sm text-zinc-400">No results. Try &quot;leads&quot;, &quot;playbook&quot;, &quot;logout&quot;, or a path like &quot;/dashboard&quot;.</p>
+                       <p className="px-3 py-2 text-sm text-zinc-400">No results. Try a business name, phone, email, &quot;playbook&quot;, or a path like &quot;/dashboard&quot;.</p>
                     )}
                   </div>
                 ) : null}

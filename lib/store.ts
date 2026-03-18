@@ -1,5 +1,6 @@
 import { dedupeKey } from "@/lib/utils";
 import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
+import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -9,6 +10,12 @@ const USERS_TABLE_CANDIDATES = ["User", "user", "users"];
 const LEADS_TABLE_CANDIDATES = ["leads", "lead", "Lead"];
 const SCRIPTS_TABLE_CANDIDATES = ["Script", "script"];
 const LEAD_NOTES_TABLE_CANDIDATES = ["lead_notes", "leadNotes", "LeadNotes"];
+const GLOBAL_LEAD_VIEWER_EMAILS = new Set(
+  (process.env.FELIXCRM_GLOBAL_LEAD_VIEWER_EMAILS ?? "felix@felixcrego.com")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const resolvedTableCache = new Map<string, string>();
 
@@ -42,6 +49,20 @@ function parseJsonSafely<T>(value: string): T | null {
   } catch {
     return null;
   }
+}
+
+function normalizeEmailAddress(value: string | null | undefined) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+export async function getEffectiveUserRole(userId: string, email?: string | null): Promise<UserRole> {
+  const normalizedEmail = normalizeEmailAddress(email);
+  if (normalizedEmail && GLOBAL_LEAD_VIEWER_EMAILS.has(normalizedEmail)) {
+    return "SUPER_ADMIN";
+  }
+
+  const profile = await getProfile(userId).catch(() => null);
+  return profile?.role ?? "REP";
 }
 
 function buildUrl(table: string, query?: Record<string, string>) {
@@ -405,11 +426,21 @@ export async function saveProfile(userId: string, profile: { niche: string; tone
   }
 }
 
-export async function listLeads(ownerId: string) {
+export async function canUserViewAllLeads(userId: string, email?: string | null) {
+  const role = await getEffectiveUserRole(userId, email);
+  return role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
+export async function canUserManageAllLeads(userId: string, email?: string | null) {
+  const role = await getEffectiveUserRole(userId, email);
+  return role === "SUPER_ADMIN";
+}
+
+export async function listLeads(ownerId: string, options?: { includeAll?: boolean }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
   const leads = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
     select: "*",
-    [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: `eq.${ownerId}`,
+    ...(options?.includeAll ? {} : { [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: `eq.${ownerId}` }),
     order: isSnakeLeadsTable(table) ? "updated_at.desc" : "updatedAt.desc",
   }));
   return leads.map(leadToMemory);
@@ -801,10 +832,10 @@ export type LeadContactRecord = {
   emails: string[];
 };
 
-export async function closeLeadDeal(params: { leadId: string; ownerId: string; closedDealValue: number; stripeCheckoutLink?: string | null }) {
+export async function closeLeadDeal(params: { leadId: string; ownerId: string; closedDealValue: number; stripeCheckoutLink?: string | null; bypassOwnership?: boolean }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to close deals.");
 
-  const { leadId, ownerId, closedDealValue, stripeCheckoutLink } = params;
+  const { leadId, ownerId, closedDealValue, stripeCheckoutLink, bypassOwnership = false } = params;
   const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
     select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
     id: `eq.${leadId}`,
@@ -815,7 +846,7 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
   if (!lead) throw new Error("Lead not found.");
 
   const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
-  if (leadOwnerId && leadOwnerId !== ownerId) throw new Error("Forbidden");
+  if (!bypassOwnership && leadOwnerId && leadOwnerId !== ownerId) throw new Error("Forbidden");
 
   const sourcePayload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
   const closedAt = new Date().toISOString();
@@ -826,7 +857,7 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
     const filters = {
       id: `eq.${leadId}`,
       select: "id",
-      ...(leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
+      ...(!bypassOwnership && leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
     } as Record<string, string>;
 
     const fullPayload = isSnakeLeadsTable(table)
@@ -889,7 +920,7 @@ function normalizeLeadContactsInput(contacts: LeadContactRecord[]): LeadContactR
     }));
 }
 
-export async function setLeadContacts(leadId: string, ownerId: string, contacts: LeadContactRecord[]) {
+export async function setLeadContacts(leadId: string, ownerId: string, contacts: LeadContactRecord[], options?: { bypassOwnership?: boolean }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save lead contacts.");
 
   const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
@@ -902,7 +933,7 @@ export async function setLeadContacts(leadId: string, ownerId: string, contacts:
   if (!lead) throw new Error("Lead not found.");
 
   const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
-  if (leadOwnerId && leadOwnerId !== ownerId) {
+  if (!options?.bypassOwnership && leadOwnerId && leadOwnerId !== ownerId) {
     throw new Error("Forbidden");
   }
 
@@ -1063,8 +1094,8 @@ export async function requestLeadOwnershipTransfer(leadId: string, requesterId: 
   return { requested: true as const, reason: null };
 }
 
-export async function getLeadById(leadId: string, ownerId: string) {
-  const leads = await listLeads(ownerId);
+export async function getLeadById(leadId: string, ownerId: string, options?: { includeAll?: boolean }) {
+  const leads = await listLeads(ownerId, options);
   return leads.find((lead) => lead.id === leadId);
 }
 
@@ -1072,7 +1103,7 @@ function normalizeLeadNote(row: any): LeadNote {
   return {
     id: String(row.id ?? crypto.randomUUID()),
     leadId: String(row.lead_id ?? row.leadId ?? ""),
-    content: String(row.content ?? row.note ?? ""),
+    content: sanitizeContactLensNoteContent(String(row.content ?? row.note ?? "")),
     channel: String(row.channel ?? "notes"),
     contactId: row.contact_id ?? row.contactId ?? null,
     createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
@@ -1124,10 +1155,11 @@ async function appendLeadNoteToPayload(leadId: string, note: Pick<LeadNote, "lea
 
   const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
   const existingNotes = Array.isArray(payload.notes) ? payload.notes : [];
+  const cleanContent = sanitizeContactLensNoteContent(note.content);
   const created: LeadNote = {
     id: note.id ?? crypto.randomUUID(),
     leadId,
-    content: note.content,
+    content: cleanContent,
     channel: note.channel,
     contactId: note.contactId ?? null,
     createdAt: note.createdAt ?? new Date().toISOString(),
@@ -1143,6 +1175,110 @@ async function appendLeadNoteToPayload(leadId: string, note: Pick<LeadNote, "lea
   }, { id: `eq.${leadId}` }));
 
   return created;
+}
+
+async function sanitizePayloadLeadNotes(leadId: string): Promise<void> {
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) return;
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+  const existingNotes = Array.isArray(payload.notes) ? payload.notes : [];
+  if (!existingNotes.length) return;
+
+  let changed = false;
+  const sanitizedNotes = existingNotes.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const note = item as Record<string, unknown>;
+    const currentContent = typeof note.content === "string" ? note.content : typeof note.note === "string" ? note.note : "";
+    const sanitizedContent = sanitizeContactLensNoteContent(currentContent);
+    if (sanitizedContent !== currentContent) {
+      changed = true;
+      return {
+        ...note,
+        ...(typeof note.content === "string" ? { content: sanitizedContent } : {}),
+        ...(typeof note.note === "string" ? { note: sanitizedContent } : {}),
+      };
+    }
+    return item;
+  });
+
+  if (!changed) return;
+
+  await withLeadTableFallback((table) => supabaseRequest(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(isSnakeLeadsTable(table)
+      ? { source_payload: { ...payload, notes: sanitizedNotes } }
+      : { sourcePayload: { ...payload, notes: sanitizedNotes } }),
+  }, { id: `eq.${leadId}` }));
+}
+
+async function sanitizeTableLeadNotes(leadId: string): Promise<void> {
+  const updateRows = async (table: string, query: Record<string, string>, idColumn: "id", contentColumn: "content" | "note", createdOrder: string) => {
+    const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (resolvedTable) =>
+      supabaseRequest<any[]>(resolvedTable, undefined, {
+        select: `${idColumn},${contentColumn}`,
+        ...query,
+        order: createdOrder,
+        limit: "50",
+      }),
+    );
+
+    for (const row of rows) {
+      const rowId = typeof row?.id === "string" ? row.id.trim() : "";
+      const currentContent = typeof row?.[contentColumn] === "string" ? row[contentColumn].trim() : "";
+      if (!rowId || !currentContent) continue;
+      const sanitizedContent = sanitizeContactLensNoteContent(currentContent);
+      if (sanitizedContent === currentContent) continue;
+
+      await supabaseRequest(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ [contentColumn]: sanitizedContent }),
+      }, { id: `eq.${rowId}` });
+    }
+  };
+
+  try {
+    const table = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, async (resolvedTable) => resolvedTable);
+    try {
+      await updateRows(table, { lead_id: `eq.${leadId}` }, "id", "content", "created_at.desc");
+      return;
+    } catch (error) {
+      if (!isSchemaCacheColumnError(error)) throw error;
+    }
+
+    try {
+      await updateRows(table, { leadId: `eq.${leadId}` }, "id", "content", "createdAt.desc");
+      return;
+    } catch (error) {
+      if (!isSchemaCacheColumnError(error)) throw error;
+    }
+
+    try {
+      await updateRows(table, { lead_id: `eq.${leadId}` }, "id", "note", "created_at.desc");
+    } catch (error) {
+      if (isMissingTableError(error) || isSchemaCacheColumnError(error)) return;
+      throw error;
+    }
+  } catch (error) {
+    if (isMissingTableError(error)) return;
+    throw error;
+  }
+}
+
+export async function sanitizeLeadNotesForLead(leadId: string): Promise<void> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to sanitize lead notes.");
+  await Promise.allSettled([
+    sanitizePayloadLeadNotes(leadId),
+    sanitizeTableLeadNotes(leadId),
+  ]);
 }
 
 export async function listLeadNotes(leadId: string): Promise<LeadNote[]> {
@@ -1183,10 +1319,97 @@ export async function listLeadNotes(leadId: string): Promise<LeadNote[]> {
   }
 }
 
+export async function findLeadIdByContactId(contactId: string): Promise<string | null> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load lead notes.");
+  const cleanContactId = contactId.trim();
+  if (!cleanContactId) return null;
+
+  try {
+    const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: "lead_id,leadId",
+        contact_id: `eq.${cleanContactId}`,
+        order: "created_at.desc",
+        limit: "1",
+      }),
+    );
+    const first = rows[0];
+    const leadId = typeof first?.lead_id === "string" ? first.lead_id.trim() : typeof first?.leadId === "string" ? first.leadId.trim() : "";
+    if (leadId) return leadId;
+  } catch (error) {
+    if (!isSchemaCacheColumnError(error)) {
+      if (isMissingTableError(error)) return null;
+      throw error;
+    }
+  }
+
+  try {
+    const rows = await withTableFallback("lead_notes", LEAD_NOTES_TABLE_CANDIDATES, (table) =>
+      supabaseRequest<any[]>(table, undefined, {
+        select: "lead_id,leadId",
+        contactId: `eq.${cleanContactId}`,
+        order: "createdAt.desc",
+        limit: "1",
+      }),
+    );
+    const first = rows[0];
+    const leadId = typeof first?.lead_id === "string" ? first.lead_id.trim() : typeof first?.leadId === "string" ? first.leadId.trim() : "";
+    return leadId || null;
+  } catch (error) {
+    if (isMissingTableError(error) || isSchemaCacheColumnError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function findLeadIdByPhone(phoneNumber: string): Promise<string | null> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
+  const digits = phoneNumber.replace(/\D/g, "");
+  const normalized = digits.length > 10 ? digits.slice(-10) : digits;
+  if (!normalized) return null;
+
+  const selectLeadId = (row: any) =>
+    typeof row?.id === "string" && row.id.trim()
+      ? row.id.trim()
+      : typeof row?.lead_id === "string" && row.lead_id.trim()
+        ? row.lead_id.trim()
+        : typeof row?.leadId === "string" && row.leadId.trim()
+          ? row.leadId.trim()
+          : "";
+
+  const queries: Record<string, string>[] = [
+    { select: "id", normalized_phone: `eq.${normalized}`, order: "created_at.desc", limit: "1" },
+    { select: "id", normalizedPhone: `eq.${normalized}`, order: "createdAt.desc", limit: "1" },
+    { select: "id,phone", phone: `like.*${normalized}`, order: "created_at.desc", limit: "5" },
+  ];
+
+  for (const query of queries) {
+    try {
+      const rows = await withTableFallback("leads", LEADS_TABLE_CANDIDATES, (table) =>
+        supabaseRequest<any[]>(table, undefined, query),
+      );
+      const exactMatch = rows.find((row) => {
+        const value = typeof row?.phone === "string" ? row.phone.replace(/\D/g, "") : "";
+        return value.endsWith(normalized);
+      });
+      const leadId = selectLeadId(exactMatch ?? rows[0]);
+      if (leadId) return leadId;
+    } catch (error) {
+      if (isMissingTableError(error) || isSchemaCacheColumnError(error)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return null;
+}
+
 export async function createLeadNote(leadId: string, content: string, channel: string, contactId: string | null = null): Promise<LeadNote> {
   if (!hasDb) throw new Error("Supabase environment variables are required to save lead notes.");
 
-  const cleanContent = content.trim();
+  const cleanContent = sanitizeContactLensNoteContent(content.trim());
   if (!cleanContent) throw new Error("Note content is required.");
   const createdAt = new Date().toISOString();
 

@@ -1,13 +1,15 @@
 import type { UserRole } from "@/lib/types";
 import { NextResponse } from "next/server";
-import { getProfile, saveProfile } from "@/lib/store";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { getEffectiveUserRole, getProfile, saveProfile } from "@/lib/store";
+import { getAuthenticatedUser, getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET() {
   try {
-    const userId = await getAuthenticatedUserId();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    return NextResponse.json(await getProfile(userId));
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const profile = await getProfile(user.id);
+    const effectiveRole = await getEffectiveUserRole(user.id, user.email);
+    return NextResponse.json({ ...profile, role: effectiveRole });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load profile." }, { status: 500 });
   }

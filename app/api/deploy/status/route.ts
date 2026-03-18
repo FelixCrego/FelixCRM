@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth";
-import { getLeadById, setLeadDeployment } from "@/lib/store";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { canUserManageAllLeads, getLeadById, setLeadDeployment } from "@/lib/store";
 
 function toHttpsUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -64,14 +64,14 @@ function resolveDeploymentState(payload: Record<string, unknown>): string {
 
 export async function GET(request: Request) {
   try {
-    const ownerId = await getAuthenticatedUserId();
-    if (!ownerId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
     const leadId = searchParams.get("leadId")?.trim() || "";
     if (!leadId) return NextResponse.json({ error: "leadId required" }, { status: 400 });
 
-    const lead = await getLeadById(leadId, ownerId);
+    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserManageAllLeads(user.id, user.email) });
     if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
     if (lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED") {
