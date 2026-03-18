@@ -3,6 +3,7 @@
 import {
   CalendarClock,
   Check,
+  RefreshCw,
   Phone,
   Rocket,
   Target,
@@ -571,32 +572,86 @@ export default function DashboardPage() {
   const { activeRole } = useRole();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let isActive = true;
 
-    async function loadMetrics() {
+    async function loadMetrics(mode: "initial" | "refresh" = "initial") {
       try {
-        setLoading(true);
+        if (mode === "initial") {
+          setLoading(true);
+        } else {
+          setRefreshing(true);
+        }
         const response = await fetch("/api/dashboard/metrics", { cache: "no-store" });
         if (!response.ok) return;
         const payload = (await response.json().catch(() => null)) as DashboardMetrics | null;
         if (!isActive || !payload) return;
         setMetrics(payload);
       } finally {
-        if (isActive) setLoading(false);
+        if (isActive) {
+          if (mode === "initial") {
+            setLoading(false);
+          } else {
+            setRefreshing(false);
+          }
+        }
       }
     }
 
-    void loadMetrics();
+    void loadMetrics("initial");
+
+    const interval = window.setInterval(() => {
+      void loadMetrics("refresh");
+    }, 15000);
+
+    const handleFocus = () => {
+      void loadMetrics("refresh");
+    };
+
+    window.addEventListener("focus", handleFocus);
+
     return () => {
       isActive = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 
+  const generatedLabel = metrics?.generatedAt
+    ? new Date(metrics.generatedAt).toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+    : null;
+
   if (activeRole === "TEAM_LEAD" || activeRole === "MANAGER" || activeRole === "SUPER_ADMIN") {
-    return <ManagerDashboard metrics={metrics} loading={loading} />;
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
+          <span>{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
+          <span className="inline-flex items-center gap-2">
+            {refreshing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+            Auto-refresh every 15s
+          </span>
+        </div>
+        <ManagerDashboard metrics={metrics} loading={loading} />
+      </div>
+    );
   }
 
-  return <RepDashboard metrics={metrics} loading={loading} />;
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
+        <span>{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
+        <span className="inline-flex items-center gap-2">
+          {refreshing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+          Auto-refresh every 15s
+        </span>
+      </div>
+      <RepDashboard metrics={metrics} loading={loading} />
+    </div>
+  );
 }
