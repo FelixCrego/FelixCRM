@@ -275,11 +275,19 @@ function slugify(input: string, fallback: string): string {
 function buildRepoNameCandidates(businessName: string, leadId: string): string[] {
   const base = slugify(businessName, `felix-${leadId.slice(0, 8)}`);
   const suffix = leadId.slice(0, 8).toLowerCase();
+  const compactLeadId = leadId.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const extendedSuffix = compactLeadId.slice(-12);
+  const nonce = Date.now().toString(36).toLowerCase();
   return Array.from(new Set([
     base,
     `${base}-${suffix}`.slice(0, 63),
     `felix-${base}-${suffix}`.slice(0, 63),
     `felix-${suffix}`,
+    `${base}-${extendedSuffix}`.slice(0, 63),
+    `${base}-${suffix}-${nonce}`.slice(0, 63),
+    `felix-${base}-${extendedSuffix}`.slice(0, 63),
+    `felix-${suffix}-${nonce}`.slice(0, 63),
+    `felix-${extendedSuffix}-${nonce}`.slice(0, 63),
   ]));
 }
 
