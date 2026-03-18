@@ -364,9 +364,11 @@ function RepDashboard({ metrics, loading }: { metrics: DashboardMetrics | null; 
 function ManagerDashboard({
   metrics,
   loading,
+  showRepWorkspace = true,
 }: {
   metrics: DashboardMetrics | null;
   loading: boolean;
+  showRepWorkspace?: boolean;
 }) {
   const [lockedPlan, setLockedPlan] = useState<ManagerLockedPlan | null>(null);
 
@@ -557,19 +559,21 @@ function ManagerDashboard({
         )}
       </section>
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Workspace</h3>
-        <p className="mb-4 text-sm text-zinc-400">
-          Managers still see the same real rep board below, based on their own assigned leads.
-        </p>
-        <RepDashboard metrics={metrics} loading={loading} />
-      </section>
+      {showRepWorkspace ? (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <h3 className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Workspace</h3>
+          <p className="mb-4 text-sm text-zinc-400">
+            Managers still see the same real rep board below, based on their own assigned leads.
+          </p>
+          <RepDashboard metrics={metrics} loading={loading} />
+        </section>
+      ) : null}
     </div>
   );
 }
 
 export default function DashboardPage() {
-  const { activeRole } = useRole();
+  const { activeRole, setActiveRole } = useRole();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -627,7 +631,20 @@ export default function DashboardPage() {
       })
     : null;
 
-  if (activeRole === "TEAM_LEAD" || activeRole === "MANAGER" || activeRole === "SUPER_ADMIN") {
+  useEffect(() => {
+    const serverRole = metrics?.viewerRole;
+    if (!serverRole) return;
+    if (serverRole === activeRole) return;
+    if (serverRole === "TEAM_LEAD" || serverRole === "MANAGER" || serverRole === "SUPER_ADMIN") {
+      setActiveRole(serverRole);
+    }
+  }, [activeRole, metrics?.viewerRole, setActiveRole]);
+
+  const effectiveRole = metrics?.viewerRole ?? activeRole;
+  const shouldShowTeamBoard = effectiveRole === "TEAM_LEAD" || effectiveRole === "MANAGER" || effectiveRole === "SUPER_ADMIN";
+  const shouldShowBothBoards = effectiveRole === "SUPER_ADMIN";
+
+  if (shouldShowTeamBoard) {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
@@ -637,7 +654,19 @@ export default function DashboardPage() {
             Auto-refresh every 15s
           </span>
         </div>
-        <ManagerDashboard metrics={metrics} loading={loading} />
+        <ManagerDashboard metrics={metrics} loading={loading} showRepWorkspace={!shouldShowBothBoards} />
+        {shouldShowBothBoards ? (
+          <section className="space-y-3">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+              <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Personal View</p>
+              <h2 className="mt-2 text-2xl font-semibold text-white">Your individual production board</h2>
+              <p className="mt-1 text-sm text-zinc-300">
+                This section shows only leads and activity directly owned by your user, while the board above stays team-wide.
+              </p>
+            </div>
+            <RepDashboard metrics={metrics} loading={loading} />
+          </section>
+        ) : null}
       </div>
     );
   }
