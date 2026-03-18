@@ -22,6 +22,7 @@ export type TemplateConfig = {
     logoUrl: string;
     heroImageUrl: string;
     featureImageUrl: string;
+    galleryImages: string[];
     primaryColor: string;
     secondaryColor: string;
   };
@@ -154,6 +155,7 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
       logoUrl: enrichmentBranding?.logoUrl?.trim() || "",
       heroImageUrl: "",
       featureImageUrl: "",
+      galleryImages: [],
       primaryColor: firstNonEmptyString([primaryEnrichmentColor, "#0f172a"]),
       secondaryColor: firstNonEmptyString([secondaryEnrichmentColor, primaryEnrichmentColor, "#2563eb"]),
     },
@@ -218,6 +220,9 @@ export function buildTemplateConfig(lead: Lead, overrides: unknown): TemplateCon
         asString(brandingOverrides.featureImageUrl) ||
         asString(brandingOverrides.heroImageUrl) ||
         defaultConfig.branding.featureImageUrl,
+      galleryImages: Array.isArray(brandingOverrides.galleryImages)
+        ? (brandingOverrides.galleryImages as unknown[]).map((entry) => asString(entry).trim()).slice(0, 12)
+        : defaultConfig.branding.galleryImages,
       primaryColor: asString(brandingOverrides.primaryColor) || defaultConfig.branding.primaryColor,
       secondaryColor: asString(brandingOverrides.secondaryColor) || defaultConfig.branding.secondaryColor,
     },

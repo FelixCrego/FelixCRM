@@ -170,7 +170,7 @@ function replaceArrayKeyValue(source: string, key: string, values: string[]): st
   return updated;
 }
 
-function applySiteConfigOverrides(source: string, config: TemplateConfig, googleDriveImages: string[]): string {
+function applySiteConfigOverrides(source: string, config: TemplateConfig, galleryImages: string[]): string {
   let updated = source;
   const businessName = config.business.name;
   const businessNameLower = businessName.toLowerCase();
@@ -254,13 +254,15 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig, google
     if (email) {
       updated = replaceQuotedKeyValue(updated, "email", email);
     }
-    if (googleDriveImages.length) {
-      if (updated.includes("googleDriveImages")) {
-        updated = replaceArrayKeyValue(updated, "googleDriveImages", googleDriveImages);
+    if (galleryImages.length) {
+      if (updated.includes("galleryImages")) {
+        updated = replaceArrayKeyValue(updated, "galleryImages", galleryImages);
+      } else if (updated.includes("googleDriveImages")) {
+        updated = replaceArrayKeyValue(updated, "googleDriveImages", galleryImages);
       } else {
         updated = updated.replace(
           /(\bsecondaryColor\s*:\s*["'][^"']*["']\s*\n?\s*)/m,
-          `$1,\n    googleDriveImages: [${googleDriveImages.map((value) => `"${escapeForQuotedValue(value)}"`).join(", ")}]\n`,
+          `$1,\n    galleryImages: [${galleryImages.map((value) => `"${escapeForQuotedValue(value)}"`).join(", ")}]\n`,
         );
       }
     }
@@ -284,7 +286,7 @@ async function patchGeneratedRepoSiteConfig(params: {
   repoFullName: string;
   branch: string;
   templateConfig: TemplateConfig;
-  googleDriveImages: string[];
+  galleryImages: string[];
 }) {
   const candidatePaths = [
     "src/config/site.ts",
@@ -348,7 +350,7 @@ async function patchGeneratedRepoSiteConfig(params: {
       return false;
     }
 
-    const updated = applySiteConfigOverrides(source, params.templateConfig, params.googleDriveImages);
+    const updated = applySiteConfigOverrides(source, params.templateConfig, params.galleryImages);
     if (updated === source) {
       return false;
     }
@@ -594,12 +596,7 @@ export async function POST(request: Request) {
     }
 
     const frontendEnv = body && typeof body.env === "object" && body.env !== null ? (body.env as Record<string, unknown>) : {};
-
-    const googleDriveFolderUrl =
-      typeof frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL === "string" && frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
-        ? frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
-        : templateConfig.links.googleDriveFolderUrl;
-    const googleDriveImages = await resolveGoogleDriveFolderImages(googleDriveFolderUrl);
+    const galleryImages = templateConfig.branding.galleryImages.filter((value) => typeof value === "string" && value.trim());
 
     let siteConfigPatchWarning: string | null = null;
     try {
@@ -608,7 +605,7 @@ export async function POST(request: Request) {
         repoFullName: clonedRepoFullName,
         branch: repoDefaultBranch,
         templateConfig,
-        googleDriveImages,
+        galleryImages,
       });
     } catch (error) {
       siteConfigPatchWarning = error instanceof Error ? error.message : "Unable to patch generated repo site config.";
@@ -640,9 +637,7 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_HERO_SUBHEADLINE: templateConfig.content.hero.subheadline,
       NEXT_PUBLIC_HERO_CTA_LABEL: templateConfig.content.hero.ctaLabel,
       NEXT_PUBLIC_GOOGLE_BUSINESS_PROFILE: templateConfig.links.googleBusinessProfile,
-      NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL:
-        googleDriveFolderUrl,
-      NEXT_PUBLIC_GOOGLE_DRIVE_IMAGES: JSON.stringify(googleDriveImages),
+      NEXT_PUBLIC_GOOGLE_DRIVE_IMAGES: JSON.stringify(galleryImages),
       NEXT_PUBLIC_SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
       NEXT_PUBLIC_PRIMARY_COLOR:
         typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" && frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()

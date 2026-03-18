@@ -34,9 +34,9 @@ type LeadRecord = {
       logoUrl?: string;
       heroImageUrl?: string;
       featureImageUrl?: string;
+      galleryImages?: string[];
       primaryColor?: string;
       secondaryColor?: string;
-      googleDriveFolderUrl?: string;
     };
     demoBooking?: {
       date?: string;
@@ -53,9 +53,9 @@ type LeadRecord = {
       logoUrl?: string;
       heroImageUrl?: string;
       featureImageUrl?: string;
+      galleryImages?: string[];
       primaryColor?: string;
       secondaryColor?: string;
-      googleDriveFolderUrl?: string;
     };
     demoBooking?: {
       date?: string;
@@ -77,6 +77,20 @@ type LeadRecord = {
 };
 
 const LEAD_RESEARCH_CACHE_KEY = "leadResearchSummary";
+const BRANDING_IMAGE_SLOTS = [
+  "Service Image 1",
+  "Service Image 2",
+  "Service Image 3",
+  "Service Image 4",
+  "Service Image 5",
+  "Service Image 6",
+  "Interior Image 1",
+  "Interior Image 2",
+  "Before Image 1",
+  "Before Image 2",
+  "Before Image 3",
+  "After Image 1",
+] as const;
 
 type LeadContactRecord = {
   id: string;
@@ -351,9 +365,9 @@ export default function LeadExecutionPage() {
   const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
   const [brandingHeroImageUrl, setBrandingHeroImageUrl] = useState("");
   const [brandingFeatureImageUrl, setBrandingFeatureImageUrl] = useState("");
+  const [brandingGalleryImages, setBrandingGalleryImages] = useState<string[]>(() => Array(BRANDING_IMAGE_SLOTS.length).fill(""));
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
   const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
-  const [brandingGoogleDriveFolderUrl, setBrandingGoogleDriveFolderUrl] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<"garage-door" | "new-template">("new-template");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
@@ -882,9 +896,11 @@ export default function LeadExecutionPage() {
     setBrandingLogoUrl(branding?.logoUrl || enrichmentStructured?.logoUrl || "");
     setBrandingHeroImageUrl(branding?.heroImageUrl || "");
     setBrandingFeatureImageUrl(branding?.featureImageUrl || branding?.heroImageUrl || "");
+    setBrandingGalleryImages(
+      Array.from({ length: BRANDING_IMAGE_SLOTS.length }, (_, index) => branding?.galleryImages?.[index] || ""),
+    );
     setBrandingPrimaryColor(branding?.primaryColor || enrichmentColors[0] || "#0f172a");
     setBrandingSecondaryColor(branding?.secondaryColor || enrichmentColors[1] || enrichmentColors[0] || "#2563eb");
-    setBrandingGoogleDriveFolderUrl(branding?.googleDriveFolderUrl || "");
   }, [lead?.enrichment, lead?.id, lead?.sourcePayload, lead?.source_payload]);
 
   const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
@@ -1079,11 +1095,9 @@ export default function LeadExecutionPage() {
         logoUrl: brandingLogoUrl.trim(),
         heroImageUrl: brandingHeroImageUrl.trim(),
         featureImageUrl: brandingFeatureImageUrl.trim(),
+        galleryImages: brandingGalleryImages.map((value) => value.trim()),
         primaryColor: brandingPrimaryColor,
         secondaryColor: brandingSecondaryColor,
-      },
-      links: {
-        googleDriveFolderUrl: brandingGoogleDriveFolderUrl.trim(),
       },
       research: {
         summary: researchInsight.trim(),
@@ -1106,7 +1120,6 @@ export default function LeadExecutionPage() {
             NEXT_PUBLIC_LOGO_URL: brandingLogoUrl.trim(),
             NEXT_PUBLIC_HERO_URL: brandingHeroImageUrl.trim(),
             NEXT_PUBLIC_FEATURE_IMAGE_URL: brandingFeatureImageUrl.trim(),
-            NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL: brandingGoogleDriveFolderUrl.trim(),
           },
         }),
       });
@@ -1140,9 +1153,9 @@ export default function LeadExecutionPage() {
                     logoUrl: brandingLogoUrl.trim(),
                     heroImageUrl: brandingHeroImageUrl.trim(),
                     featureImageUrl: brandingFeatureImageUrl.trim(),
+                    galleryImages: brandingGalleryImages.map((value) => value.trim()),
                     primaryColor: brandingPrimaryColor,
                     secondaryColor: brandingSecondaryColor,
-                    googleDriveFolderUrl: brandingGoogleDriveFolderUrl.trim(),
                   },
                 },
               }
@@ -1159,7 +1172,7 @@ export default function LeadExecutionPage() {
     }
   }
 
-  async function handleBrandingFileUpload(file: File | undefined, target: "logo" | "hero" | "feature") {
+  async function handleBrandingFileUpload(file: File | undefined, target: "logo" | "hero" | "feature" | `gallery-${number}`) {
     if (!file) return;
 
     setDeployError("");
@@ -1185,8 +1198,13 @@ export default function LeadExecutionPage() {
         setBrandingLogoUrl(payload.url);
       } else if (target === "hero") {
         setBrandingHeroImageUrl(payload.url);
-      } else {
+      } else if (target === "feature") {
         setBrandingFeatureImageUrl(payload.url);
+      } else {
+        const galleryIndex = Number(target.replace("gallery-", ""));
+        if (Number.isFinite(galleryIndex) && galleryIndex >= 0 && galleryIndex < BRANDING_IMAGE_SLOTS.length) {
+          setBrandingGalleryImages((previous) => previous.map((value, index) => (index === galleryIndex ? payload.url ?? "" : value)));
+        }
       }
     } catch (error) {
       setDeployError(error instanceof Error ? error.message : "Unable to process the uploaded image.");
@@ -2235,16 +2253,31 @@ export default function LeadExecutionPage() {
               </label>
 
               <label className="space-y-1">
-                <span className="block">Google Drive folder URL</span>
-                <input
-                  value={brandingGoogleDriveFolderUrl}
-                  onChange={(event) => setBrandingGoogleDriveFolderUrl(event.target.value)}
-                  placeholder="https://drive.google.com/drive/folders/..."
-                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
-                />
+                <span className="block">Template image slots</span>
                 <span className="block text-[11px] text-indigo-200/80">
-                  Saved into the deploy config and exposed to the build as <code>NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL</code>.
+                  These uploads map directly to the MobileDetailer template placeholders used in service cards and before/after sections.
                 </span>
+                <div className="mt-2 grid grid-cols-1 gap-2">
+                  {BRANDING_IMAGE_SLOTS.map((label, index) => (
+                    <div key={label} className="rounded-md border border-indigo-300/20 bg-black/10 p-2">
+                      <span className="mb-1 block text-[11px] font-medium text-indigo-100">{label}</span>
+                      <input
+                        value={brandingGalleryImages[index] || ""}
+                        onChange={(event) =>
+                          setBrandingGalleryImages((previous) => previous.map((value, itemIndex) => (itemIndex === index ? event.target.value : value)))
+                        }
+                        placeholder="https://..."
+                        className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                      />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => void handleBrandingFileUpload(event.target.files?.[0], `gallery-${index}`)}
+                        className="mt-1 w-full text-[11px] text-indigo-100 file:mr-2 file:rounded file:border-0 file:bg-white/20 file:px-2 file:py-1 file:text-[11px] file:text-white"
+                      />
+                    </div>
+                  ))}
+                </div>
               </label>
 
               <div className="grid grid-cols-2 gap-2">
