@@ -76,13 +76,29 @@ function buildGoogleDriveImageUrl(fileId: string): string {
   return `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000`;
 }
 
+function isLikelyGoogleDriveFileId(candidate: string): boolean {
+  const trimmed = candidate.trim();
+  if (!/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) return false;
+
+  const blockedTokens = [
+    "embedded_internal_content",
+    "embedded_trusted_external_content",
+    "hiddenselectionidentifier",
+    "hiddenmultiplechoiceidentifier",
+    "typecannotbeusedwithiframeintenterror",
+  ];
+  const lower = trimmed.toLowerCase();
+  if (blockedTokens.some((token) => lower.includes(token))) return false;
+
+  return /[0-9]/.test(trimmed) && /[a-z]/i.test(trimmed);
+}
+
 function extractGoogleDriveFileIdsFromHtml(html: string): string[] {
   const ids = new Set<string>();
   const patterns = [
-    /\/file\/d\/([a-zA-Z0-9_-]{10,})/g,
-    /[?&]id=([a-zA-Z0-9_-]{10,})/g,
-    /"docid":"([a-zA-Z0-9_-]{10,})"/g,
-    /"([a-zA-Z0-9_-]{25,})"/g,
+    /\/file\/d\/([a-zA-Z0-9_-]{20,})/g,
+    /[?&]id=([a-zA-Z0-9_-]{20,})/g,
+    /"docid":"([a-zA-Z0-9_-]{20,})"/g,
   ];
 
   for (const pattern of patterns) {
@@ -90,7 +106,7 @@ function extractGoogleDriveFileIdsFromHtml(html: string): string[] {
     while ((match = pattern.exec(html)) !== null) {
       const candidate = match[1];
       if (!candidate) continue;
-      if (candidate.toLowerCase().includes("google")) continue;
+      if (!isLikelyGoogleDriveFileId(candidate)) continue;
       ids.add(candidate);
     }
   }
