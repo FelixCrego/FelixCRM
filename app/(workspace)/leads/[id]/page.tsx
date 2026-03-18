@@ -182,6 +182,12 @@ type CallIntelRecord = {
   transcript_json?: CallIntelTranscriptLine[] | null;
 };
 
+type CallAnalysisState = {
+  label: string;
+  tone: string;
+  description: string;
+};
+
 const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
   "206": { timeZone: "America/Los_Angeles", location: "Seattle, WA" },
   "213": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
@@ -254,6 +260,64 @@ function toTwelveHourLabel(timeValue: string): string {
   const period = hours >= 12 ? "PM" : "AM";
   const normalizedHour = hours % 12 || 12;
   return `${String(normalizedHour).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${period}`;
+}
+
+function formatCallDuration(value: CallIntelRecord["duration_seconds"]): string {
+  if (typeof value === "string" && value.includes(":")) return value;
+  const totalSeconds =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : 0;
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return "00:00";
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getCallAnalysisState(record: CallIntelRecord | null): CallAnalysisState {
+  if (!record) {
+    return {
+      label: "No Call Selected",
+      tone: "border-zinc-700 bg-zinc-800/70 text-zinc-300",
+      description: "Choose a call to inspect its recording and AI analysis.",
+    };
+  }
+
+  const hasAnalysis = Boolean(record.ai_summary || record.analysis_s3_uri || record.transcript_text || record.transcript_json);
+  const hasRecording = Boolean(record.recording_s3_uri || record.recording_url);
+  const hasSentiment = Boolean(record.overall_sentiment);
+
+  if (hasAnalysis && hasSentiment) {
+    return {
+      label: "Analysis Complete",
+      tone: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      description: "Recording, transcript, summary, and sentiment are available.",
+    };
+  }
+
+  if (hasAnalysis) {
+    return {
+      label: "Partial Analysis",
+      tone: "border-sky-500/30 bg-sky-500/10 text-sky-300",
+      description: "Contact Lens returned some analysis, but not every field is populated.",
+    };
+  }
+
+  if (hasRecording) {
+    return {
+      label: "Analysis Pending",
+      tone: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+      description: "The recording is attached, but Contact Lens analysis has not landed yet.",
+    };
+  }
+
+  return {
+    label: "Call Linked",
+    tone: "border-zinc-700 bg-zinc-800/70 text-zinc-300",
+    description: "The contact is linked to the lead, but the recording has not been recovered yet.",
+  };
 }
 
 const FALLBACK_LEAD: LeadRecord = {
@@ -384,7 +448,7 @@ export default function LeadExecutionPage() {
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
 
-  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, endActiveCall, sendCallDigit } = useAmazonConnect();
+  const { callActive, callSeconds, ccpReady, connectionStatus, callStatus, startOutboundCall, endActiveCall, sendCallDigit } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
   const [showKeypad, setShowKeypad] = useState(false);
   const keypadDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
@@ -767,6 +831,7 @@ export default function LeadExecutionPage() {
 
   const selectedCallIntel = callIntelHistory.find((entry) => entry.id === selectedCallIntelId) ?? callIntelHistory[0] ?? null;
   const callIntel = selectedCallIntel;
+  const callIntelState = getCallAnalysisState(callIntel);
   const playbackRecordingUrl =
     leadId && callIntel?.contact_id && (callIntel.recording_s3_uri || callIntel.recording_url)
       ? `/api/call-recordings/stream?leadId=${encodeURIComponent(leadId)}&contactId=${encodeURIComponent(callIntel.contact_id)}`
@@ -1683,36 +1748,12 @@ export default function LeadExecutionPage() {
     setCcpStatus("READY");
     setCurrentContactId(null);
     linkedContactIdRef.current = null;
-    type ConnectWindow = Window & {
-      connect?: {
-        agent?: (callback: (agent: { connect?: (endpoint: { phoneNumber: string }, options?: { success?: (contact?: AwsActiveContact) => void; failure?: (error: unknown) => void }) => void }) => void) => void;
-        Endpoint?: { byPhoneNumber?: (phoneNumber: string) => { phoneNumber: string } };
-      };
-    };
-
-    const windowWithConnect = window as ConnectWindow;
-    if (!windowWithConnect.connect?.agent || !windowWithConnect.connect?.Endpoint?.byPhoneNumber) return;
-
     const sourceNumber = dialNumber || leadPhone;
     const digitsOnly = sourceNumber.replace(/\D/g, "");
     if (!digitsOnly) return;
 
     const formattedNumber = digitsOnly.startsWith("1") ? `+${digitsOnly}` : `+1${digitsOnly}`;
-
-    windowWithConnect.connect.agent(function (agent) {
-      const endpoint = windowWithConnect.connect?.Endpoint?.byPhoneNumber?.(formattedNumber);
-      if (!endpoint || !agent.connect) return;
-
-        agent.connect(endpoint, {
-          success: function (contact) {
-            captureContactId(contact ?? null, 12);
-            console.log("Call initiated successfully to", formattedNumber);
-          },
-        failure: function (err: unknown) {
-          console.error("Call failed to initiate:", err);
-        },
-      });
-    });
+    startOutboundCall(formattedNumber);
   };
 
   const handleEndCall = () => {
@@ -1749,11 +1790,11 @@ export default function LeadExecutionPage() {
         ? "Initializing CCP…"
         : connectionStatus === "error"
           ? "CCP initialization failed"
-          : callStatus === "connecting"
-            ? "Connecting call…"
-            : callStatus === "connected"
-              ? `Live ${formattedTimer}`
-              : "Softphone ready";
+            : callStatus === "connecting"
+              ? "Dialing…"
+              : callStatus === "connected"
+                ? `Live ${formattedTimer}`
+                : "Softphone ready";
 
   const softphoneStatusTone =
     connectionStatus === "error"
@@ -1763,6 +1804,9 @@ export default function LeadExecutionPage() {
         : "text-amber-300";
 
   const canStartCall = ccpReady && connectionStatus === "ready" && callStatus !== "connecting";
+  const isDialing = callStatus === "connecting";
+  const isLiveCall = callStatus === "connected";
+  const isCallInProgress = isDialing || isLiveCall;
 
   const leadTimeMeta = useMemo(() => inferLeadTimeZone(lead), [lead]);
   const leadTimeZone = leadTimeMeta.timeZone;
@@ -2384,19 +2428,26 @@ export default function LeadExecutionPage() {
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
               </div>
-              {callActive ? (
+              {isCallInProgress ? (
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowKeypad((previous) => !previous)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500"
-                  >
-                    {showKeypad ? "Hide keypad" : "Show keypad"}
-                  </button>
+                  {isLiveCall ? (
+                    <button
+                      onClick={() => setShowKeypad((previous) => !previous)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500"
+                    >
+                      {showKeypad ? "Hide keypad" : "Show keypad"}
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm font-semibold text-amber-200">
+                      <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+                      Dialing
+                    </span>
+                  )}
                   <button
                     onClick={handleEndCall}
                     className="inline-flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-rose-950 hover:bg-rose-400"
                   >
-                    <Phone className="h-4 w-4" /> End Call
+                    <Phone className="h-4 w-4" /> {isDialing ? "Cancel" : "End Call"}
                   </button>
                 </div>
               ) : (
@@ -2405,11 +2456,11 @@ export default function LeadExecutionPage() {
                   disabled={!canStartCall}
                   className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300"
                 >
-                  <Phone className="h-4 w-4" /> {callStatus === "connecting" ? "Connecting…" : "Call"}
+                  <Phone className="h-4 w-4" /> Call
                 </button>
               )}
             </div>
-            {callActive && showKeypad ? (
+            {isLiveCall && showKeypad ? (
               <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">DTMF Keypad</p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -2429,11 +2480,11 @@ export default function LeadExecutionPage() {
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Queue</p>
-                <p className="mt-1 font-semibold text-zinc-100">{callStatus === "connecting" ? "Dialing…" : "—"}</p>
+                <p className="mt-1 font-semibold text-zinc-100">{isDialing ? "Dialing…" : isLiveCall ? "Connected" : "—"}</p>
               </div>
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Call Timer</p>
-                <p className="mt-1 font-semibold text-zinc-100">{callActive ? formattedTimer : "00:00"}</p>
+                <p className="mt-1 font-semibold text-zinc-100">{isLiveCall ? formattedTimer : "00:00"}</p>
               </div>
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
                 <p className="text-zinc-500">Rep</p>
@@ -2491,6 +2542,7 @@ export default function LeadExecutionPage() {
                         {callIntelHistory.map((entry, index) => {
                           const isActive = entry.id === callIntel?.id;
                           const sentiment = entry.overall_sentiment?.toUpperCase();
+                          const state = getCallAnalysisState(entry);
                           const sentimentClass =
                             sentiment === "POSITIVE"
                               ? "text-emerald-400"
@@ -2523,8 +2575,8 @@ export default function LeadExecutionPage() {
                                 ) : null}
                               </div>
                               <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
-                                <span>Duration: {entry.duration_seconds || "00:00"}s</span>
-                                <span>{entry.transcript_text || entry.transcript_json ? "Transcript" : entry.recording_url ? "Recording" : "Pending"}</span>
+                                <span>Duration: {formatCallDuration(entry.duration_seconds)}</span>
+                                <span>{state.label}</span>
                               </div>
                             </button>
                           );
@@ -2540,20 +2592,30 @@ export default function LeadExecutionPage() {
                             Outbound Connect
                           </h3>
                           <p className="text-xs text-zinc-500">
-                            {callIntel.created_at ? new Date(callIntel.created_at).toLocaleString() : "Unknown time"} • Duration: {callIntel.duration_seconds || "00:00"}s
+                            {callIntel.created_at ? new Date(callIntel.created_at).toLocaleString() : "Unknown time"} • Duration: {formatCallDuration(callIntel.duration_seconds)}
                           </p>
                         </div>
-                        {callIntel.overall_sentiment && (
-                          <div className={`rounded border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
-                            callIntel.overall_sentiment === "POSITIVE"
-                              ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
-                              : callIntel.overall_sentiment === "NEGATIVE"
-                                ? "border border-red-500/20 bg-red-500/10 text-red-400"
-                                : "border border-zinc-700 bg-zinc-800 text-zinc-400"
-                          }`}>
-                            Sentiment: {callIntel.overall_sentiment}
+                        <div className="flex flex-col items-end gap-2">
+                          <div className={`rounded border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${callIntelState.tone}`}>
+                            {callIntelState.label}
                           </div>
-                        )}
+                          {callIntel.overall_sentiment ? (
+                            <div className={`rounded border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
+                              callIntel.overall_sentiment === "POSITIVE"
+                                ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                                : callIntel.overall_sentiment === "NEGATIVE"
+                                  ? "border border-red-500/20 bg-red-500/10 text-red-400"
+                                  : "border border-zinc-700 bg-zinc-800 text-zinc-400"
+                            }`}>
+                              Sentiment: {callIntel.overall_sentiment}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="mb-3 rounded-lg border border-zinc-800/80 bg-zinc-950 p-3 text-xs text-zinc-300">
+                        <p className="font-semibold uppercase tracking-widest text-zinc-500">Call Status</p>
+                        <p className="mt-1">{callIntelState.description}</p>
                       </div>
 
                       {playbackRecordingUrl && (
@@ -2579,32 +2641,38 @@ export default function LeadExecutionPage() {
                       )}
                     </div>
 
-                    {callIntel.ai_summary && (
-                      <div className="relative overflow-hidden rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
-                        <div className="pointer-events-none absolute right-0 top-0 h-32 w-32 rounded-full bg-indigo-500/10 blur-[40px]"></div>
-                        <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-indigo-400">
-                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                          Contact Lens AI Summary
-                        </h4>
-                        <p className="relative z-10 text-sm leading-relaxed text-zinc-300">{callIntel.ai_summary}</p>
-                      </div>
-                    )}
+                    <div className="relative overflow-hidden rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+                      <div className="pointer-events-none absolute right-0 top-0 h-32 w-32 rounded-full bg-indigo-500/10 blur-[40px]"></div>
+                      <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-indigo-400">
+                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        Contact Lens AI Summary
+                      </h4>
+                      <p className="relative z-10 text-sm leading-relaxed text-zinc-300">
+                        {callIntel.ai_summary || "Summary not available yet. This usually means Contact Lens has not finished post-call analysis for this recording."}
+                      </p>
+                    </div>
 
                     <div className="flex max-h-[400px] flex-col rounded-xl border border-zinc-800 bg-zinc-900">
-                      <div className="grid grid-cols-3 divide-x divide-zinc-800 border-b border-zinc-800 text-center">
-                        <div className="py-2">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Rep Talk</p>
-                          <p className="text-sm font-bold text-white">{callIntel.agent_talk_time_pct || "0"}%</p>
+                        <div className="grid grid-cols-3 divide-x divide-zinc-800 border-b border-zinc-800 text-center">
+                          <div className="py-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Rep Talk</p>
+                            <p className="text-sm font-bold text-white">
+                              {callIntel.agent_talk_time_pct !== null && callIntel.agent_talk_time_pct !== undefined ? `${callIntel.agent_talk_time_pct}%` : "Pending"}
+                            </p>
+                          </div>
+                          <div className="py-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Cust Talk</p>
+                            <p className="text-sm font-bold text-white">
+                              {callIntel.customer_talk_time_pct !== null && callIntel.customer_talk_time_pct !== undefined ? `${callIntel.customer_talk_time_pct}%` : "Pending"}
+                            </p>
+                          </div>
+                          <div className="py-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Interrupts</p>
+                            <p className="text-sm font-bold text-orange-400">
+                              {callIntel.interruptions !== null && callIntel.interruptions !== undefined ? callIntel.interruptions : "Pending"}
+                            </p>
+                          </div>
                         </div>
-                        <div className="py-2">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Cust Talk</p>
-                          <p className="text-sm font-bold text-white">{callIntel.customer_talk_time_pct || "0"}%</p>
-                        </div>
-                        <div className="py-2">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Interrupts</p>
-                          <p className="text-sm font-bold text-orange-400">{callIntel.interruptions || "0"}</p>
-                        </div>
-                      </div>
 
                       <div className="flex-1 space-y-4 overflow-y-auto p-4">
                         {callIntel.transcript_json && Array.isArray(callIntel.transcript_json) ? (
@@ -2615,7 +2683,11 @@ export default function LeadExecutionPage() {
                               </div>
                               <div className="flex-1">
                                 <div className="mb-0.5 flex items-center gap-2">
-                                  <span className={`text-[10px] font-black uppercase tracking-widest ${line.speaker === "AGENT" ? "text-indigo-400" : "text-emerald-400"}`}>
+                                  <span className={`text-[10px] font-black uppercase tracking-widest ${
+                                    (line.speaker || "").toUpperCase() === "AGENT" || (line.speaker || "").toUpperCase() === "AGENT/CSR"
+                                      ? "text-indigo-400"
+                                      : "text-emerald-400"
+                                  }`}>
                                     {line.speaker}
                                   </span>
                                   {line.sentiment === "NEGATIVE" && <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.5)]" title="Negative Sentiment detected"></span>}

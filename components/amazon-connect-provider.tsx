@@ -192,8 +192,6 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       agent.connect?.(endpoint, {
         success: (contact) => {
           attachContactListeners(contact);
-          setCallActive(true);
-          setCallSeconds(0);
         },
         failure: () => setCallStatus("idle"),
       });
