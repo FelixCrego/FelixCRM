@@ -143,7 +143,18 @@ function replaceQuotedKeyValue(source: string, key: string, nextValue: string): 
   return updated;
 }
 
-function applySiteConfigOverrides(source: string, config: TemplateConfig): string {
+function replaceArrayKeyValue(source: string, key: string, values: string[]): string {
+  if (!values.length) return source;
+  const serializedDouble = values.map((value) => `"${escapeForQuotedValue(value)}"`).join(", ");
+  const serializedSingle = values.map((value) => `'${escapeForSingleQuotedValue(value)}'`).join(", ");
+
+  let updated = source;
+  updated = updated.replace(new RegExp(`(["']?${key}["']?\\s*:\\s*)\\[[\\s\\S]*?\\]`, "g"), `$1[${serializedDouble}]`);
+  updated = updated.replace(new RegExp(`(${key}\\s*=\\s*)\\[[\\s\\S]*?\\]`, "g"), `$1[${serializedSingle}]`);
+  return updated;
+}
+
+function applySiteConfigOverrides(source: string, config: TemplateConfig, googleDriveImages: string[]): string {
   let updated = source;
   const businessName = config.business.name;
   const businessNameLower = businessName.toLowerCase();
@@ -227,6 +238,16 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig): strin
     if (email) {
       updated = replaceQuotedKeyValue(updated, "email", email);
     }
+    if (googleDriveImages.length) {
+      if (updated.includes("googleDriveImages")) {
+        updated = replaceArrayKeyValue(updated, "googleDriveImages", googleDriveImages);
+      } else {
+        updated = updated.replace(
+          /(\bsecondaryColor\s*:\s*["'][^"']*["']\s*\n?\s*)/m,
+          `$1,\n    googleDriveImages: [${googleDriveImages.map((value) => `"${escapeForQuotedValue(value)}"`).join(", ")}]\n`,
+        );
+      }
+    }
   }
 
   if (config.geo.serviceAreas.length > 0) {
@@ -247,6 +268,7 @@ async function patchGeneratedRepoSiteConfig(params: {
   repoFullName: string;
   branch: string;
   templateConfig: TemplateConfig;
+  googleDriveImages: string[];
 }) {
   const candidatePaths = [
     "src/config/site.ts",
@@ -310,7 +332,7 @@ async function patchGeneratedRepoSiteConfig(params: {
       return false;
     }
 
-    const updated = applySiteConfigOverrides(source, params.templateConfig);
+    const updated = applySiteConfigOverrides(source, params.templateConfig, params.googleDriveImages);
     if (updated === source) {
       return false;
     }
@@ -555,6 +577,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GitHub repository creation succeeded but did not return repository metadata (name/id)." }, { status: 500 });
     }
 
+    const frontendEnv = body && typeof body.env === "object" && body.env !== null ? (body.env as Record<string, unknown>) : {};
+
+    const googleDriveFolderUrl =
+      typeof frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL === "string" && frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
+        ? frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
+        : templateConfig.links.googleDriveFolderUrl;
+    const googleDriveImages = await resolveGoogleDriveFolderImages(googleDriveFolderUrl);
+
     let siteConfigPatchWarning: string | null = null;
     try {
       siteConfigPatchWarning = await patchGeneratedRepoSiteConfig({
@@ -562,6 +592,7 @@ export async function POST(request: Request) {
         repoFullName: clonedRepoFullName,
         branch: repoDefaultBranch,
         templateConfig,
+        googleDriveImages,
       });
     } catch (error) {
       siteConfigPatchWarning = error instanceof Error ? error.message : "Unable to patch generated repo site config.";
@@ -571,14 +602,6 @@ export async function POST(request: Request) {
         warning: siteConfigPatchWarning,
       });
     }
-
-    const frontendEnv = body && typeof body.env === "object" && body.env !== null ? (body.env as Record<string, unknown>) : {};
-
-    const googleDriveFolderUrl =
-      typeof frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL === "string" && frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
-        ? frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
-        : templateConfig.links.googleDriveFolderUrl;
-    const googleDriveImages = await resolveGoogleDriveFolderImages(googleDriveFolderUrl);
 
     const deploymentEnv = {
       TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
