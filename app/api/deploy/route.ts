@@ -58,6 +58,82 @@ function escapeForSingleQuotedValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
+function parseGoogleDriveFolderId(rawUrl: string | undefined): string {
+  if (!rawUrl) return "";
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+
+  const folderPathMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/i);
+  if (folderPathMatch?.[1]) return folderPathMatch[1];
+
+  const idQueryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/i);
+  if (idQueryMatch?.[1]) return idQueryMatch[1];
+
+  return "";
+}
+
+function buildGoogleDriveImageUrl(fileId: string): string {
+  return `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000`;
+}
+
+function extractGoogleDriveFileIdsFromHtml(html: string): string[] {
+  const ids = new Set<string>();
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]{10,})/g,
+    /[?&]id=([a-zA-Z0-9_-]{10,})/g,
+    /"docid":"([a-zA-Z0-9_-]{10,})"/g,
+    /"([a-zA-Z0-9_-]{25,})"/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(html)) !== null) {
+      const candidate = match[1];
+      if (!candidate) continue;
+      if (candidate.toLowerCase().includes("google")) continue;
+      ids.add(candidate);
+    }
+  }
+
+  return [...ids];
+}
+
+async function resolveGoogleDriveFolderImages(folderUrl: string | undefined): Promise<string[]> {
+  const folderId = parseGoogleDriveFolderId(folderUrl);
+  if (!folderId) return [];
+
+  const candidates = [
+    `https://drive.google.com/embeddedfolderview?id=${folderId}#grid`,
+    `https://drive.google.com/drive/folders/${folderId}`,
+  ];
+
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 FelixCRM/1.0",
+        },
+        cache: "no-store",
+      });
+
+      if (!response.ok) continue;
+      const html = await response.text();
+      const fileIds = extractGoogleDriveFileIdsFromHtml(html).slice(0, 12);
+      if (fileIds.length > 0) {
+        return fileIds.map(buildGoogleDriveImageUrl);
+      }
+    } catch (error) {
+      console.warn("[deploy] unable to resolve Google Drive folder images", {
+        folderUrl,
+        url,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return [];
+}
+
 function replaceQuotedKeyValue(source: string, key: string, nextValue: string): string {
   let updated = source;
 
@@ -491,6 +567,12 @@ export async function POST(request: Request) {
 
     const frontendEnv = body && typeof body.env === "object" && body.env !== null ? (body.env as Record<string, unknown>) : {};
 
+    const googleDriveFolderUrl =
+      typeof frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL === "string" && frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
+        ? frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
+        : templateConfig.links.googleDriveFolderUrl;
+    const googleDriveImages = await resolveGoogleDriveFolderImages(googleDriveFolderUrl);
+
     const deploymentEnv = {
       TEMPLATE_CONFIG_JSON: JSON.stringify(templateConfig),
       TEMPLATE_CONFIG_VERSION,
@@ -513,9 +595,8 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_HERO_CTA_LABEL: templateConfig.content.hero.ctaLabel,
       NEXT_PUBLIC_GOOGLE_BUSINESS_PROFILE: templateConfig.links.googleBusinessProfile,
       NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL:
-        typeof frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL === "string" && frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
-          ? frontendEnv.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL.trim()
-          : templateConfig.links.googleDriveFolderUrl,
+        googleDriveFolderUrl,
+      NEXT_PUBLIC_GOOGLE_DRIVE_IMAGES: JSON.stringify(googleDriveImages),
       NEXT_PUBLIC_SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
       NEXT_PUBLIC_PRIMARY_COLOR:
         typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" && frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()
