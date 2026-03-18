@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { UserRole } from "@/lib/types";
 
 type RoleContextValue = {
@@ -12,6 +12,29 @@ const RoleContext = createContext<RoleContextValue | null>(null);
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [activeRole, setActiveRole] = useState<UserRole>("REP");
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadRole() {
+      try {
+        const response = await fetch("/api/profile", { cache: "no-store" });
+        if (!response.ok) return;
+
+        const payload = (await response.json().catch(() => null)) as { role?: UserRole } | null;
+        if (!isActive || !payload?.role) return;
+        setActiveRole(payload.role);
+      } catch {
+        // Keep the UI usable with the default role if profile lookup fails.
+      }
+    }
+
+    void loadRole();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
   const value = useMemo(() => ({ activeRole, setActiveRole }), [activeRole]);
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
