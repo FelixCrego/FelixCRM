@@ -17,6 +17,8 @@ type TranscriptHydration = Partial<
   >
 >;
 
+type RecordingHydration = Pick<ContactLensWebhookPayload, "recordingS3Uri" | "eventSource" | "sourceEventTime">;
+
 function getAwsRegion() {
   return process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
 }
@@ -81,6 +83,20 @@ function buildAnalysisPrefixes(recordingKey: string): string[] {
       `Analysis/Voice/Redacted/${year}/${month}/${day}/`,
     ]),
   );
+}
+
+function buildRecentDatePrefixes(root: string, daysBack: number): string[] {
+  const prefixes: string[] = [];
+  const now = new Date();
+  for (let offset = 0; offset <= daysBack; offset += 1) {
+    const date = new Date(now);
+    date.setUTCDate(now.getUTCDate() - offset);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    prefixes.push(`${root}${year}/${month}/${day}/`);
+  }
+  return prefixes;
 }
 
 async function bodyToString(body: unknown): Promise<string> {
@@ -161,5 +177,54 @@ export async function hydrateContactLensPayloadFromS3(payload: ContactLensWebhoo
     interruptions: normalized.interruptions ?? null,
     eventSource: normalized.eventSource ?? "contact-lens-analysis-artifact",
     sourceEventTime: normalized.sourceEventTime ?? null,
+  };
+}
+
+export async function hydrateRecordingPayloadFromS3(contactId: string, daysBack = 7): Promise<RecordingHydration> {
+  const cleanContactId = contactId.trim();
+  if (!cleanContactId) return {};
+
+  const prefixes = Array.from(
+    new Set([
+      ...buildRecentDatePrefixes("connect/felix-outbound/CallRecordings/", daysBack),
+      ...buildRecentDatePrefixes("CallRecordings/", daysBack),
+    ]),
+  );
+
+  const bucket = process.env.AMAZON_CONNECT_RECORDINGS_BUCKET?.trim() || "amazon-connect-f93893c0453d";
+  const candidates: Array<{ key: string; lastModified: number }> = [];
+
+  for (const prefix of prefixes) {
+    const response = await sendWithBucketRegionRetry((s3) =>
+      s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          MaxKeys: 200,
+        }),
+      ),
+    ).catch(() => null);
+    if (!response) continue;
+
+    for (const item of response.Contents ?? []) {
+      const key = item.Key ?? "";
+      if (!key || !/\.(wav|mp3)$/i.test(key)) continue;
+      if (!key.includes(cleanContactId)) continue;
+      candidates.push({
+        key,
+        lastModified: item.LastModified ? item.LastModified.getTime() : 0,
+      });
+    }
+  }
+
+  if (!candidates.length) return {};
+  candidates.sort((a, b) => b.lastModified - a.lastModified);
+  const match = candidates[0];
+  if (!match) return {};
+
+  return {
+    recordingS3Uri: `s3://${bucket}/${match.key}`,
+    eventSource: "s3-call-recording-recovered",
+    sourceEventTime: match.lastModified ? new Date(match.lastModified).toISOString() : null,
   };
 }

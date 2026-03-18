@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { canUserViewAllLeads, getLeadById } from "@/lib/store";
 import { getCallAnalyticsByLeadId, upsertCallAnalytics } from "@/lib/call-analytics-store";
-import { hydrateContactLensPayloadFromS3 } from "@/lib/contact-lens-artifacts";
+import { hydrateContactLensPayloadFromS3, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 import type { ContactLensWebhookPayload } from "@/lib/contact-lens";
 
 type CallAnalyticsRow = {
@@ -37,13 +37,14 @@ type HydratedAnalytics = Partial<
   >
 >;
 
+type RecoveredRecording = Partial<
+  Pick<ContactLensWebhookPayload, "recordingS3Uri" | "eventSource" | "sourceEventTime">
+>;
+
 function needsHydration(row: CallAnalyticsRow) {
   return Boolean(
-    row.recording_s3_uri &&
-      !row.overall_sentiment &&
-      !row.ai_summary &&
-      !row.transcript_text &&
-      !row.transcript_json,
+    (!row.recording_s3_uri || !row.overall_sentiment || !row.ai_summary || !row.transcript_text || !row.transcript_json) &&
+      row.contact_id,
   );
 }
 
@@ -68,12 +69,17 @@ export async function POST(request: Request) {
       if (contactId && row.contact_id !== contactId) continue;
       if (!needsHydration(row)) continue;
 
+      const recoveredRecording: RecoveredRecording = !row.recording_s3_uri
+        ? await hydrateRecordingPayloadFromS3(row.contact_id).catch(() => ({}))
+        : {};
+      const recordingS3Uri = recoveredRecording.recordingS3Uri ?? row.recording_s3_uri ?? null;
       const hydrated: HydratedAnalytics = await hydrateContactLensPayloadFromS3({
         contactId: row.contact_id,
-        recordingS3Uri: row.recording_s3_uri ?? null,
+        recordingS3Uri,
       }).catch((): HydratedAnalytics => ({}));
 
       if (
+        !recordingS3Uri &&
         !hydrated.overallSentiment &&
         !hydrated.aiSummary &&
         !hydrated.transcriptText &&
@@ -85,6 +91,7 @@ export async function POST(request: Request) {
       await upsertCallAnalytics({
         ...row,
         lead_id: row.lead_id ?? leadId,
+        recording_s3_uri: recordingS3Uri,
         overall_sentiment: hydrated.overallSentiment ?? row.overall_sentiment ?? null,
         analysis_s3_uri: hydrated.analysisS3Uri ?? row.analysis_s3_uri ?? null,
         transcript_text: hydrated.transcriptText ?? row.transcript_text ?? null,
@@ -93,8 +100,8 @@ export async function POST(request: Request) {
         agent_talk_time_pct: hydrated.agentTalkTimePct ?? row.agent_talk_time_pct ?? null,
         customer_talk_time_pct: hydrated.customerTalkTimePct ?? row.customer_talk_time_pct ?? null,
         interruptions: hydrated.interruptions ?? row.interruptions ?? null,
-        event_source: hydrated.eventSource ?? row.event_source ?? null,
-        source_event_time: hydrated.sourceEventTime ?? row.source_event_time ?? null,
+        event_source: hydrated.eventSource ?? recoveredRecording.eventSource ?? row.event_source ?? null,
+        source_event_time: hydrated.sourceEventTime ?? recoveredRecording.sourceEventTime ?? row.source_event_time ?? null,
       });
       hydratedCount += 1;
     }
