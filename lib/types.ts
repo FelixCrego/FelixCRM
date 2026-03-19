@@ -64,6 +64,9 @@ export type Lead = {
     autoRenew?: boolean;
     billingStatus?: "ACTIVE" | "PAUSED" | "CANCELLED" | "PAID";
     billingStartDate?: string | null;
+    stripeCustomerId?: string | null;
+    stripeSubscriptionId?: string | null;
+    stripeCheckoutSessionId?: string | null;
     notes?: string | null;
   } | null;
   closedDealValue?: number | null;

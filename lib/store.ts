@@ -583,6 +583,9 @@ function leadToMemory(lead: any): Lead {
                 ? billingProfileRaw.billingStatus
                 : "ACTIVE",
             billingStartDate: typeof billingProfileRaw.billingStartDate === "string" ? billingProfileRaw.billingStartDate : null,
+            stripeCustomerId: typeof billingProfileRaw.stripeCustomerId === "string" ? billingProfileRaw.stripeCustomerId : null,
+            stripeSubscriptionId: typeof billingProfileRaw.stripeSubscriptionId === "string" ? billingProfileRaw.stripeSubscriptionId : null,
+            stripeCheckoutSessionId: typeof billingProfileRaw.stripeCheckoutSessionId === "string" ? billingProfileRaw.stripeCheckoutSessionId : null,
             notes: typeof billingProfileRaw.notes === "string" ? billingProfileRaw.notes : null,
           }
         : null,

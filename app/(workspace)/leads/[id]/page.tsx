@@ -494,6 +494,7 @@ export default function LeadExecutionPage() {
 
   const [leadExecutionStatus, setLeadExecutionStatus] = useState<ExecutionLeadStatus>("New");
   const [checkoutAmount, setCheckoutAmount] = useState(500);
+  const [checkoutMode, setCheckoutMode] = useState<"payment" | "subscription">("payment");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutLink, setCheckoutLink] = useState("");
   const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
@@ -1564,14 +1565,31 @@ export default function LeadExecutionPage() {
     setCheckoutLoading(true);
     setCheckoutLinkCopied(false);
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
     if (checkoutAmount >= 500) {
-      setApprovalPending(false);
-      setCheckoutLink(`buy.stripe.com/test_123?amount=${Math.round(checkoutAmount * 100)}`);
-      setLeadExecutionStatus("Payment Pending");
-      setCheckoutLoading(false);
-      return;
+      try {
+        const response = await fetch("/api/stripe/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadId,
+            amount: checkoutAmount,
+            mode: checkoutMode,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
+        if (!response.ok || !payload?.url) {
+          throw new Error(payload?.error || "Unable to create Stripe checkout session.");
+        }
+
+        setApprovalPending(false);
+        setCheckoutLink(payload.url);
+        setLeadExecutionStatus("Payment Pending");
+        setCheckoutLoading(false);
+        return;
+      } catch {
+        setCheckoutLoading(false);
+        return;
+      }
     }
 
     setCheckoutLink("");
@@ -3230,6 +3248,22 @@ export default function LeadExecutionPage() {
             <p className="mt-1 text-xs text-zinc-500">Generate a Stripe checkout link instantly, or route sub-$500 deals for manager approval.</p>
 
             <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-950 p-3">
+              <label className="text-xs uppercase tracking-wide text-zinc-500">Billing Type</label>
+              <select
+                value={checkoutMode}
+                disabled={approvalPending}
+                onChange={(event) => {
+                  setCheckoutMode(event.target.value as "payment" | "subscription");
+                  setCheckoutLink("");
+                }}
+                className="mt-2 h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 outline-none disabled:cursor-not-allowed disabled:text-zinc-500"
+              >
+                <option value="payment">One-Time Payment</option>
+                <option value="subscription">Monthly Subscription</option>
+              </select>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-950 p-3">
               <label className="text-xs uppercase tracking-wide text-zinc-500">Deal Price</label>
               <div className="mt-2 flex items-center rounded-lg border border-zinc-700 bg-zinc-900 px-3 focus-within:border-zinc-500">
                 <span className="text-sm text-zinc-400">$</span>
@@ -3263,7 +3297,7 @@ export default function LeadExecutionPage() {
                   Processing...
                 </>
               ) : checkoutAmount >= 500 ? (
-                "Generate Stripe Link"
+                checkoutMode === "subscription" ? "Generate Monthly Stripe Link" : "Generate Stripe Link"
               ) : (
                 "Request Manager Approval"
               )}

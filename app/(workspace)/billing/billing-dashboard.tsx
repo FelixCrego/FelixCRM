@@ -199,6 +199,40 @@ export default function BillingDashboard({ initialLeads, initialSettings }: Bill
         <p className="mt-2 text-sm text-zinc-400">
           Track recurring clients, one-time deals, expenses, and forecasted cash flow. Commission is paid only in the client&apos;s start month.
         </p>
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSaveMessage("");
+              startTransition(() => {
+                void fetch("/api/stripe/sync", { method: "POST" })
+                  .then(async (response) => {
+                    const payload = (await response.json().catch(() => null)) as { syncedLeadIds?: string[]; error?: string } | null;
+                    if (!response.ok) {
+                      throw new Error(payload?.error || "Failed to sync Stripe.");
+                    }
+                    setSaveMessage(`Stripe sync complete. Updated ${payload?.syncedLeadIds?.length ?? 0} leads.`);
+                    router.refresh();
+                  })
+                  .catch((error) => {
+                    setSaveMessage(error instanceof Error ? error.message : "Failed to sync Stripe.");
+                  });
+              });
+            }}
+            disabled={isPending}
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200"
+          >
+            Sync Stripe Now
+          </button>
+          <button
+            type="button"
+            onClick={persistSettings}
+            disabled={isPending}
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200"
+          >
+            Save Finance Settings
+          </button>
+        </div>
         {saveMessage ? <p className="mt-3 text-sm text-emerald-300">{saveMessage}</p> : null}
       </header>
 
@@ -232,14 +266,7 @@ export default function BillingDashboard({ initialLeads, initialSettings }: Bill
               className="w-24 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none"
             />
             <span className="text-zinc-400">%</span>
-            <button
-              type="button"
-              onClick={persistSettings}
-              disabled={isPending}
-              className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200"
-            >
-              Save
-            </button>
+            <span className="text-xs text-zinc-500">Used across forecast and commissions.</span>
           </div>
         </article>
       </section>
