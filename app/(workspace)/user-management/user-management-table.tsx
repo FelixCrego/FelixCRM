@@ -37,6 +37,11 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState<UserRole>("REP");
   const [inviteRate, setInviteRate] = useState("");
+  const [createEmail, setCreateEmail] = useState("");
+  const [createName, setCreateName] = useState("");
+  const [createRole, setCreateRole] = useState<UserRole>("REP");
+  const [createRate, setCreateRate] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
 
   const stats = useMemo(() => {
     return {
@@ -121,6 +126,44 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
     });
   };
 
+  const createUser = () => {
+    setMessage("");
+    setPendingUserId("create");
+    startTransition(() => {
+      const parsedRate = createRate.trim() ? Number(createRate) / 100 : null;
+      void fetch("/api/users/manage", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: createEmail.trim(),
+          name: createName.trim(),
+          role: createRole,
+          commissionRate: parsedRate,
+          password: createPassword,
+        }),
+      })
+        .then(async (response) => {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          if (!response.ok) {
+            throw new Error(payload?.error || "Failed to create user.");
+          }
+          setMessage(`Created user ${createEmail.trim()}.`);
+          setCreateEmail("");
+          setCreateName("");
+          setCreateRole("REP");
+          setCreateRate("");
+          setCreatePassword("");
+          router.refresh();
+        })
+        .catch((error) => {
+          setMessage(error instanceof Error ? error.message : "Failed to create user.");
+        })
+        .finally(() => {
+          setPendingUserId(null);
+        });
+    });
+  };
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-4">
@@ -187,6 +230,60 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
               className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
             >
               {pendingUserId === "invite" && isPending ? "Inviting..." : "Send Invite"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-zinc-100">Create User Directly</h2>
+          <p className="mt-1 text-sm text-zinc-400">Create an account immediately, set a password, and hand the credentials to the user manually.</p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-5">
+          <input
+            value={createName}
+            onChange={(event) => setCreateName(event.target.value)}
+            placeholder="Full name"
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          />
+          <input
+            value={createEmail}
+            onChange={(event) => setCreateEmail(event.target.value)}
+            placeholder="Email"
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          />
+          <input
+            value={createPassword}
+            onChange={(event) => setCreatePassword(event.target.value)}
+            placeholder="Temporary password"
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          />
+          <select
+            value={createRole}
+            onChange={(event) => setCreateRole(event.target.value as UserRole)}
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          >
+            <option value="REP">Rep</option>
+            <option value="TEAM_LEAD">Team Lead</option>
+            <option value="MANAGER">Manager</option>
+            <option value="SUPER_ADMIN">Super Admin</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <input
+              value={createRate}
+              onChange={(event) => setCreateRate(event.target.value)}
+              placeholder="Commission %"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+            />
+            <button
+              type="button"
+              onClick={createUser}
+              disabled={(pendingUserId === "create" && isPending) || !createEmail.trim() || !createName.trim() || createPassword.length < 8}
+              className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
+            >
+              {pendingUserId === "create" && isPending ? "Creating..." : "Create User"}
             </button>
           </div>
         </div>

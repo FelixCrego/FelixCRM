@@ -313,6 +313,47 @@ export async function inviteManagedUser(input: {
   return text ? (parseJsonSafely<Record<string, unknown>>(text) ?? {}) : {};
 }
 
+export async function createManagedUser(input: {
+  email: string;
+  password: string;
+  name: string;
+  role: UserRole;
+  commissionRate: number | null;
+}) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to create users.");
+
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (!normalizedEmail || !normalizedEmail.includes("@")) throw new Error("A valid email is required.");
+  if (!input.name.trim()) throw new Error("A name is required.");
+  if (input.password.length < 8) throw new Error("Password must be at least 8 characters.");
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email: normalizedEmail,
+      password: input.password,
+      email_confirm: true,
+      user_metadata: {
+        name: input.name.trim(),
+        role: input.role,
+        commissionRate: input.commissionRate,
+      },
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || "Failed to create user.");
+  }
+
+  return text ? (parseJsonSafely<Record<string, unknown>>(text) ?? {}) : {};
+}
+
 export async function saveAssignableUserCommissionRate(userId: string, commissionRate: number | null) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save commission rates.");
 
