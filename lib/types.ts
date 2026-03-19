@@ -54,6 +54,9 @@ export type Lead = {
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
   vercelDeploymentId?: string | null;
   ownerId?: string | null;
+  soldByUserId?: string | null;
+  soldByName?: string | null;
+  soldByEmail?: string | null;
   closedDealValue?: number | null;
   closedAt?: string | null;
   stripeCheckoutLink?: string | null;

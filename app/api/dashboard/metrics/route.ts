@@ -357,6 +357,14 @@ function dayKey(date: Date) {
   return `${parts.year.toString().padStart(4, "0")}-${parts.month.toString().padStart(2, "0")}-${parts.day.toString().padStart(2, "0")}`;
 }
 
+function getLeadCloseAttributionUserId(lead: Lead) {
+  return typeof lead.soldByUserId === "string" && lead.soldByUserId
+    ? lead.soldByUserId
+    : typeof lead.ownerId === "string" && lead.ownerId
+      ? lead.ownerId
+      : null;
+}
+
 function computeStreak(
   calls: CallAnalyticsRow[],
   leads: Lead[],
@@ -380,7 +388,7 @@ function computeStreak(
   }
 
   for (const lead of leads) {
-    if (lead.ownerId !== ownerId) continue;
+    if (getLeadCloseAttributionUserId(lead) !== ownerId) continue;
     const bookingAt = parseDate(lead.demoBooking?.bookedAt);
     if (bookingAt) {
       const key = dayKey(bookingAt);
@@ -543,7 +551,8 @@ export async function GET() {
       const bookedAt = parseDate(lead.demoBooking?.bookedAt);
       return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
     });
-    const repClosedThisMonth = repLeads.filter((lead) => {
+    const repClosedThisMonth = visibleLeads.filter((lead) => {
+      if (getLeadCloseAttributionUserId(lead) !== user.id) return false;
       const closedAt = parseDate(lead.closedAt);
       return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
@@ -626,6 +635,10 @@ export async function GET() {
       if (typeof lead.ownerId === "string" && lead.ownerId) {
         teamLeadIds.add(lead.ownerId);
       }
+      const soldByUserId = getLeadCloseAttributionUserId(lead);
+      if (soldByUserId) {
+        teamLeadIds.add(soldByUserId);
+      }
     }
 
     for (const [userId, claimedLeads] of claimedLeadCountsMap.entries()) {
@@ -665,6 +678,7 @@ export async function GET() {
       const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
       const ownedLeadIds = new Set(ownedLeads.map((lead) => lead.id));
       const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
+      const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
       const callsToday = ownedCalls.filter((call) => {
         const at = parseDate(call.created_at);
         return at ? isSameDayInTimeZone(at, now) : false;
@@ -676,7 +690,7 @@ export async function GET() {
         const demoAt = parseDemoDate(lead);
         return demoAt ? isOnOrAfterWeekStartInTimeZone(demoAt, now) : false;
       });
-      const closedThisMonth = ownedLeads.filter((lead) => {
+      const closedThisMonth = soldLeads.filter((lead) => {
         const closedAt = parseDate(lead.closedAt);
         return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
       });

@@ -9,19 +9,26 @@ export async function POST(request: Request) {
     const user = await getAuthenticatedUser();
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json()) as { leadId?: string; closedDealValue?: number; stripeCheckoutLink?: string | null };
+    const body = (await request.json()) as {
+      leadId?: string;
+      closedDealValue?: number;
+      stripeCheckoutLink?: string | null;
+      soldByUserId?: string | null;
+    };
     const leadId = typeof body.leadId === "string" ? body.leadId.trim() : "";
     const closedDealValue = typeof body.closedDealValue === "number" && Number.isFinite(body.closedDealValue) ? body.closedDealValue : null;
+    const isSuperAdmin = await canUserManageAllLeads(user.id, user.email);
 
     if (!leadId) return NextResponse.json({ error: "leadId is required." }, { status: 400 });
     if (closedDealValue === null) return NextResponse.json({ error: "closedDealValue must be a valid number." }, { status: 400 });
 
     const result = await closeLeadDeal({
       leadId,
-      ownerId: user.id,
+      actingUserId: user.id,
       closedDealValue,
       stripeCheckoutLink: typeof body.stripeCheckoutLink === "string" ? body.stripeCheckoutLink : null,
-      bypassOwnership: await canUserManageAllLeads(user.id, user.email),
+      bypassOwnership: isSuperAdmin,
+      soldByUserId: isSuperAdmin && typeof body.soldByUserId === "string" ? body.soldByUserId.trim() || null : null,
     });
 
     return NextResponse.json({ closed: result });

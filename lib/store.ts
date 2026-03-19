@@ -55,6 +55,73 @@ function normalizeEmailAddress(value: string | null | undefined) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+function titleCaseWords(value: string) {
+  return value
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+export function prettyNameFromEmail(email: string) {
+  const normalized = normalizeEmailAddress(email);
+  if (normalized === "felix@felixcrego.com") return "Felix Crego";
+  const localPart = normalized.split("@")[0] ?? normalized;
+  return titleCaseWords(localPart.replace(/\d+/g, " ").trim() || localPart);
+}
+
+type AuthAdminUser = {
+  id?: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+};
+
+export type AssignableUser = {
+  id: string;
+  email: string | null;
+  name: string;
+};
+
+export async function listAssignableUsers(): Promise<AssignableUser[]> {
+  if (!hasDb) throw new Error("Supabase environment variables are required to list users.");
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=200`, {
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to list auth users.");
+  }
+
+  const payload = (await response.json()) as { users?: AuthAdminUser[] };
+  return (payload.users ?? [])
+    .filter((user): user is AuthAdminUser & { id: string } => typeof user.id === "string" && user.id.length > 0)
+    .map((user) => {
+      const metadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
+      const email = typeof user.email === "string" && user.email.trim() ? user.email.trim().toLowerCase() : null;
+      const nameCandidate =
+        typeof metadata.name === "string" && metadata.name.trim()
+          ? metadata.name.trim()
+          : typeof metadata.full_name === "string" && metadata.full_name.trim()
+            ? metadata.full_name.trim()
+            : email
+              ? prettyNameFromEmail(email)
+              : user.id;
+
+      return {
+        id: user.id,
+        email,
+        name: nameCandidate,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function getEffectiveUserRole(userId: string, email?: string | null): Promise<UserRole> {
   const normalizedEmail = normalizeEmailAddress(email);
   if (normalizedEmail && GLOBAL_LEAD_VIEWER_EMAILS.has(normalizedEmail)) {
@@ -315,6 +382,24 @@ function leadToMemory(lead: any): Lead {
       : typeof sourcePayload.stripe_checkout_link === "string"
         ? sourcePayload.stripe_checkout_link
         : null;
+  const soldByUserIdFromPayload =
+    typeof sourcePayload.soldByUserId === "string"
+      ? sourcePayload.soldByUserId
+      : typeof sourcePayload.sold_by_user_id === "string"
+        ? sourcePayload.sold_by_user_id
+        : null;
+  const soldByNameFromPayload =
+    typeof sourcePayload.soldByName === "string"
+      ? sourcePayload.soldByName
+      : typeof sourcePayload.sold_by_name === "string"
+        ? sourcePayload.sold_by_name
+        : null;
+  const soldByEmailFromPayload =
+    typeof sourcePayload.soldByEmail === "string"
+      ? sourcePayload.soldByEmail
+      : typeof sourcePayload.sold_by_email === "string"
+        ? sourcePayload.sold_by_email
+        : null;
 
   return {
     id: lead.id,
@@ -330,6 +415,9 @@ function leadToMemory(lead: any): Lead {
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
     vercelDeploymentId: typeof (lead.vercelDeploymentId ?? lead.vercel_deployment_id) === "string" ? (lead.vercelDeploymentId ?? lead.vercel_deployment_id) : null,
     ownerId: lead.ownerId ?? lead.owner_id,
+    soldByUserId: soldByUserIdFromPayload,
+    soldByName: soldByNameFromPayload,
+    soldByEmail: soldByEmailFromPayload,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     socialLinks: Array.isArray(sourcePayload.socialLinks)
       ? sourcePayload.socialLinks
@@ -884,10 +972,17 @@ export type LeadContactRecord = {
   emails: string[];
 };
 
-export async function closeLeadDeal(params: { leadId: string; ownerId: string; closedDealValue: number; stripeCheckoutLink?: string | null; bypassOwnership?: boolean }) {
+export async function closeLeadDeal(params: {
+  leadId: string;
+  actingUserId: string;
+  closedDealValue: number;
+  stripeCheckoutLink?: string | null;
+  bypassOwnership?: boolean;
+  soldByUserId?: string | null;
+}) {
   if (!hasDb) throw new Error("Supabase environment variables are required to close deals.");
 
-  const { leadId, ownerId, closedDealValue, stripeCheckoutLink, bypassOwnership = false } = params;
+  const { leadId, actingUserId, closedDealValue, stripeCheckoutLink, bypassOwnership = false, soldByUserId } = params;
   const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
     select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
     id: `eq.${leadId}`,
@@ -898,10 +993,17 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
   if (!lead) throw new Error("Lead not found.");
 
   const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
-  if (!bypassOwnership && leadOwnerId && leadOwnerId !== ownerId) throw new Error("Forbidden");
+  if (!bypassOwnership && leadOwnerId && leadOwnerId !== actingUserId) throw new Error("Forbidden");
 
   const sourcePayload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
   const closedAt = new Date().toISOString();
+  const resolvedSoldByUserId = (bypassOwnership && typeof soldByUserId === "string" && soldByUserId.trim())
+    ? soldByUserId.trim()
+    : typeof leadOwnerId === "string" && leadOwnerId.trim()
+      ? leadOwnerId.trim()
+      : actingUserId;
+  const assignableUsers = await listAssignableUsers().catch(() => []);
+  const soldByUser = assignableUsers.find((user) => user.id === resolvedSoldByUserId) ?? null;
 
   const updatedRows = await withLeadTableFallback((table) => {
     const ownerColumn = isSnakeLeadsTable(table) ? "owner_id" : "ownerId";
@@ -909,28 +1011,32 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
     const filters = {
       id: `eq.${leadId}`,
       select: "id",
-      ...(!bypassOwnership && leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
+      ...(!bypassOwnership && leadOwnerId ? { [ownerColumn]: `eq.${actingUserId}` } : {}),
     } as Record<string, string>;
 
-    const fullPayload = isSnakeLeadsTable(table)
+      const fullPayload = isSnakeLeadsTable(table)
       ? {
           status: "CLOSED",
-          owner_id: ownerId,
           source_payload: {
             ...sourcePayload,
             closedDealValue,
             closedAt,
             stripeCheckoutLink: stripeCheckoutLink ?? null,
+            soldByUserId: resolvedSoldByUserId,
+            soldByName: soldByUser?.name ?? null,
+            soldByEmail: soldByUser?.email ?? null,
           },
         }
       : {
           status: "CLOSED",
-          ownerId,
           sourcePayload: {
             ...sourcePayload,
             closedDealValue,
             closedAt,
             stripeCheckoutLink: stripeCheckoutLink ?? null,
+            soldByUserId: resolvedSoldByUserId,
+            soldByName: soldByUser?.name ?? null,
+            soldByEmail: soldByUser?.email ?? null,
           },
         };
 
@@ -944,7 +1050,7 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
       return supabaseRequest<any[]>(table, {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
-        body: JSON.stringify(isSnakeLeadsTable(table) ? { status: "CLOSED", owner_id: ownerId } : { status: "CLOSED", ownerId }),
+        body: JSON.stringify({ status: "CLOSED" }),
       }, filters);
     });
   });
@@ -957,6 +1063,9 @@ export async function closeLeadDeal(params: { leadId: string; ownerId: string; c
     closedAt,
     closedDealValue,
     stripeCheckoutLink: stripeCheckoutLink ?? null,
+    soldByUserId: resolvedSoldByUserId,
+    soldByName: soldByUser?.name ?? null,
+    soldByEmail: soldByUser?.email ?? null,
   };
 }
 

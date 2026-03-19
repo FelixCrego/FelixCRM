@@ -6,10 +6,13 @@ import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw 
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 import { createClientComponentClient } from "@/lib/supabase-client";
+import type { UserRole } from "@/lib/types";
 import FollowUpEngine from "./FollowUpEngine";
 
 type LeadRecord = {
   id: string;
+  owner_id?: string | null;
+  ownerId?: string | null;
   business_name?: string | null;
   businessName?: string | null;
   status?: string | null;
@@ -38,6 +41,12 @@ type LeadRecord = {
       primaryColor?: string;
       secondaryColor?: string;
     };
+    soldByUserId?: string | null;
+    soldByName?: string | null;
+    soldByEmail?: string | null;
+    sold_by_user_id?: string | null;
+    sold_by_name?: string | null;
+    sold_by_email?: string | null;
     demoBooking?: {
       date?: string;
       time?: string;
@@ -57,6 +66,12 @@ type LeadRecord = {
       primaryColor?: string;
       secondaryColor?: string;
     };
+    soldByUserId?: string | null;
+    soldByName?: string | null;
+    soldByEmail?: string | null;
+    sold_by_user_id?: string | null;
+    sold_by_name?: string | null;
+    sold_by_email?: string | null;
     demoBooking?: {
       date?: string;
       time?: string;
@@ -132,6 +147,12 @@ type CompletedFollowUpTask = {
   type: string;
   due_date: string;
   due_time: string;
+};
+
+type SalesRepOption = {
+  id: string;
+  name: string;
+  email?: string | null;
 };
 
 type FetchStatus = "loading" | "ready" | "error";
@@ -479,6 +500,10 @@ export default function LeadExecutionPage() {
   const [approvalPending, setApprovalPending] = useState(false);
   const [closingDeal, setClosingDeal] = useState(false);
   const [closeDealError, setCloseDealError] = useState("");
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole>("REP");
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [soldByUserId, setSoldByUserId] = useState("");
+  const [salesRepOptions, setSalesRepOptions] = useState<SalesRepOption[]>([]);
   const [playbookLoading, setPlaybookLoading] = useState(false);
   const [playbookError, setPlaybookError] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);
@@ -501,6 +526,94 @@ export default function LeadExecutionPage() {
   const [contactsError, setContactsError] = useState("");
   const [recoveringContactId, setRecoveringContactId] = useState<string | null>(null);
   const supabase = useMemo(() => createClientComponentClient(), []);
+  const leadOwnerId = lead?.owner_id ?? lead?.ownerId ?? "";
+  const canOverrideSoldBy = currentUserRole === "SUPER_ADMIN";
+  const availableSoldByOptions = useMemo(() => {
+    const options = new Map<string, SalesRepOption>();
+
+    for (const option of salesRepOptions) {
+      if (option.id) {
+        options.set(option.id, option);
+      }
+    }
+
+    if (leadOwnerId && !options.has(leadOwnerId)) {
+      options.set(leadOwnerId, {
+        id: leadOwnerId,
+        name: "Current Lead Owner",
+        email: null,
+      });
+    }
+
+    if (currentUserId && !options.has(currentUserId)) {
+      options.set(currentUserId, {
+        id: currentUserId,
+        name: "Current User",
+        email: null,
+      });
+    }
+
+    return [...options.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [currentUserId, leadOwnerId, salesRepOptions]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadSessionContext = async () => {
+      const profileResponse = await fetch("/api/profile", { cache: "no-store" }).catch(() => null);
+
+      if (!alive) return;
+
+      if (profileResponse?.ok) {
+        const payload = (await profileResponse.json().catch(() => null)) as { role?: UserRole; userId?: string } | null;
+        setCurrentUserId(typeof payload?.userId === "string" ? payload.userId : "");
+        if (payload?.role) {
+          setCurrentUserRole(payload.role);
+        }
+      }
+    };
+
+    loadSessionContext().catch(() => null);
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canOverrideSoldBy) {
+      setSalesRepOptions([]);
+      return;
+    }
+
+    let alive = true;
+
+    const loadSalesRepOptions = async () => {
+      const response = await fetch("/api/users/reps", { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as { users?: SalesRepOption[] } | null;
+      if (!response.ok || !alive) return;
+      setSalesRepOptions(Array.isArray(payload?.users) ? payload.users : []);
+    };
+
+    loadSalesRepOptions().catch(() => null);
+
+    return () => {
+      alive = false;
+    };
+  }, [canOverrideSoldBy]);
+
+  useEffect(() => {
+    const sourcePayload = lead?.source_payload ?? lead?.sourcePayload ?? null;
+    const persistedSoldByUserId =
+      typeof sourcePayload?.soldByUserId === "string" && sourcePayload.soldByUserId.trim()
+        ? sourcePayload.soldByUserId.trim()
+        : typeof sourcePayload?.sold_by_user_id === "string" && sourcePayload.sold_by_user_id.trim()
+          ? sourcePayload.sold_by_user_id.trim()
+          : "";
+
+    setSoldByUserId(persistedSoldByUserId || leadOwnerId || currentUserId || "");
+  }, [currentUserId, lead?.id, lead?.ownerId, lead?.owner_id, lead?.sourcePayload, lead?.source_payload, leadOwnerId]);
+
   const captureContactId = useCallback((contact: AwsActiveContact | null | undefined, attempts = 10) => {
     const contactId = contact?.getContactId?.() ?? null;
     if (contactId) {
@@ -1503,11 +1616,19 @@ export default function LeadExecutionPage() {
           leadId,
           closedDealValue: inferredDealValue,
           stripeCheckoutLink: checkoutLink || null,
+          soldByUserId: canOverrideSoldBy ? soldByUserId || null : null,
         }),
       });
 
       const payload = (await response.json()) as {
-        closed?: { closedAt: string; closedDealValue: number; stripeCheckoutLink: string | null };
+        closed?: {
+          closedAt: string;
+          closedDealValue: number;
+          stripeCheckoutLink: string | null;
+          soldByUserId?: string | null;
+          soldByName?: string | null;
+          soldByEmail?: string | null;
+        };
         error?: string;
       };
 
@@ -1526,6 +1647,9 @@ export default function LeadExecutionPage() {
                 closedDealValue: payload.closed?.closedDealValue ?? inferredDealValue,
                 closedAt: payload.closed?.closedAt ?? new Date().toISOString(),
                 stripeCheckoutLink: payload.closed?.stripeCheckoutLink ?? (checkoutLink || null),
+                soldByUserId: payload.closed?.soldByUserId ?? (canOverrideSoldBy ? soldByUserId || null : leadOwnerId || currentUserId || null),
+                soldByName: payload.closed?.soldByName ?? null,
+                soldByEmail: payload.closed?.soldByEmail ?? null,
               },
             }
           : previous,
@@ -2224,10 +2348,33 @@ export default function LeadExecutionPage() {
                   </p>
                 </div>
               ) : null}
+              {canOverrideSoldBy ? (
+                <label className="block rounded-lg border border-emerald-400/20 bg-emerald-500/5 p-3 text-left">
+                  <span className="block text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-200">Sold By</span>
+                  <select
+                    value={soldByUserId}
+                    onChange={(event) => setSoldByUserId(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-emerald-300/30 bg-zinc-950 px-2 py-2 text-xs text-zinc-100 outline-none focus:border-emerald-300"
+                  >
+                    {availableSoldByOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}{option.email ? ` (${option.email})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-2 block text-[11px] text-emerald-100/80">
+                    Superadmin can override the seller. Lead ownership stays unchanged.
+                  </span>
+                </label>
+              ) : (
+                <p className="text-[11px] text-zinc-500">
+                  Sold by will credit the current lead owner automatically.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={markLeadAsClosedDeal}
-                disabled={closingDeal}
+                disabled={closingDeal || (canOverrideSoldBy && !soldByUserId)}
                 className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
