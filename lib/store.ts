@@ -272,6 +272,46 @@ export async function saveManagedUserSettings(
   }
 }
 
+export async function inviteManagedUser(input: {
+  email: string;
+  name: string;
+  role: UserRole;
+  commissionRate: number | null;
+}) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to invite users.");
+
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (!normalizedEmail || !normalizedEmail.includes("@")) throw new Error("A valid email is required.");
+  if (!input.name.trim()) throw new Error("A name is required.");
+
+  const redirectTo = `${process.env.NEXT_PUBLIC_BASE_URL ?? "https://felix-crm-xi.vercel.app"}/login`;
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/invite`, {
+    method: "POST",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email: normalizedEmail,
+      data: {
+        name: input.name.trim(),
+        role: input.role,
+        commissionRate: input.commissionRate,
+      },
+      redirect_to: redirectTo,
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || "Failed to invite user.");
+  }
+
+  return text ? (parseJsonSafely<Record<string, unknown>>(text) ?? {}) : {};
+}
+
 export async function saveAssignableUserCommissionRate(userId: string, commissionRate: number | null) {
   if (!hasDb) throw new Error("Supabase environment variables are required to save commission rates.");
 

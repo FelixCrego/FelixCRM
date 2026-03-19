@@ -33,6 +33,10 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
   const [message, setMessage] = useState("");
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState<UserRole>("REP");
+  const [inviteRate, setInviteRate] = useState("");
 
   const stats = useMemo(() => {
     return {
@@ -81,6 +85,42 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
     });
   };
 
+  const inviteUser = () => {
+    setMessage("");
+    setPendingUserId("invite");
+    startTransition(() => {
+      const parsedRate = inviteRate.trim() ? Number(inviteRate) / 100 : null;
+      void fetch("/api/users/manage", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          name: inviteName.trim(),
+          role: inviteRole,
+          commissionRate: parsedRate,
+        }),
+      })
+        .then(async (response) => {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          if (!response.ok) {
+            throw new Error(payload?.error || "Failed to invite user.");
+          }
+          setMessage(`Invite sent to ${inviteEmail.trim()}.`);
+          setInviteEmail("");
+          setInviteName("");
+          setInviteRole("REP");
+          setInviteRate("");
+          router.refresh();
+        })
+        .catch((error) => {
+          setMessage(error instanceof Error ? error.message : "Failed to invite user.");
+        })
+        .finally(() => {
+          setPendingUserId(null);
+        });
+    });
+  };
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-4">
@@ -103,6 +143,54 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
       </section>
 
       {message ? <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-300">{message}</div> : null}
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-zinc-100">Invite User</h2>
+          <p className="mt-1 text-sm text-zinc-400">Create a new rep, manager, or superadmin invite from the CRM.</p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-4">
+          <input
+            value={inviteName}
+            onChange={(event) => setInviteName(event.target.value)}
+            placeholder="Full name"
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          />
+          <input
+            value={inviteEmail}
+            onChange={(event) => setInviteEmail(event.target.value)}
+            placeholder="Email"
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          />
+          <select
+            value={inviteRole}
+            onChange={(event) => setInviteRole(event.target.value as UserRole)}
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+          >
+            <option value="REP">Rep</option>
+            <option value="TEAM_LEAD">Team Lead</option>
+            <option value="MANAGER">Manager</option>
+            <option value="SUPER_ADMIN">Super Admin</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <input
+              value={inviteRate}
+              onChange={(event) => setInviteRate(event.target.value)}
+              placeholder="Commission %"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none"
+            />
+            <button
+              type="button"
+              onClick={inviteUser}
+              disabled={(pendingUserId === "invite" && isPending) || !inviteEmail.trim() || !inviteName.trim()}
+              className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
+            >
+              {pendingUserId === "invite" && isPending ? "Inviting..." : "Send Invite"}
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
         <div className="mb-4">
