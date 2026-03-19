@@ -606,20 +606,23 @@ export default function DashboardPage() {
 
     void loadMetrics("initial");
 
-    const interval = window.setInterval(() => {
-      void loadMetrics("refresh");
-    }, 15000);
-
     const handleFocus = () => {
       void loadMetrics("refresh");
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadMetrics("refresh");
+      }
+    };
+
     window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       isActive = false;
-      window.clearInterval(interval);
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -643,16 +646,37 @@ export default function DashboardPage() {
   const effectiveRole = metrics?.viewerRole ?? activeRole;
   const shouldShowTeamBoard = effectiveRole === "TEAM_LEAD" || effectiveRole === "MANAGER" || effectiveRole === "SUPER_ADMIN";
   const shouldShowBothBoards = effectiveRole === "SUPER_ADMIN";
+  const refreshBoard = () => {
+    setRefreshing(true);
+    void fetch("/api/dashboard/metrics", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json().catch(() => null)) as DashboardMetrics | null;
+      })
+      .then((payload) => {
+        if (payload) {
+          setMetrics(payload);
+        }
+      })
+      .finally(() => {
+        setRefreshing(false);
+      });
+  };
 
   if (shouldShowTeamBoard) {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
           <span>{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
-          <span className="inline-flex items-center gap-2">
-            {refreshing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
-            Auto-refresh every 15s
-          </span>
+          <button
+            type="button"
+            onClick={refreshBoard}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh Board
+          </button>
         </div>
         <ManagerDashboard metrics={metrics} loading={loading} showRepWorkspace={!shouldShowBothBoards} />
         {shouldShowBothBoards ? (
@@ -675,10 +699,15 @@ export default function DashboardPage() {
     <div className="space-y-3">
       <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
         <span>{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
-        <span className="inline-flex items-center gap-2">
-          {refreshing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
-          Auto-refresh every 15s
-        </span>
+        <button
+          type="button"
+          onClick={refreshBoard}
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          Refresh Board
+        </button>
       </div>
       <RepDashboard metrics={metrics} loading={loading} />
     </div>
