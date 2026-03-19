@@ -80,9 +80,19 @@ export type AssignableUser = {
   id: string;
   email: string | null;
   name: string;
+  commissionRate: number | null;
 };
 
-export async function listAssignableUsers(): Promise<AssignableUser[]> {
+function parseCommissionRateValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
+async function listAuthAdminUsersRaw(): Promise<Array<AuthAdminUser & { id: string }>> {
   if (!hasDb) throw new Error("Supabase environment variables are required to list users.");
 
   const response = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=200`, {
@@ -99,8 +109,12 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
   }
 
   const payload = (await response.json()) as { users?: AuthAdminUser[] };
-  return (payload.users ?? [])
-    .filter((user): user is AuthAdminUser & { id: string } => typeof user.id === "string" && user.id.length > 0)
+  return (payload.users ?? []).filter((user): user is AuthAdminUser & { id: string } => typeof user.id === "string" && user.id.length > 0);
+}
+
+export async function listAssignableUsers(): Promise<AssignableUser[]> {
+  const users = await listAuthAdminUsersRaw();
+  return users
     .map((user) => {
       const metadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
       const email = typeof user.email === "string" && user.email.trim() ? user.email.trim().toLowerCase() : null;
@@ -117,9 +131,46 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
         id: user.id,
         email,
         name: nameCandidate,
+        commissionRate: parseCommissionRateValue(metadata.commissionRate),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function saveAssignableUserCommissionRate(userId: string, commissionRate: number | null) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save commission rates.");
+
+  const users = await listAuthAdminUsersRaw();
+  const targetUser = users.find((user) => user.id === userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const metadata =
+    targetUser.user_metadata && typeof targetUser.user_metadata === "object"
+      ? { ...targetUser.user_metadata }
+      : {};
+
+  if (commissionRate === null) {
+    delete metadata.commissionRate;
+  } else {
+    metadata.commissionRate = commissionRate;
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      user_metadata: metadata,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to save commission rate.");
+  }
 }
 
 export async function getEffectiveUserRole(userId: string, email?: string | null): Promise<UserRole> {

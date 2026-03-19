@@ -1,12 +1,10 @@
 import { getAuthenticatedUser } from "@/lib/auth";
-import { canUserViewAllLeads, listAssignableUsers, listLeads, prettyNameFromEmail } from "@/lib/store";
+import CommissionRateEditor from "./commission-rate-editor";
+import { canUserManageAllLeads, canUserViewAllLeads, listAssignableUsers, listLeads, prettyNameFromEmail } from "@/lib/store";
 import type { Lead } from "@/lib/types";
 
 const FEE_HOLDBACK_RATE = 0.06;
 const DEFAULT_COMMISSION_RATE = 0.1;
-const COMMISSION_RATE_BY_EMAIL: Record<string, number> = {
-  "eliot30523@gmail.com": 0.5,
-};
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -39,9 +37,15 @@ function getAttributedRepEmail(lead: Lead, repEmailById: Map<string, string | nu
   return null;
 }
 
-function getCommissionRate(email: string | null | undefined) {
+function getCommissionRate(email: string | null | undefined, explicitRate: number | null | undefined) {
+  if (typeof explicitRate === "number" && Number.isFinite(explicitRate) && explicitRate >= 0) {
+    return explicitRate;
+  }
   const normalized = typeof email === "string" ? email.trim().toLowerCase() : "";
-  return COMMISSION_RATE_BY_EMAIL[normalized] ?? DEFAULT_COMMISSION_RATE;
+  if (normalized === "eliot30523@gmail.com") {
+    return 0.5;
+  }
+  return DEFAULT_COMMISSION_RATE;
 }
 
 function getClosedTimestamp(lead: Lead) {
@@ -61,7 +65,12 @@ type CommissionLedgerRow = {
   soldByEmail: string | null;
 };
 
-function buildLedger(leads: Lead[], repNameById: Map<string, string>, repEmailById: Map<string, string | null>) {
+function buildLedger(
+  leads: Lead[],
+  repNameById: Map<string, string>,
+  repEmailById: Map<string, string | null>,
+  repCommissionRateById: Map<string, number | null>,
+) {
   return leads
     .filter((lead) => lead.status === "CLOSED" && typeof lead.closedDealValue === "number" && lead.closedDealValue > 0 && lead.closedAt)
     .map((lead) => {
@@ -69,7 +78,9 @@ function buildLedger(leads: Lead[], repNameById: Map<string, string>, repEmailBy
       const feeHoldback = grossRevenue * FEE_HOLDBACK_RATE;
       const netRevenue = grossRevenue - feeHoldback;
       const soldByEmail = getAttributedRepEmail(lead, repEmailById);
-      const commissionRate = getCommissionRate(soldByEmail);
+      const attributedRepId = getAttributedRepId(lead);
+      const explicitRate = attributedRepId ? repCommissionRateById.get(attributedRepId) ?? null : null;
+      const commissionRate = getCommissionRate(soldByEmail, explicitRate);
 
       return {
         leadId: lead.id,
@@ -108,6 +119,7 @@ export default async function CommissionsPage() {
   }
 
   const includeAll = await canUserViewAllLeads(user.id, user.email);
+  const isSuperAdmin = await canUserManageAllLeads(user.id, user.email);
   const [allVisibleLeads, assignableUsers] = await Promise.all([
     listLeads(user.id, { includeAll }),
     listAssignableUsers().catch(() => []),
@@ -115,8 +127,9 @@ export default async function CommissionsPage() {
 
   const repNameById = new Map(assignableUsers.map((rep) => [rep.id, rep.name]));
   const repEmailById = new Map(assignableUsers.map((rep) => [rep.id, rep.email]));
+  const repCommissionRateById = new Map(assignableUsers.map((rep) => [rep.id, rep.commissionRate]));
   const leadById = new Map(allVisibleLeads.map((lead) => [lead.id, lead]));
-  const fullLedger = buildLedger(allVisibleLeads, repNameById, repEmailById);
+  const fullLedger = buildLedger(allVisibleLeads, repNameById, repEmailById, repCommissionRateById);
   const personalLedger = fullLedger.filter((row) => {
     const lead = leadById.get(row.leadId);
     return lead ? getAttributedRepId(lead) === user.id : false;
@@ -128,7 +141,7 @@ export default async function CommissionsPage() {
   const netRevenue = visibleLedger.reduce((sum, row) => sum + row.netRevenue, 0);
   const commissionEarned = visibleLedger.reduce((sum, row) => sum + row.commissionEarned, 0);
   const averageCommissionRate =
-    visibleLedger.length > 0 ? visibleLedger.reduce((sum, row) => sum + row.commissionRate, 0) / visibleLedger.length : getCommissionRate(user.email);
+    visibleLedger.length > 0 ? visibleLedger.reduce((sum, row) => sum + row.commissionRate, 0) / visibleLedger.length : getCommissionRate(user.email, null);
 
   const groupedRepSummaries = includeAll
     ? Object.values(
@@ -188,9 +201,20 @@ export default async function CommissionsPage() {
         <MetricCard
           label="Avg Commission Rate"
           value={formatPercent(averageCommissionRate)}
-          detail={includeAll ? "Weighted by current rep mappings." : `Your current rate is ${formatPercent(getCommissionRate(user.email))}.`}
+          detail={includeAll ? "Weighted by current rep mappings." : `Your current rate is ${formatPercent(getCommissionRate(user.email, null))}.`}
         />
       </section>
+
+      {isSuperAdmin ? (
+        <CommissionRateEditor
+          initialUsers={assignableUsers.map((rep) => ({
+            id: rep.id,
+            name: rep.name,
+            email: rep.email,
+            commissionRate: rep.commissionRate,
+          }))}
+        />
+      ) : null}
 
       {includeAll ? (
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
