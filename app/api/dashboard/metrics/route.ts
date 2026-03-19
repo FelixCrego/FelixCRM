@@ -13,8 +13,6 @@ const CALLS_TABLE_CANDIDATES = ["call_analytics"];
 type UserRow = {
   id?: string | null;
   name?: string | null;
-  full_name?: string | null;
-  username?: string | null;
   email?: string | null;
 };
 
@@ -93,13 +91,13 @@ async function requestFirstWorkingTable<T>(candidates: string[], query?: Record<
 
 async function listUsersById() {
   const rows = await requestFirstWorkingTable<UserRow[]>(USERS_TABLE_CANDIDATES, {
-    select: "id,name,full_name,username,email",
+    select: "id,name,email",
   });
 
   const users = new Map<string, string>();
   for (const row of rows) {
     if (typeof row.id !== "string" || !row.id) continue;
-    const name = [row.name, row.full_name, row.username, row.email].find((value) => typeof value === "string" && value.trim().length > 0);
+    const name = [row.name, row.email].find((value) => typeof value === "string" && value.trim().length > 0);
     users.set(row.id, typeof name === "string" ? name : row.id);
   }
   return users;
