@@ -118,6 +118,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
+    { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/billing", label: "Billing/Stripe", icon: Banknote },
     { href: "/user-management", label: "User Management", icon: Users },
     { href: "/system-logs", label: "System Logs", icon: ScrollText },
