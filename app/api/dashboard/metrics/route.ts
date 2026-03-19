@@ -5,6 +5,7 @@ import type { Lead } from "@/lib/types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const DASHBOARD_TIME_ZONE = "America/New_York";
 
 const USERS_TABLE_CANDIDATES = ["User", "user", "users"];
 const CALLS_TABLE_CANDIDATES = ["call_analytics"];
@@ -114,26 +115,52 @@ async function listRecentCalls(limit = 1500) {
   return rows.filter((row) => typeof row.lead_id === "string" && row.lead_id);
 }
 
-function startOfToday(now: Date) {
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+function getZonedParts(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    weekday: get("weekday"),
+  };
 }
 
-function startOfWeek(now: Date) {
-  const start = startOfToday(now);
-  const day = start.getDay();
-  const delta = day === 0 ? 6 : day - 1;
-  start.setDate(start.getDate() - delta);
-  return start;
+function toDayStamp(year: number, month: number, day: number) {
+  return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
 }
 
-function startOfMonth(now: Date) {
-  return new Date(now.getFullYear(), now.getMonth(), 1);
+function getDayStampInTimeZone(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const parts = getZonedParts(date, timeZone);
+  return toDayStamp(parts.year, parts.month, parts.day);
 }
 
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
+function isSameDayInTimeZone(date: Date, reference: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  return getDayStampInTimeZone(date, timeZone) === getDayStampInTimeZone(reference, timeZone);
+}
+
+function getWeekStartStampInTimeZone(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const parts = getZonedParts(date, timeZone);
+  const weekdayIndex = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(parts.weekday);
+  const normalizedWeekdayIndex = weekdayIndex >= 0 ? weekdayIndex : 0;
+  return toDayStamp(parts.year, parts.month, parts.day) - normalizedWeekdayIndex;
+}
+
+function isOnOrAfterWeekStartInTimeZone(date: Date, reference: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  return getDayStampInTimeZone(date, timeZone) >= getWeekStartStampInTimeZone(reference, timeZone);
+}
+
+function isSameMonthInTimeZone(date: Date, reference: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const value = getZonedParts(date, timeZone);
+  const ref = getZonedParts(reference, timeZone);
+  return value.year === ref.year && value.month === ref.month;
 }
 
 function parseDate(value?: string | null) {
@@ -188,7 +215,8 @@ function computeScore(params: { dials: number; conversations: number; demos: num
 }
 
 function dayKey(date: Date) {
-  return date.toISOString().slice(0, 10);
+  const parts = getZonedParts(date, DASHBOARD_TIME_ZONE);
+  return `${parts.year.toString().padStart(4, "0")}-${parts.month.toString().padStart(2, "0")}-${parts.day.toString().padStart(2, "0")}`;
 }
 
 function computeStreak(
@@ -229,12 +257,13 @@ function computeStreak(
   }
 
   let streak = 0;
-  let cursor = startOfToday(now);
+  let cursorStamp = getDayStampInTimeZone(now, DASHBOARD_TIME_ZONE);
   while (true) {
-    const key = dayKey(cursor);
+    const cursorDate = new Date(cursorStamp * 86400000);
+    const key = dayKey(cursorDate);
     if ((scoresByDay.get(key) ?? 0) <= 0) break;
     streak += 1;
-    cursor = addDays(cursor, -1);
+    cursorStamp -= 1;
   }
 
   return streak;
@@ -286,9 +315,6 @@ export async function GET() {
     }
 
     const now = new Date();
-    const todayStart = startOfToday(now);
-    const weekStart = startOfWeek(now);
-    const monthStart = startOfMonth(now);
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
 
@@ -307,27 +333,27 @@ export async function GET() {
 
     const repCallsToday = repCalls.filter((call) => {
       const at = parseDate(call.created_at);
-      return at ? at.getTime() >= todayStart.getTime() : false;
+      return at ? isSameDayInTimeZone(at, now) : false;
     });
     const repConversationsToday = repCallsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
     const repTalkSecondsToday = sum(repCallsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0)));
     const repDemosThisWeek = repLeads.filter((lead) => {
       const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-      if (bookedAt) return bookedAt.getTime() >= weekStart.getTime();
+      if (bookedAt) return isOnOrAfterWeekStartInTimeZone(bookedAt, now);
       const demoAt = parseDemoDate(lead);
-      return demoAt ? demoAt.getTime() >= weekStart.getTime() && demoAt.getTime() <= addDays(weekStart, 7).getTime() : false;
+      return demoAt ? isOnOrAfterWeekStartInTimeZone(demoAt, now) : false;
     });
     const repDemosToday = repLeads.filter((lead) => {
       const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-      return bookedAt ? bookedAt.getTime() >= todayStart.getTime() : false;
+      return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
     });
     const repClosedThisMonth = repLeads.filter((lead) => {
       const closedAt = parseDate(lead.closedAt);
-      return closedAt ? closedAt.getTime() >= monthStart.getTime() : false;
+      return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
     const repClosedToday = repClosedThisMonth.filter((lead) => {
       const closedAt = parseDate(lead.closedAt);
-      return closedAt ? closedAt.getTime() >= todayStart.getTime() : false;
+      return closedAt ? isSameDayInTimeZone(closedAt, now) : false;
     });
     const repRevenueThisMonth = sum(repClosedThisMonth.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0)));
     const repLiveSites = repLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
@@ -371,7 +397,7 @@ export async function GET() {
           business: lead.businessName,
           event: `completed a ${minutesLabel(durationSeconds)} call`,
           context: `${normalizeSentiment(call.overall_sentiment)} - ${talkSplit} - ${formatRelative(at, now)}`,
-          live: at.getTime() >= addDays(now, -1).getTime(),
+          live: getDayStampInTimeZone(at, DASHBOARD_TIME_ZONE) >= getDayStampInTimeZone(now, DASHBOARD_TIME_ZONE) - 1,
         };
       }).filter(Boolean),
       ...repLeads
@@ -448,22 +474,22 @@ export async function GET() {
       const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
       const callsToday = ownedCalls.filter((call) => {
         const at = parseDate(call.created_at);
-        return at ? at.getTime() >= todayStart.getTime() : false;
+        return at ? isSameDayInTimeZone(at, now) : false;
       });
       const conversationsToday = callsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
       const demosThisWeek = ownedLeads.filter((lead) => {
         const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-        if (bookedAt) return bookedAt.getTime() >= weekStart.getTime();
+        if (bookedAt) return isOnOrAfterWeekStartInTimeZone(bookedAt, now);
         const demoAt = parseDemoDate(lead);
-        return demoAt ? demoAt.getTime() >= weekStart.getTime() && demoAt.getTime() <= addDays(weekStart, 7).getTime() : false;
+        return demoAt ? isOnOrAfterWeekStartInTimeZone(demoAt, now) : false;
       });
       const closedThisMonth = ownedLeads.filter((lead) => {
         const closedAt = parseDate(lead.closedAt);
-        return closedAt ? closedAt.getTime() >= monthStart.getTime() : false;
+        return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
       });
       const closesToday = closedThisMonth.filter((lead) => {
         const closedAt = parseDate(lead.closedAt);
-        return closedAt ? closedAt.getTime() >= todayStart.getTime() : false;
+        return closedAt ? isSameDayInTimeZone(closedAt, now) : false;
       });
 
       row.userName = usersById.get(row.userId) ?? row.userName;
@@ -477,7 +503,7 @@ export async function GET() {
         conversations: conversationsToday.length,
         demos: ownedLeads.filter((lead) => {
           const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-          return bookedAt ? bookedAt.getTime() >= todayStart.getTime() : false;
+          return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
         }).length,
         closes: closesToday.length,
       });
@@ -500,7 +526,7 @@ export async function GET() {
     });
     const closedThisMonthAll = visibleLeads.filter((lead) => {
       const closedAt = parseDate(lead.closedAt);
-      return closedAt ? closedAt.getTime() >= monthStart.getTime() : false;
+      return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
     const liveSitesAll = visibleLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
 
