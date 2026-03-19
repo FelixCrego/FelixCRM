@@ -180,6 +180,15 @@ export async function POST(request: Request) {
       throw new Error("Google Calendar event was created, but no Meet link was returned.");
     }
 
+    if (payload.leadId) {
+      await setLeadDemoBooking(payload.leadId, {
+        date: payload.date,
+        time: payload.time,
+        timeZone: payload.timeZone,
+        meetLink,
+      });
+    }
+
     const saveResult = await saveDemoRecord({
       lead_id: payload.leadId,
       lead_name: payload.leadName?.trim() || "Unknown Lead",
@@ -189,15 +198,6 @@ export async function POST(request: Request) {
       rep_id: user.id,
       rep_email: user.email ?? null,
     });
-
-    if (payload.leadId) {
-      await setLeadDemoBooking(payload.leadId, {
-        date: payload.date,
-        time: payload.time,
-        timeZone: payload.timeZone,
-        meetLink,
-      }).catch(() => null);
-    }
 
     return NextResponse.json(
       {

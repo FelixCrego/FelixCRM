@@ -1388,7 +1388,9 @@ export default function LeadExecutionPage() {
         })
         .eq("id", leadId);
 
-      if (!persistDemoError) {
+      if (persistDemoError) {
+        console.warn("Client demoBooking persistence failed:", persistDemoError);
+      } else {
         setLead((previous) =>
           previous
             ? {
