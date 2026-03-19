@@ -57,6 +57,15 @@ export type Lead = {
   soldByUserId?: string | null;
   soldByName?: string | null;
   soldByEmail?: string | null;
+  billingProfile?: {
+    billingType?: "ONE_TIME" | "RECURRING";
+    recurringAmount?: number | null;
+    oneTimeAmount?: number | null;
+    autoRenew?: boolean;
+    billingStatus?: "ACTIVE" | "PAUSED" | "CANCELLED" | "PAID";
+    billingStartDate?: string | null;
+    notes?: string | null;
+  } | null;
   closedDealValue?: number | null;
   closedAt?: string | null;
   stripeCheckoutLink?: string | null;

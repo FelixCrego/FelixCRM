@@ -83,6 +83,20 @@ export type AssignableUser = {
   commissionRate: number | null;
 };
 
+export type FinanceExpense = {
+  id: string;
+  label: string;
+  amount: number;
+  cadence: "MONTHLY" | "ONE_TIME";
+  effectiveDate?: string | null;
+  notes?: string | null;
+};
+
+export type FinanceSettings = {
+  feeHoldbackRate: number;
+  expenses: FinanceExpense[];
+};
+
 function parseCommissionRateValue(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
   if (typeof value === "string" && value.trim()) {
@@ -90,6 +104,40 @@ function parseCommissionRateValue(value: unknown) {
     if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
   return null;
+}
+
+function normalizeFinanceExpense(value: unknown): FinanceExpense | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const label = typeof input.label === "string" ? input.label.trim() : "";
+  const amount =
+    typeof input.amount === "number" && Number.isFinite(input.amount)
+      ? input.amount
+      : typeof input.amount === "string" && input.amount.trim()
+        ? Number(input.amount)
+        : NaN;
+  if (!label || !Number.isFinite(amount) || amount < 0) return null;
+
+  return {
+    id: typeof input.id === "string" && input.id.trim() ? input.id.trim() : crypto.randomUUID(),
+    label,
+    amount,
+    cadence: input.cadence === "ONE_TIME" ? "ONE_TIME" : "MONTHLY",
+    effectiveDate: typeof input.effectiveDate === "string" && input.effectiveDate.trim() ? input.effectiveDate.trim() : null,
+    notes: typeof input.notes === "string" && input.notes.trim() ? input.notes.trim() : null,
+  };
+}
+
+function normalizeFinanceSettings(value: unknown): FinanceSettings {
+  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const feeHoldbackRate =
+    typeof input.feeHoldbackRate === "number" && Number.isFinite(input.feeHoldbackRate) && input.feeHoldbackRate >= 0
+      ? input.feeHoldbackRate
+      : 0.06;
+  const expenses = Array.isArray(input.expenses)
+    ? input.expenses.map(normalizeFinanceExpense).filter((expense): expense is FinanceExpense => Boolean(expense))
+    : [];
+  return { feeHoldbackRate, expenses };
 }
 
 async function listAuthAdminUsersRaw(): Promise<Array<AuthAdminUser & { id: string }>> {
@@ -170,6 +218,48 @@ export async function saveAssignableUserCommissionRate(userId: string, commissio
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || "Failed to save commission rate.");
+  }
+}
+
+export async function getUserFinanceSettings(userId: string): Promise<FinanceSettings> {
+  const users = await listAuthAdminUsersRaw();
+  const targetUser = users.find((user) => user.id === userId);
+  const metadata = targetUser?.user_metadata && typeof targetUser.user_metadata === "object" ? targetUser.user_metadata : {};
+  return normalizeFinanceSettings(metadata.financeSettings);
+}
+
+export async function saveUserFinanceSettings(userId: string, settings: FinanceSettings) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save finance settings.");
+
+  const users = await listAuthAdminUsersRaw();
+  const targetUser = users.find((user) => user.id === userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const metadata =
+    targetUser.user_metadata && typeof targetUser.user_metadata === "object"
+      ? { ...targetUser.user_metadata }
+      : {};
+
+  metadata.financeSettings = {
+    feeHoldbackRate: settings.feeHoldbackRate,
+    expenses: settings.expenses,
+  };
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      user_metadata: metadata,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to save finance settings.");
   }
 }
 
@@ -451,6 +541,12 @@ function leadToMemory(lead: any): Lead {
       : typeof sourcePayload.sold_by_email === "string"
         ? sourcePayload.sold_by_email
         : null;
+  const billingProfileRaw =
+    sourcePayload.billingProfile && typeof sourcePayload.billingProfile === "object"
+      ? (sourcePayload.billingProfile as Record<string, unknown>)
+      : sourcePayload.billing_profile && typeof sourcePayload.billing_profile === "object"
+        ? (sourcePayload.billing_profile as Record<string, unknown>)
+        : null;
 
   return {
     id: lead.id,
@@ -469,6 +565,27 @@ function leadToMemory(lead: any): Lead {
     soldByUserId: soldByUserIdFromPayload,
     soldByName: soldByNameFromPayload,
     soldByEmail: soldByEmailFromPayload,
+    billingProfile:
+      billingProfileRaw
+        ? {
+            billingType: billingProfileRaw.billingType === "RECURRING" ? "RECURRING" : "ONE_TIME",
+            recurringAmount:
+              typeof billingProfileRaw.recurringAmount === "number" && Number.isFinite(billingProfileRaw.recurringAmount)
+                ? billingProfileRaw.recurringAmount
+                : null,
+            oneTimeAmount:
+              typeof billingProfileRaw.oneTimeAmount === "number" && Number.isFinite(billingProfileRaw.oneTimeAmount)
+                ? billingProfileRaw.oneTimeAmount
+                : null,
+            autoRenew: Boolean(billingProfileRaw.autoRenew),
+            billingStatus:
+              billingProfileRaw.billingStatus === "PAUSED" || billingProfileRaw.billingStatus === "CANCELLED" || billingProfileRaw.billingStatus === "PAID"
+                ? billingProfileRaw.billingStatus
+                : "ACTIVE",
+            billingStartDate: typeof billingProfileRaw.billingStartDate === "string" ? billingProfileRaw.billingStartDate : null,
+            notes: typeof billingProfileRaw.notes === "string" ? billingProfileRaw.notes : null,
+          }
+        : null,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     socialLinks: Array.isArray(sourcePayload.socialLinks)
       ? sourcePayload.socialLinks
@@ -1118,6 +1235,42 @@ export async function closeLeadDeal(params: {
     soldByName: soldByUser?.name ?? null,
     soldByEmail: soldByUser?.email ?? null,
   };
+}
+
+export async function saveLeadBillingProfile(
+  leadId: string,
+  billingProfile: NonNullable<Lead["billingProfile"]>,
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save billing profiles.");
+
+  const rows = await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(table, undefined, {
+      select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+      id: `eq.${leadId}`,
+      limit: "1",
+    }),
+  );
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+
+  await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(
+      table,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(
+          isSnakeLeadsTable(table)
+            ? { source_payload: { ...payload, billingProfile } }
+            : { sourcePayload: { ...payload, billingProfile } },
+        ),
+      },
+      { id: `eq.${leadId}` },
+    ),
+  );
 }
 
 function normalizeLeadContactsInput(contacts: LeadContactRecord[]): LeadContactRecord[] {
