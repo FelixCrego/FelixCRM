@@ -25,7 +25,6 @@ type CallAnalyticsRow = {
   agent_talk_time_pct?: number | null;
   customer_talk_time_pct?: number | null;
   interruptions?: number | null;
-  source_event_time?: string | null;
   created_at?: string | null;
 };
 
@@ -107,7 +106,7 @@ async function listUsersById() {
 
 async function listRecentCalls(limit = 1500) {
   const rows = await requestFirstWorkingTable<CallAnalyticsRow[]>(CALLS_TABLE_CANDIDATES, {
-    select: "contact_id,lead_id,duration_seconds,overall_sentiment,agent_talk_time_pct,customer_talk_time_pct,interruptions,source_event_time,created_at",
+    select: "contact_id,lead_id,duration_seconds,overall_sentiment,agent_talk_time_pct,customer_talk_time_pct,interruptions,created_at",
     order: "created_at.desc",
     limit: String(limit),
   });
@@ -203,7 +202,7 @@ function computeStreak(
 
   for (const call of calls) {
     if (typeof call.lead_id !== "string" || !leadIdsByOwner.has(call.lead_id)) continue;
-    const at = parseDate(call.source_event_time ?? call.created_at);
+    const at = parseDate(call.created_at);
     if (!at) continue;
     const key = dayKey(at);
     scoresByDay.set(key, (scoresByDay.get(key) ?? 0) + computeScore({
@@ -307,7 +306,7 @@ export async function GET() {
     const repCalls = calls.filter((call) => typeof call.lead_id === "string" && repLeadIds.has(call.lead_id));
 
     const repCallsToday = repCalls.filter((call) => {
-      const at = parseDate(call.source_event_time ?? call.created_at);
+      const at = parseDate(call.created_at);
       return at ? at.getTime() >= todayStart.getTime() : false;
     });
     const repConversationsToday = repCallsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
@@ -362,7 +361,7 @@ export async function GET() {
       ...repCalls.slice(0, 6).map((call) => {
         const lead = call.lead_id ? leadsById.get(call.lead_id) : null;
         if (!lead) return null;
-        const at = parseDate(call.source_event_time ?? call.created_at) ?? now;
+        const at = parseDate(call.created_at) ?? now;
         const durationSeconds = typeof call.duration_seconds === "number" ? call.duration_seconds : 0;
         const talkSplit = typeof call.agent_talk_time_pct === "number" && typeof call.customer_talk_time_pct === "number"
           ? `${Math.round(call.agent_talk_time_pct)} / ${Math.round(call.customer_talk_time_pct)} talk split`
@@ -448,7 +447,7 @@ export async function GET() {
       const ownedLeadIds = new Set(ownedLeads.map((lead) => lead.id));
       const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
       const callsToday = ownedCalls.filter((call) => {
-        const at = parseDate(call.source_event_time ?? call.created_at);
+        const at = parseDate(call.created_at);
         return at ? at.getTime() >= todayStart.getTime() : false;
       });
       const conversationsToday = callsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
