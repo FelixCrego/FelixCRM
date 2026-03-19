@@ -94,6 +94,9 @@ function normalizeLead(raw: unknown): Lead | null {
     deployedUrl: typeof lead.deployedUrl === "string" ? lead.deployedUrl : null,
     siteStatus,
     ownerId: typeof lead.ownerId === "string" ? lead.ownerId : null,
+    soldByUserId: typeof lead.soldByUserId === "string" ? lead.soldByUserId : null,
+    soldByName: typeof lead.soldByName === "string" ? lead.soldByName : null,
+    soldByEmail: typeof lead.soldByEmail === "string" ? lead.soldByEmail : null,
     closedDealValue: typeof lead.closedDealValue === "number" ? lead.closedDealValue : null,
     closedAt: typeof lead.closedAt === "string" ? lead.closedAt : null,
     stripeCheckoutLink: typeof lead.stripeCheckoutLink === "string" ? lead.stripeCheckoutLink : null,
@@ -347,6 +350,15 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const selectableLeadIds = useMemo(() => paginatedLeads.map((lead) => lead.id), [paginatedLeads]);
 
   const cumulativeClosedValue = useMemo(() => sortedLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [sortedLeads]);
+  const attributedSellerCount = useMemo(
+    () =>
+      new Set(
+        sortedLeads
+          .map((lead) => lead.soldByUserId ?? lead.ownerId ?? null)
+          .filter((value): value is string => typeof value === "string" && value.length > 0),
+      ).size,
+    [sortedLeads],
+  );
   const averageClosedDealValue = useMemo(
     () => (sortedLeads.length > 0 ? cumulativeClosedValue / sortedLeads.length : 0),
     [cumulativeClosedValue, sortedLeads.length],
@@ -411,7 +423,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       {deleteSuccess ? <p className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{deleteSuccess}</p> : null}
 
       {viewMode === "closed" ? (
-        <section className="grid gap-3 md:grid-cols-2">
+        <section className="grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Cumulative Closed Value</p>
             <p className="mt-2 text-3xl font-semibold text-emerald-200">{formatCurrency(cumulativeClosedValue)}</p>
@@ -419,6 +431,10 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Closed Deals Count</p>
             <p className="mt-2 text-3xl font-semibold text-zinc-100">{sortedLeads.length}</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Attributed Reps</p>
+            <p className="mt-2 text-3xl font-semibold text-zinc-100">{attributedSellerCount}</p>
           </div>
         </section>
       ) : null}
@@ -664,6 +680,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Vercel Status</th>
               {viewMode === "closed" ? <th className="px-4 py-3">Deal Value</th> : null}
+              {viewMode === "closed" ? <th className="px-4 py-3">Sold By</th> : null}
               {viewMode === "closed" ? <th className="px-4 py-3">Closed Date</th> : null}
               <th className="px-4 py-3">Actions</th>
             </tr>
@@ -719,6 +736,14 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                   </span>
                 </td>
                 {viewMode === "closed" ? <td className="px-4 py-3 font-medium text-emerald-200">{formatCurrency(lead?.closedDealValue)}</td> : null}
+                {viewMode === "closed" ? (
+                  <td className="px-4 py-3 text-zinc-300">
+                    <div className="flex flex-col">
+                      <span>{lead?.soldByName || "Lead Owner"}</span>
+                      <span className="text-xs text-zinc-500">{lead?.soldByEmail || "Auto-attributed"}</span>
+                    </div>
+                  </td>
+                ) : null}
                 {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.closedAt ? new Date(lead.closedAt).toLocaleDateString() : "—"}</td> : null}
                 <td className="px-4 py-3 text-right" onClick={(event) => event.stopPropagation()}>
                   <div className="inline-flex items-center gap-2">
