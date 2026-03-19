@@ -547,6 +547,12 @@ function leadToMemory(lead: any): Lead {
       : sourcePayload.billing_profile && typeof sourcePayload.billing_profile === "object"
         ? (sourcePayload.billing_profile as Record<string, unknown>)
         : null;
+  const commissionPayoutRaw =
+    sourcePayload.commissionPayout && typeof sourcePayload.commissionPayout === "object"
+      ? (sourcePayload.commissionPayout as Record<string, unknown>)
+      : sourcePayload.commission_payout && typeof sourcePayload.commission_payout === "object"
+        ? (sourcePayload.commission_payout as Record<string, unknown>)
+        : null;
 
   return {
     id: lead.id,
@@ -587,6 +593,20 @@ function leadToMemory(lead: any): Lead {
             stripeSubscriptionId: typeof billingProfileRaw.stripeSubscriptionId === "string" ? billingProfileRaw.stripeSubscriptionId : null,
             stripeCheckoutSessionId: typeof billingProfileRaw.stripeCheckoutSessionId === "string" ? billingProfileRaw.stripeCheckoutSessionId : null,
             notes: typeof billingProfileRaw.notes === "string" ? billingProfileRaw.notes : null,
+          }
+        : null,
+    commissionPayout:
+      commissionPayoutRaw
+        ? {
+            status: commissionPayoutRaw.status === "PAID" ? "PAID" : "UNPAID",
+            paidAt: typeof commissionPayoutRaw.paidAt === "string" ? commissionPayoutRaw.paidAt : null,
+            paidAmount:
+              typeof commissionPayoutRaw.paidAmount === "number" && Number.isFinite(commissionPayoutRaw.paidAmount)
+                ? commissionPayoutRaw.paidAmount
+                : null,
+            paidByUserId: typeof commissionPayoutRaw.paidByUserId === "string" ? commissionPayoutRaw.paidByUserId : null,
+            paidByName: typeof commissionPayoutRaw.paidByName === "string" ? commissionPayoutRaw.paidByName : null,
+            note: typeof commissionPayoutRaw.note === "string" ? commissionPayoutRaw.note : null,
           }
         : null,
     updatedAt: new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
@@ -1269,6 +1289,42 @@ export async function saveLeadBillingProfile(
           isSnakeLeadsTable(table)
             ? { source_payload: { ...payload, billingProfile } }
             : { sourcePayload: { ...payload, billingProfile } },
+        ),
+      },
+      { id: `eq.${leadId}` },
+    ),
+  );
+}
+
+export async function saveLeadCommissionPayout(
+  leadId: string,
+  commissionPayout: NonNullable<Lead["commissionPayout"]>,
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save commission payouts.");
+
+  const rows = await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(table, undefined, {
+      select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+      id: `eq.${leadId}`,
+      limit: "1",
+    }),
+  );
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+
+  await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(
+      table,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(
+          isSnakeLeadsTable(table)
+            ? { source_payload: { ...payload, commissionPayout } }
+            : { sourcePayload: { ...payload, commissionPayout } },
         ),
       },
       { id: `eq.${leadId}` },

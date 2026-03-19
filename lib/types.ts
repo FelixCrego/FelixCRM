@@ -69,6 +69,14 @@ export type Lead = {
     stripeCheckoutSessionId?: string | null;
     notes?: string | null;
   } | null;
+  commissionPayout?: {
+    status?: "UNPAID" | "PAID";
+    paidAt?: string | null;
+    paidAmount?: number | null;
+    paidByUserId?: string | null;
+    paidByName?: string | null;
+    note?: string | null;
+  } | null;
   closedDealValue?: number | null;
   closedAt?: string | null;
   stripeCheckoutLink?: string | null;

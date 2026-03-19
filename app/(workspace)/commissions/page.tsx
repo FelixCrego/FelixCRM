@@ -1,5 +1,6 @@
 import { getAuthenticatedUser } from "@/lib/auth";
 import CommissionRateEditor from "./commission-rate-editor";
+import CommissionPayoutLedger from "./commission-payout-ledger";
 import { canUserManageAllLeads, canUserViewAllLeads, listAssignableUsers, listLeads, prettyNameFromEmail } from "@/lib/store";
 import type { Lead } from "@/lib/types";
 
@@ -63,6 +64,11 @@ type CommissionLedgerRow = {
   commissionEarned: number;
   soldByName: string;
   soldByEmail: string | null;
+  payoutStatus: "PAID" | "UNPAID";
+  payoutPaidAt: string | null;
+  payoutPaidAmount: number | null;
+  payoutPaidByName: string | null;
+  payoutNote: string | null;
 };
 
 function buildLedger(
@@ -93,6 +99,11 @@ function buildLedger(
         commissionEarned: netRevenue * commissionRate,
         soldByName: getAttributedRepName(lead, repNameById),
         soldByEmail,
+        payoutStatus: lead.commissionPayout?.status === "PAID" ? "PAID" : "UNPAID",
+        payoutPaidAt: lead.commissionPayout?.paidAt ?? null,
+        payoutPaidAmount: lead.commissionPayout?.paidAmount ?? null,
+        payoutPaidByName: lead.commissionPayout?.paidByName ?? null,
+        payoutNote: lead.commissionPayout?.note ?? null,
       } satisfies CommissionLedgerRow;
     })
     .sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime());
@@ -140,6 +151,8 @@ export default async function CommissionsPage() {
   const feeHoldback = visibleLedger.reduce((sum, row) => sum + row.feeHoldback, 0);
   const netRevenue = visibleLedger.reduce((sum, row) => sum + row.netRevenue, 0);
   const commissionEarned = visibleLedger.reduce((sum, row) => sum + row.commissionEarned, 0);
+  const paidOut = visibleLedger.reduce((sum, row) => sum + (row.payoutStatus === "PAID" ? row.payoutPaidAmount ?? row.commissionEarned : 0), 0);
+  const unpaidCommission = visibleLedger.reduce((sum, row) => sum + (row.payoutStatus === "UNPAID" ? row.commissionEarned : 0), 0);
   const averageCommissionRate =
     visibleLedger.length > 0 ? visibleLedger.reduce((sum, row) => sum + row.commissionRate, 0) / visibleLedger.length : getCommissionRate(user.email, null);
 
@@ -182,7 +195,7 @@ export default async function CommissionsPage() {
         </p>
       </header>
 
-      <section className="grid gap-4 xl:grid-cols-4">
+      <section className="grid gap-4 xl:grid-cols-6">
         <MetricCard
           label="Closed Deals"
           value={String(visibleLedger.length)}
@@ -202,6 +215,16 @@ export default async function CommissionsPage() {
           label="Avg Commission Rate"
           value={formatPercent(averageCommissionRate)}
           detail={includeAll ? "Weighted by current rep mappings." : `Your current rate is ${formatPercent(getCommissionRate(user.email, null))}.`}
+        />
+        <MetricCard
+          label="Paid Out"
+          value={formatCurrency(paidOut)}
+          detail="Commission already marked as paid."
+        />
+        <MetricCard
+          label="Still Owed"
+          value={formatCurrency(unpaidCommission)}
+          detail="Open commission liability on closed deals."
         />
       </section>
 
@@ -261,52 +284,7 @@ export default async function CommissionsPage() {
         </section>
       ) : null}
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
-        <h2 className="mb-4 text-lg font-semibold text-zinc-100">Closed Deal Ledger</h2>
-        <div className="overflow-hidden rounded-xl border border-zinc-800">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-950 text-zinc-400">
-              <tr>
-                <th className="px-4 py-3">Deal</th>
-                <th className="px-4 py-3">Closed</th>
-                <th className="px-4 py-3">Sold By</th>
-                <th className="px-4 py-3">Gross</th>
-                <th className="px-4 py-3">Fee Holdback</th>
-                <th className="px-4 py-3">Net</th>
-                <th className="px-4 py-3">Rate</th>
-                <th className="px-4 py-3">Commission</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleLedger.length === 0 ? (
-                <tr className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-400">
-                  <td className="px-4 py-3" colSpan={8}>
-                    No real closed deals available for commission calculation yet.
-                  </td>
-                </tr>
-              ) : (
-                visibleLedger.map((row) => (
-                  <tr key={row.leadId} className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-200">
-                    <td className="px-4 py-3 font-medium text-white">{row.businessName}</td>
-                    <td className="px-4 py-3 text-zinc-400">{new Date(row.closedAt).toLocaleDateString()}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span>{row.soldByName}</span>
-                        <span className="text-xs text-zinc-500">{row.soldByEmail ?? "No email on file"}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 tabular-nums">{formatCurrency(row.grossRevenue)}</td>
-                    <td className="px-4 py-3 tabular-nums text-amber-300">-{formatCurrency(row.feeHoldback)}</td>
-                    <td className="px-4 py-3 tabular-nums">{formatCurrency(row.netRevenue)}</td>
-                    <td className="px-4 py-3">{formatPercent(row.commissionRate)}</td>
-                    <td className="px-4 py-3 font-semibold text-emerald-300 tabular-nums">{formatCurrency(row.commissionEarned)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <CommissionPayoutLedger rows={visibleLedger} isSuperAdmin={isSuperAdmin} />
     </div>
   );
 }
