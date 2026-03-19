@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { canUserViewAllLeads, getEffectiveUserRole, listClaimedLeadCountsByUser, listLeads } from "@/lib/store";
+import { canUserViewAllLeads, getEffectiveUserRole, listLeads } from "@/lib/store";
 import type { Lead } from "@/lib/types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -316,12 +316,17 @@ export async function GET() {
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
 
-    const [visibleLeads, usersById, recentCalls, claimedLeadCounts] = await Promise.all([
+    const [visibleLeads, usersById, recentCalls] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
       listRecentCalls(),
-      listClaimedLeadCountsByUser(),
     ]);
+
+    const claimedLeadCountsMap = new Map<string, number>();
+    for (const lead of visibleLeads) {
+      if (typeof lead.ownerId !== "string" || !lead.ownerId) continue;
+      claimedLeadCountsMap.set(lead.ownerId, (claimedLeadCountsMap.get(lead.ownerId) ?? 0) + 1);
+    }
 
     const calls = recentCalls.filter((call) => typeof call.lead_id === "string" && visibleLeads.some((lead) => lead.id === call.lead_id));
     const leadsById = new Map(visibleLeads.map((lead) => [lead.id, lead]));
@@ -433,12 +438,12 @@ export async function GET() {
       }
     }
 
-    for (const count of claimedLeadCounts) {
-      teamLeadIds.add(count.userId);
-      leaderboardSeed.set(count.userId, {
-        userId: count.userId,
-        userName: count.userName,
-        claimedLeads: count.claimedLeads,
+    for (const [userId, claimedLeads] of claimedLeadCountsMap.entries()) {
+      teamLeadIds.add(userId);
+      leaderboardSeed.set(userId, {
+        userId,
+        userName: usersById.get(userId) ?? userId,
+        claimedLeads,
         dialsToday: 0,
         conversationsToday: 0,
         demosThisWeek: 0,
