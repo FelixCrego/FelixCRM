@@ -73,6 +73,8 @@ export function prettyNameFromEmail(email: string) {
 type AuthAdminUser = {
   id?: string;
   email?: string | null;
+  created_at?: string | null;
+  last_sign_in_at?: string | null;
   user_metadata?: Record<string, unknown> | null;
 };
 
@@ -81,6 +83,12 @@ export type AssignableUser = {
   email: string | null;
   name: string;
   commissionRate: number | null;
+};
+
+export type ManagedUser = AssignableUser & {
+  role: UserRole;
+  createdAt: string | null;
+  lastSignInAt: string | null;
 };
 
 export type FinanceExpense = {
@@ -160,6 +168,11 @@ async function listAuthAdminUsersRaw(): Promise<Array<AuthAdminUser & { id: stri
   return (payload.users ?? []).filter((user): user is AuthAdminUser & { id: string } => typeof user.id === "string" && user.id.length > 0);
 }
 
+async function getAuthAdminUserById(userId: string): Promise<(AuthAdminUser & { id: string }) | null> {
+  const users = await listAuthAdminUsersRaw();
+  return users.find((user) => user.id === userId) ?? null;
+}
+
 export async function listAssignableUsers(): Promise<AssignableUser[]> {
   const users = await listAuthAdminUsersRaw();
   return users
@@ -183,6 +196,80 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function listManagedUsers(): Promise<ManagedUser[]> {
+  const users = await listAuthAdminUsersRaw();
+  return users
+    .map((user) => {
+      const metadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
+      const email = typeof user.email === "string" && user.email.trim() ? user.email.trim().toLowerCase() : null;
+      const name =
+        typeof metadata.name === "string" && metadata.name.trim()
+          ? metadata.name.trim()
+          : typeof metadata.full_name === "string" && metadata.full_name.trim()
+            ? metadata.full_name.trim()
+            : email
+              ? prettyNameFromEmail(email)
+              : user.id;
+      const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
+      const role =
+        metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP"
+          ? (metadataRole as UserRole)
+          : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
+            ? "SUPER_ADMIN"
+            : "REP";
+      return {
+        id: user.id,
+        email,
+        name,
+        role,
+        commissionRate: parseCommissionRateValue(metadata.commissionRate),
+        createdAt: typeof user.created_at === "string" ? user.created_at : null,
+        lastSignInAt: typeof user.last_sign_in_at === "string" ? user.last_sign_in_at : null,
+      } satisfies ManagedUser;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function saveManagedUserSettings(
+  userId: string,
+  settings: { name: string; role: UserRole; commissionRate: number | null },
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save user settings.");
+
+  const targetUser = await getAuthAdminUserById(userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const metadata =
+    targetUser.user_metadata && typeof targetUser.user_metadata === "object"
+      ? { ...targetUser.user_metadata }
+      : {};
+
+  metadata.name = settings.name.trim();
+  metadata.role = settings.role;
+  if (settings.commissionRate === null) {
+    delete metadata.commissionRate;
+  } else {
+    metadata.commissionRate = settings.commissionRate;
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      user_metadata: metadata,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to save user settings.");
+  }
 }
 
 export async function saveAssignableUserCommissionRate(userId: string, commissionRate: number | null) {
@@ -270,6 +357,15 @@ export async function getEffectiveUserRole(userId: string, email?: string | null
   }
 
   const profile = await getProfile(userId).catch(() => null);
+  if (profile?.role && profile.role !== "REP") return profile.role;
+
+  const authUser = await getAuthAdminUserById(userId).catch(() => null);
+  const metadata = authUser?.user_metadata && typeof authUser.user_metadata === "object" ? authUser.user_metadata : {};
+  const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
+  if (metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP") {
+    return metadataRole as UserRole;
+  }
+
   return profile?.role ?? "REP";
 }
 
