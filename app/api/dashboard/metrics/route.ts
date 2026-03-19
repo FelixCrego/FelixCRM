@@ -17,6 +17,12 @@ type UserRow = {
   email?: string | null;
 };
 
+type AuthAdminUser = {
+  id?: string | null;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+};
+
 type CallAnalyticsRow = {
   contact_id?: string | null;
   lead_id?: string | null;
@@ -132,6 +138,51 @@ async function listUsersById() {
     if (typeof row.id !== "string" || !row.id) continue;
     const name = [row.name, row.email].find((value) => typeof value === "string" && value.trim().length > 0);
     users.set(row.id, typeof name === "string" ? name : row.id);
+  }
+  return users;
+}
+
+function titleCaseWords(value: string) {
+  return value
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function prettyNameFromEmail(email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (normalized === "felix@felixcrego.com") return "Felix Crego";
+  const localPart = normalized.split("@")[0] ?? normalized;
+  return titleCaseWords(localPart.replace(/\d+/g, " ").trim() || localPart);
+}
+
+async function listAuthUsersById() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return new Map<string, string>();
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=200`, {
+    headers: getHeaders(),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to fetch auth users for dashboard.");
+  }
+
+  const payload = (await response.json()) as { users?: AuthAdminUser[] };
+  const users = new Map<string, string>();
+  for (const user of payload.users ?? []) {
+    if (typeof user.id !== "string" || !user.id) continue;
+    const metadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
+    const nameCandidate = typeof metadata.name === "string" && metadata.name.trim()
+      ? metadata.name.trim()
+      : typeof metadata.full_name === "string" && metadata.full_name.trim()
+        ? metadata.full_name.trim()
+        : typeof user.email === "string" && user.email.trim()
+          ? prettyNameFromEmail(user.email)
+          : user.id;
+    users.set(user.id, nameCandidate);
   }
   return users;
 }
@@ -405,12 +456,18 @@ export async function GET() {
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
 
-    const [visibleLeads, usersById, recentCalls, visibleDemoRows] = await Promise.all([
+    const [visibleLeads, tableUsersById, authUsersById, recentCalls, visibleDemoRows] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
+      listAuthUsersById(),
       listRecentCalls(),
       listDemoRows({ includeAll, userId: user.id, userEmail: user.email }),
     ]);
+
+    const usersById = new Map<string, string>(authUsersById);
+    for (const [id, name] of tableUsersById.entries()) {
+      usersById.set(id, name);
+    }
 
     const claimedLeadCountsMap = new Map<string, number>();
     for (const lead of visibleLeads) {
