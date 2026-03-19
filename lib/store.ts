@@ -285,8 +285,10 @@ export async function inviteManagedUser(input: {
   if (!input.name.trim()) throw new Error("A name is required.");
 
   const redirectTo = `${process.env.NEXT_PUBLIC_BASE_URL ?? "https://felix-crm-xi.vercel.app"}/login`;
+  const inviteUrl = new URL("/auth/v1/invite", supabaseUrl);
+  inviteUrl.searchParams.set("redirect_to", redirectTo);
 
-  const response = await fetch(`${supabaseUrl}/auth/v1/admin/invite`, {
+  const response = await fetch(inviteUrl.toString(), {
     method: "POST",
     headers: {
       apikey: supabaseServiceRoleKey as string,
@@ -300,7 +302,6 @@ export async function inviteManagedUser(input: {
         role: input.role,
         commissionRate: input.commissionRate,
       },
-      redirect_to: redirectTo,
     }),
   });
 
