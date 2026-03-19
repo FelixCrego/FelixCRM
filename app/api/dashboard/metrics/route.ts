@@ -6,6 +6,7 @@ import type { Lead } from "@/lib/types";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DASHBOARD_TIME_ZONE = "America/New_York";
+const DEMOS_TABLE_CANDIDATES = ["demos"];
 
 const USERS_TABLE_CANDIDATES = ["User", "user", "users"];
 const CALLS_TABLE_CANDIDATES = ["call_analytics"];
@@ -38,6 +39,16 @@ type DashboardLeaderboardRow = {
   revenueThisMonth: number;
   scoreToday: number;
   streakDays: number;
+};
+
+type DemoRow = {
+  id: string;
+  lead_id?: string | null;
+  lead_name?: string | null;
+  selected_date?: string | null;
+  selected_time?: string | null;
+  rep_id?: string | null;
+  rep_email?: string | null;
 };
 
 function getHeaders() {
@@ -89,6 +100,28 @@ async function requestFirstWorkingTable<T>(candidates: string[], query?: Record<
   throw lastError ?? new Error("Unable to resolve Supabase table.");
 }
 
+async function requestOptionalTable<T>(candidates: string[], query?: Record<string, string>) {
+  for (const table of candidates) {
+    const response = await fetch(buildUrl(table, query), {
+      headers: getHeaders(),
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    const text = await response.text();
+    if (response.status === 404 || text.includes("schema cache") || text.includes("Could not find the table")) {
+      continue;
+    }
+
+    throw new Error(text || `Dashboard metrics query failed for ${table}.`);
+  }
+
+  return [] as T;
+}
+
 async function listUsersById() {
   const rows = await requestFirstWorkingTable<UserRow[]>(USERS_TABLE_CANDIDATES, {
     select: "id,name,email",
@@ -111,6 +144,41 @@ async function listRecentCalls(limit = 1500) {
   });
 
   return rows.filter((row) => typeof row.lead_id === "string" && row.lead_id);
+}
+
+async function listDemoRows(params: { includeAll: boolean; userId: string; userEmail?: string | null }) {
+  const select = "id,lead_id,lead_name,selected_date,selected_time,rep_id,rep_email";
+
+  if (params.includeAll) {
+    return requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
+      select,
+      order: "selected_date.asc,selected_time.asc",
+      limit: "500",
+    });
+  }
+
+  const [byUserId, byEmail] = await Promise.all([
+    requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
+      select,
+      rep_id: `eq.${params.userId}`,
+      order: "selected_date.asc,selected_time.asc",
+      limit: "500",
+    }),
+    params.userEmail
+      ? requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
+          select,
+          rep_email: `eq.${params.userEmail}`,
+          order: "selected_date.asc,selected_time.asc",
+          limit: "500",
+        })
+      : Promise.resolve([] as DemoRow[]),
+  ]);
+
+  const deduped = new Map<string, DemoRow>();
+  for (const demo of [...byUserId, ...byEmail]) {
+    deduped.set(demo.id, demo);
+  }
+  return [...deduped.values()];
 }
 
 function getZonedParts(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
@@ -175,6 +243,23 @@ function parseDemoDate(lead: Lead) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function parseDemoRowDate(demo: DemoRow) {
+  if (!demo.selected_date || !demo.selected_time) return null;
+  const normalized = demo.selected_time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
+  if (!normalized) {
+    const parsed = new Date(`${demo.selected_date}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const rawHour = Number(normalized[1]);
+  const minutes = Number(normalized[2]);
+  const period = normalized[3].toUpperCase();
+  const hours24 = rawHour % 12 + (period === "PM" ? 12 : 0);
+  const parsed = new Date(`${demo.selected_date}T00:00:00`);
+  parsed.setHours(hours24, minutes, 0, 0);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function sum(values: number[]) {
   return values.reduce((total, value) => total + value, 0);
 }
@@ -210,6 +295,10 @@ function minutesLabel(totalSeconds: number) {
 
 function computeScore(params: { dials: number; conversations: number; demos: number; closes: number }) {
   return params.dials + params.conversations * 4 + params.demos * 12 + params.closes * 30;
+}
+
+function getDemoDedupeKey(parts: { leadId?: string | null; leadName?: string | null; date?: string | null; time?: string | null }) {
+  return `${parts.leadId || parts.leadName || "unknown"}::${parts.date || ""}::${parts.time || ""}`;
 }
 
 function dayKey(date: Date) {
@@ -316,16 +405,63 @@ export async function GET() {
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
 
-    const [visibleLeads, usersById, recentCalls] = await Promise.all([
+    const [visibleLeads, usersById, recentCalls, visibleDemoRows] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
       listRecentCalls(),
+      listDemoRows({ includeAll, userId: user.id, userEmail: user.email }),
     ]);
 
     const claimedLeadCountsMap = new Map<string, number>();
     for (const lead of visibleLeads) {
       if (typeof lead.ownerId !== "string" || !lead.ownerId) continue;
       claimedLeadCountsMap.set(lead.ownerId, (claimedLeadCountsMap.get(lead.ownerId) ?? 0) + 1);
+    }
+
+    const persistedLeadDemos = visibleLeads
+      .map((lead) => {
+        if (!lead.demoBooking?.date || !lead.demoBooking?.time) return null;
+        return {
+          leadId: lead.id,
+          leadName: lead.businessName,
+          date: lead.demoBooking.date,
+          time: lead.demoBooking.time,
+          scheduledAt: parseDemoDate(lead),
+        };
+      })
+      .filter((demo): demo is { leadId: string; leadName: string; date: string; time: string; scheduledAt: Date | null } => Boolean(demo));
+
+    const allUpcomingDemoMap = new Map<string, { leadId?: string | null; leadName: string; scheduledAt: Date }>();
+
+    for (const demo of visibleDemoRows) {
+      const scheduledAt = parseDemoRowDate(demo);
+      if (!scheduledAt || scheduledAt.getTime() < now.getTime()) continue;
+      const key = getDemoDedupeKey({
+        leadId: demo.lead_id ?? null,
+        leadName: demo.lead_name ?? null,
+        date: demo.selected_date ?? null,
+        time: demo.selected_time ?? null,
+      });
+      allUpcomingDemoMap.set(key, {
+        leadId: demo.lead_id ?? null,
+        leadName: demo.lead_name ?? "Unknown Lead",
+        scheduledAt,
+      });
+    }
+
+    for (const demo of persistedLeadDemos) {
+      if (!demo.scheduledAt || demo.scheduledAt.getTime() < now.getTime()) continue;
+      const key = getDemoDedupeKey({
+        leadId: demo.leadId,
+        leadName: demo.leadName,
+        date: demo.date,
+        time: demo.time,
+      });
+      allUpcomingDemoMap.set(key, {
+        leadId: demo.leadId,
+        leadName: demo.leadName,
+        scheduledAt: demo.scheduledAt,
+      });
     }
 
     const calls = recentCalls.filter((call) => typeof call.lead_id === "string" && visibleLeads.some((lead) => lead.id === call.lead_id));
@@ -415,17 +551,14 @@ export async function GET() {
         })),
     ].slice(0, 4);
 
-    const upcomingSchedule = repLeads
-      .map((lead) => {
-        const demoAt = parseDemoDate(lead);
-        if (!demoAt || demoAt.getTime() < now.getTime()) return null;
-        return {
-          id: lead.id,
-          startsAt: demoAt.getTime(),
-          label: `${demoAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - Demo: ${lead.businessName}`,
-        };
-      })
-      .filter((item): item is { id: string; startsAt: number; label: string } => Boolean(item))
+    const repLeadIdSet = new Set(repLeads.map((lead) => lead.id));
+    const upcomingSchedule = [...allUpcomingDemoMap.values()]
+      .filter((demo) => demo.leadId && repLeadIdSet.has(demo.leadId))
+      .map((demo) => ({
+        id: demo.leadId as string,
+        startsAt: demo.scheduledAt.getTime(),
+        label: `${demo.scheduledAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - Demo: ${demo.leadName}`,
+      }))
       .sort((a, b) => a.startsAt - b.startsAt)
       .slice(0, 4);
 
@@ -523,10 +656,7 @@ export async function GET() {
         a.userName.localeCompare(b.userName))
       .slice(0, 8);
 
-    const upcomingDemos = visibleLeads.filter((lead) => {
-      const demoAt = parseDemoDate(lead);
-      return demoAt ? demoAt.getTime() >= now.getTime() : false;
-    });
+    const upcomingDemos = [...allUpcomingDemoMap.values()];
     const closedThisMonthAll = visibleLeads.filter((lead) => {
       const closedAt = parseDate(lead.closedAt);
       return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
