@@ -497,6 +497,7 @@ export default function LeadExecutionPage() {
   const [checkoutMode, setCheckoutMode] = useState<"payment" | "subscription">("payment");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutLink, setCheckoutLink] = useState("");
+  const [checkoutError, setCheckoutError] = useState("");
   const [checkoutLinkCopied, setCheckoutLinkCopied] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
   const [closingDeal, setClosingDeal] = useState(false);
@@ -1564,6 +1565,7 @@ export default function LeadExecutionPage() {
   async function handleCheckoutAction() {
     setCheckoutLoading(true);
     setCheckoutLinkCopied(false);
+    setCheckoutError("");
 
     if (checkoutAmount >= 500) {
       try {
@@ -1586,7 +1588,9 @@ export default function LeadExecutionPage() {
         setLeadExecutionStatus("Payment Pending");
         setCheckoutLoading(false);
         return;
-      } catch {
+      } catch (error) {
+        setCheckoutLink("");
+        setCheckoutError(error instanceof Error ? error.message : "Unable to create Stripe checkout session.");
         setCheckoutLoading(false);
         return;
       }
@@ -3255,6 +3259,7 @@ export default function LeadExecutionPage() {
                 onChange={(event) => {
                   setCheckoutMode(event.target.value as "payment" | "subscription");
                   setCheckoutLink("");
+                  setCheckoutError("");
                 }}
                 className="mt-2 h-10 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100 outline-none disabled:cursor-not-allowed disabled:text-zinc-500"
               >
@@ -3276,6 +3281,7 @@ export default function LeadExecutionPage() {
                     const amount = Number(event.target.value);
                     setCheckoutAmount(Number.isFinite(amount) ? amount : 0);
                     setCheckoutLink("");
+                    setCheckoutError("");
                     setApprovalPending(false);
                   }}
                   className="h-10 w-full bg-transparent px-2 text-sm text-zinc-100 outline-none disabled:cursor-not-allowed disabled:text-zinc-500"
@@ -3316,6 +3322,12 @@ export default function LeadExecutionPage() {
                   {checkoutLinkCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                   {checkoutLinkCopied ? "Copied" : "Copy Link"}
                 </button>
+              </div>
+            ) : null}
+
+            {checkoutError ? (
+              <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                {checkoutError}
               </div>
             ) : null}
 

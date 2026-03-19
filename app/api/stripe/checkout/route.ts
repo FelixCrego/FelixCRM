@@ -5,6 +5,12 @@ import { getStripeClient } from "@/lib/stripe";
 
 export const dynamic = "force-dynamic";
 
+function sanitizeEmail(value: string | null | undefined) {
+  if (typeof value !== "string") return undefined;
+  const email = value.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
+}
+
 export async function POST(request: Request) {
   try {
     const user = await getAuthenticatedUser();
@@ -30,15 +36,17 @@ export async function POST(request: Request) {
 
     const stripe = getStripeClient();
     const origin = request.headers.get("origin") ?? process.env.NEXT_PUBLIC_APP_URL ?? "https://felix-crm-xi.vercel.app";
+    const customerEmail = sanitizeEmail(lead.email);
+    const productName = `${lead.businessName || "Client"} ${mode === "subscription" ? "Monthly Subscription" : "Website Package"}`;
 
     const session = await stripe.checkout.sessions.create({
       mode,
-      customer_email: lead.email ?? undefined,
+      customer_email: customerEmail,
       success_url: `${origin}/leads/${leadId}?stripe=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/leads/${leadId}?stripe=cancelled`,
       metadata: {
         leadId,
-        businessName: lead.businessName,
+        businessName: lead.businessName || "Client",
         soldByUserId: lead.soldByUserId ?? lead.ownerId ?? "",
       },
       line_items: [
@@ -46,7 +54,7 @@ export async function POST(request: Request) {
           price_data: {
             currency: "usd",
             product_data: {
-              name: `${lead.businessName} ${mode === "subscription" ? "Monthly Subscription" : "Website Package"}`,
+              name: productName,
             },
             unit_amount: Math.round(amount * 100),
             ...(mode === "subscription" ? { recurring: { interval: "month" as const } } : {}),
@@ -61,4 +69,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to create Stripe checkout session." }, { status: 500 });
   }
 }
-
