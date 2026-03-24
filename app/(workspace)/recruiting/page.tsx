@@ -103,8 +103,8 @@ export default function RecruitingPage() {
     try {
       const querySuffix = includeShared ? "?includeShared=1" : "";
       const [jobsRes, applicantsRes] = await Promise.all([
-        fetch(`/api/jobs${querySuffix}`, { cache: "no-store" }),
-        fetch(`/api/applicants${querySuffix}`, { cache: "no-store" }),
+        fetch(`/api/jobs${querySuffix}`, { cache: "no-store", credentials: "include" }),
+        fetch(`/api/applicants${querySuffix}`, { cache: "no-store", credentials: "include" }),
       ]);
 
       const jobsPayload = (await jobsRes.json().catch(() => null)) as { jobs?: Job[]; canViewShared?: boolean; includeShared?: boolean; error?: string } | null;
@@ -120,7 +120,7 @@ export default function RecruitingPage() {
         setIncludeShared(false);
       }
 
-      const interviewsRes = await fetch("/api/calendar/interview", { cache: "no-store" });
+      const interviewsRes = await fetch("/api/calendar/interview", { cache: "no-store", credentials: "include" });
       const interviewsPayload = (await interviewsRes.json().catch(() => null)) as { interviews?: InterviewEvent[]; error?: string } | null;
       if (interviewsRes.ok) {
         setScheduledInterviews(Array.isArray(interviewsPayload?.interviews) ? interviewsPayload.interviews : []);
@@ -145,6 +145,7 @@ export default function RecruitingPage() {
     try {
       const response = await fetch("/api/jobs", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
@@ -177,6 +178,7 @@ export default function RecruitingPage() {
       const querySuffix = includeShared ? "?includeShared=1" : "";
       const response = await fetch(`/api/applicants/${applicantId}${querySuffix}`, {
         method: "PATCH",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
@@ -419,6 +421,7 @@ export default function RecruitingPage() {
     try {
       const response = await fetch("/api/calendar/interview", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           date: interviewDate,

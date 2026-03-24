@@ -10,15 +10,21 @@ type RoleContextValue = {
 
 const RoleContext = createContext<RoleContextValue | null>(null);
 
-export function RoleProvider({ children }: { children: React.ReactNode }) {
-  const [activeRole, setActiveRole] = useState<UserRole>("REP");
+export function RoleProvider({
+  children,
+  initialRole = "REP",
+}: {
+  children: React.ReactNode;
+  initialRole?: UserRole;
+}) {
+  const [activeRole, setActiveRole] = useState<UserRole>(initialRole);
 
   useEffect(() => {
     let isActive = true;
 
     async function loadRole() {
       try {
-        const response = await fetch("/api/profile", { cache: "no-store" });
+        const response = await fetch("/api/profile", { cache: "no-store", credentials: "include" });
         if (!response.ok) return;
 
         const payload = (await response.json().catch(() => null)) as { role?: UserRole } | null;
