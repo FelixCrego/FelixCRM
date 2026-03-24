@@ -215,6 +215,41 @@ export default function RecruitingPage() {
     return (phone || "").replace(/[^\d+]/g, "");
   }
 
+  function toE164Phone(phone: string | null | undefined, countryCode?: string) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return "";
+    if (normalized.startsWith("+")) return normalized;
+
+    const digitsOnly = normalized.replace(/\D/g, "");
+    if (!digitsOnly) return "";
+
+    if (countryCode === "NG") {
+      const localDigits = digitsOnly.startsWith("0") ? digitsOnly.slice(1) : digitsOnly;
+      return localDigits ? `+234${localDigits}` : "";
+    }
+
+    if (countryCode === "PH") {
+      const localDigits = digitsOnly.startsWith("0") ? digitsOnly.slice(1) : digitsOnly;
+      return localDigits ? `+63${localDigits}` : "";
+    }
+
+    if (countryCode === "US" && digitsOnly.length === 10) {
+      return `+1${digitsOnly}`;
+    }
+
+    if (countryCode === "GB") {
+      const localDigits = digitsOnly.startsWith("0") ? digitsOnly.slice(1) : digitsOnly;
+      return localDigits ? `+44${localDigits}` : "";
+    }
+
+    if (countryCode === "IN") {
+      const localDigits = digitsOnly.startsWith("0") ? digitsOnly.slice(1) : digitsOnly;
+      return localDigits ? `+91${localDigits}` : "";
+    }
+
+    return digitsOnly.length >= 10 ? `+${digitsOnly}` : "";
+  }
+
   function countryFlagFromCode(code: string) {
     return code
       .toUpperCase()
@@ -279,14 +314,14 @@ export default function RecruitingPage() {
     }).format(date);
   }
 
-  function whatsappHref(phone: string | null | undefined, applicantName: string) {
-    const normalized = normalizePhone(phone).replace(/^\+/, "");
+  function whatsappHref(phone: string | null | undefined, applicantName: string, countryCode?: string) {
+    const normalized = toE164Phone(phone, countryCode).replace(/^\+/, "");
     if (!normalized) return "";
-    return `https://wa.me/${normalized}?text=${encodeURIComponent(`Hi ${applicantName}, this is Felix CRM recruiting following up about your application.`)}`;
+    return `https://api.whatsapp.com/send?phone=${normalized}&text=${encodeURIComponent(`Hi ${applicantName}, this is Felix CRM recruiting following up about your application.`)}`;
   }
 
-  function smsHref(phone: string | null | undefined) {
-    const normalized = normalizePhone(phone);
+  function smsHref(phone: string | null | undefined, countryCode?: string) {
+    const normalized = toE164Phone(phone, countryCode);
     if (!normalized) return "";
     return `sms:${normalized}`;
   }
@@ -528,16 +563,16 @@ export default function RecruitingPage() {
                     <p className="mt-1 text-xs text-blue-200">{applicant.jobTitle || "Unknown role"}</p>
 
                     <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                      <a href={`mailto:${encodeURIComponent(applicant.email)}`} className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
-                        Email
-                      </a>
+                        <a href={`mailto:${encodeURIComponent(applicant.email)}`} className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
+                          Email
+                        </a>
                       {applicant.phone ? (
-                        <a href={smsHref(applicant.phone)} className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-200">
+                        <a href={smsHref(applicant.phone, country?.code)} className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-200">
                           Text
                         </a>
                       ) : null}
                       {applicant.phone ? (
-                        <a href={whatsappHref(applicant.phone, applicant.name)} target="_blank" rel="noreferrer" className="rounded border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-200">
+                        <a href={whatsappHref(applicant.phone, applicant.name, country?.code)} target="_blank" rel="noreferrer" className="rounded border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-200">
                           WhatsApp
                         </a>
                       ) : null}
