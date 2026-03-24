@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useState } from "react";
 
 export default function LoginPage() {
@@ -77,13 +76,6 @@ export default function LoginPage() {
         >
           {loading ? "Signing in..." : "Sign in"}
         </button>
-
-        <p className="mt-5 text-center text-sm text-zinc-300">
-          Don&apos;t have an account?{" "}
-          <Link href="/signup" className="font-semibold text-white underline decoration-cyan-400/70 underline-offset-2">
-            Sign up
-          </Link>
-        </p>
       </form>
     </main>
   );

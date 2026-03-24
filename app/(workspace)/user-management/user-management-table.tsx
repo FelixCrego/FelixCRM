@@ -12,23 +12,78 @@ type ManagedUser = {
   commissionRate: number | null;
   createdAt: string | null;
   lastSignInAt: string | null;
+  emailConfirmedAt: string | null;
+  status: "ACTIVE" | "INVITED" | "SUSPENDED";
 };
 
 type EditableUser = ManagedUser & {
   draftName: string;
   draftRole: UserRole;
   draftRate: string;
+  draftPassword: string;
 };
+
+type AccessState = "ACTIVE" | "INACTIVE" | "INVITED" | "SUSPENDED";
+
+function getAccessState(user: ManagedUser): AccessState {
+  if (user.status === "SUSPENDED") return "SUSPENDED";
+  if (user.status === "INVITED") return "INVITED";
+  if (!user.lastSignInAt) return "INACTIVE";
+
+  const lastSeen = new Date(user.lastSignInAt);
+  if (Number.isNaN(lastSeen.getTime())) return "INACTIVE";
+
+  const daysSinceLastSeen = (Date.now() - lastSeen.getTime()) / (1000 * 60 * 60 * 24);
+  return daysSinceLastSeen > 30 ? "INACTIVE" : "ACTIVE";
+}
+
+function formatLastSeen(lastSignInAt: string | null) {
+  if (!lastSignInAt) return "Never";
+  const date = new Date(lastSignInAt);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+
+  const days = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+  if (days <= 0) return "Today";
+  if (days === 1) return "1 day ago";
+  return `${days} days ago`;
+}
+
+function accessStateClasses(state: AccessState) {
+  switch (state) {
+    case "SUSPENDED":
+      return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+    case "INVITED":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    case "INACTIVE":
+      return "border-zinc-500/40 bg-zinc-700/20 text-zinc-200";
+    default:
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  }
+}
+
+function accessStateDetail(user: ManagedUser, state: AccessState) {
+  switch (state) {
+    case "SUSPENDED":
+      return "Login blocked";
+    case "INVITED":
+      return "Invite pending";
+    case "INACTIVE":
+      return user.lastSignInAt ? `Last seen ${formatLastSeen(user.lastSignInAt)}` : "Never signed in";
+    default:
+      return `Last seen ${formatLastSeen(user.lastSignInAt)}`;
+  }
+}
 
 export default function UserManagementTable({ initialUsers }: { initialUsers: ManagedUser[] }) {
   const router = useRouter();
   const [users, setUsers] = useState<EditableUser[]>(
     initialUsers.map((user) => ({
       ...user,
-      draftName: user.name,
-      draftRole: user.role,
-      draftRate: user.commissionRate === null ? "" : String(Math.round(user.commissionRate * 100)),
-    })),
+        draftName: user.name,
+        draftRole: user.role,
+        draftRate: user.commissionRate === null ? "" : String(Math.round(user.commissionRate * 100)),
+        draftPassword: "",
+      })),
   );
   const [message, setMessage] = useState("");
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
@@ -49,6 +104,10 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
       superAdmins: users.filter((user) => user.role === "SUPER_ADMIN").length,
       managers: users.filter((user) => user.role === "MANAGER" || user.role === "TEAM_LEAD").length,
       reps: users.filter((user) => user.role === "REP").length,
+      active: users.filter((user) => getAccessState(user) === "ACTIVE").length,
+      inactive: users.filter((user) => getAccessState(user) === "INACTIVE").length,
+      invited: users.filter((user) => getAccessState(user) === "INVITED").length,
+      suspended: users.filter((user) => getAccessState(user) === "SUSPENDED").length,
     };
   }, [users]);
 
@@ -83,6 +142,48 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
         })
         .catch((error) => {
           setMessage(error instanceof Error ? error.message : "Failed to save user.");
+        })
+        .finally(() => {
+          setPendingUserId(null);
+        });
+    });
+  };
+
+  const runUserAction = (params: {
+    userId: string;
+    action: "reset_password" | "resend_invite" | "toggle_active";
+    password?: string;
+    active?: boolean;
+    successMessage: string;
+    errorMessage: string;
+    clearPassword?: boolean;
+  }) => {
+    setMessage("");
+    setPendingUserId(params.userId);
+    startTransition(() => {
+      void fetch("/api/users/manage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: params.userId,
+          action: params.action,
+          password: params.password,
+          active: params.active,
+        }),
+      })
+        .then(async (response) => {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          if (!response.ok) {
+            throw new Error(payload?.error || params.errorMessage);
+          }
+          if (params.clearPassword) {
+            updateDraft(params.userId, { draftPassword: "" });
+          }
+          setMessage(params.successMessage);
+          router.refresh();
+        })
+        .catch((error) => {
+          setMessage(error instanceof Error ? error.message : params.errorMessage);
         })
         .finally(() => {
           setPendingUserId(null);
@@ -166,7 +267,7 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-8">
         <article className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Total Users</p>
           <p className="mt-2 text-3xl font-semibold text-white">{stats.total}</p>
@@ -182,6 +283,22 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
         <article className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Reps</p>
           <p className="mt-2 text-3xl font-semibold text-white">{stats.reps}</p>
+        </article>
+        <article className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+          <p className="text-xs uppercase tracking-[0.16em] text-emerald-300">Active</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{stats.active}</p>
+        </article>
+        <article className="rounded-2xl border border-zinc-600/40 bg-zinc-800/30 p-5">
+          <p className="text-xs uppercase tracking-[0.16em] text-zinc-300">Inactive</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{stats.inactive}</p>
+        </article>
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+          <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Invited</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{stats.invited}</p>
+        </article>
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+          <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Suspended</p>
+          <p className="mt-2 text-3xl font-semibold text-white">{stats.suspended}</p>
         </article>
       </section>
 
@@ -292,7 +409,7 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-zinc-100">Team Directory</h2>
-          <p className="mt-1 text-sm text-zinc-400">Manage display name, role, and default commission rate from one place.</p>
+          <p className="mt-1 text-sm text-zinc-400">Manage identity, permissions, password resets, and access state from one place.</p>
         </div>
 
         <div className="overflow-hidden rounded-xl border border-zinc-800">
@@ -301,15 +418,18 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
               <tr>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Email</th>
+                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Role</th>
                 <th className="px-4 py-3">Commission</th>
                 <th className="px-4 py-3">Last Sign In</th>
+                <th className="px-4 py-3">Lifecycle</th>
                 <th className="px-4 py-3">Action</th>
               </tr>
             </thead>
             <tbody>
               {users.map((user) => {
                 const rowPending = pendingUserId === user.id && isPending;
+                const accessState = getAccessState(user);
                 return (
                   <tr key={user.id} className="border-t border-zinc-800 bg-zinc-900/80 text-zinc-200">
                     <td className="px-4 py-3">
@@ -320,6 +440,13 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
                       />
                     </td>
                     <td className="px-4 py-3 text-zinc-400">{user.email ?? "No email"}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${accessStateClasses(accessState)}`}
+                      >
+                        {accessState}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       <select
                         value={user.draftRole}
@@ -343,7 +470,75 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
                       </div>
                     </td>
                     <td className="px-4 py-3 text-zinc-400">
-                      {user.lastSignInAt ? new Date(user.lastSignInAt).toLocaleString() : "Never"}
+                      <div className="space-y-1">
+                        <p>{user.lastSignInAt ? new Date(user.lastSignInAt).toLocaleString() : "Never"}</p>
+                        <p className="text-[11px] text-zinc-500">{formatLastSeen(user.lastSignInAt)}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="space-y-2">
+                        <div className="rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-[11px] text-zinc-400">
+                          {accessStateDetail(user, accessState)}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={user.draftPassword}
+                            onChange={(event) => updateDraft(user.id, { draftPassword: event.target.value })}
+                            placeholder="New temp password"
+                            className="w-36 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-white outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runUserAction({
+                                userId: user.id,
+                                action: "reset_password",
+                                password: user.draftPassword,
+                                successMessage: `Reset password for ${user.draftName.trim() || user.name}.`,
+                                errorMessage: "Failed to reset password.",
+                                clearPassword: true,
+                              })
+                            }
+                            disabled={rowPending || user.draftPassword.length < 8}
+                            className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
+                          >
+                            Reset Password
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runUserAction({
+                                userId: user.id,
+                                action: "toggle_active",
+                                active: user.status === "SUSPENDED",
+                                successMessage: user.status === "SUSPENDED" ? `Reactivated ${user.name}.` : `Suspended ${user.name}.`,
+                                errorMessage: `Failed to ${user.status === "SUSPENDED" ? "reactivate" : "suspend"} user.`,
+                              })
+                            }
+                            disabled={rowPending}
+                            className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
+                          >
+                            {user.status === "SUSPENDED" ? "Reactivate" : "Suspend"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              runUserAction({
+                                userId: user.id,
+                                action: "resend_invite",
+                                successMessage: `Resent invite to ${user.email ?? user.name}.`,
+                                errorMessage: "Failed to resend invite.",
+                              })
+                            }
+                            disabled={rowPending || !user.email}
+                            className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
+                          >
+                            Resend Invite
+                          </button>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <button
@@ -352,7 +547,7 @@ export default function UserManagementTable({ initialUsers }: { initialUsers: Ma
                         disabled={rowPending}
                         className="rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 disabled:opacity-60"
                       >
-                        {rowPending ? "Saving..." : "Save"}
+                        {rowPending ? "Saving..." : "Save Settings"}
                       </button>
                     </td>
                   </tr>
