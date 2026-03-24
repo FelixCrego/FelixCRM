@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { getRecruitingAccessScope, toSupabaseInFilter } from "@/lib/recruiting-access";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,15 +13,17 @@ function getConfig() {
   return { supabaseUrl, serviceRoleKey };
 }
 
-export async function GET() {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(request: Request) {
+  const user = await getAuthenticatedUser();
+  if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
+    const includeSharedRequested = new URL(request.url).searchParams.get("includeShared") === "1";
+    const access = await getRecruitingAccessScope(user.id, user.email, includeSharedRequested);
     const { supabaseUrl, serviceRoleKey } = getConfig();
     const query = new URLSearchParams({
       select: "id,job_id,name,email,phone,resume_url,linkedin_url,status,applied_at,jobs!inner(id,title,manager_id)",
-      "jobs.manager_id": `eq.${userId}`,
+      "jobs.manager_id": access.managerIds.length > 1 ? toSupabaseInFilter(access.managerIds) : `eq.${access.managerIds[0]}`,
       order: "applied_at.desc",
     });
 
@@ -42,7 +45,11 @@ export async function GET() {
         }))
       : [];
 
-    return NextResponse.json({ applicants });
+    return NextResponse.json({
+      applicants,
+      canViewShared: access.canViewShared,
+      includeShared: access.includeShared,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load applicants.";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { getRecruitingAccessScope, toSupabaseInFilter } from "@/lib/recruiting-access";
 
 const VALID_STATUSES = new Set(["New", "Reviewing", "Interviewing", "Hired", "Rejected"]);
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -14,22 +15,24 @@ function getConfig() {
 }
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = await getAuthenticatedUser();
+  if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const body = (await request.json().catch(() => null)) as { status?: string } | null;
     const status = body?.status?.trim() || "";
+    const includeSharedRequested = new URL(request.url).searchParams.get("includeShared") === "1";
 
     if (!VALID_STATUSES.has(status)) {
       return NextResponse.json({ error: "Invalid applicant status." }, { status: 400 });
     }
 
+    const access = await getRecruitingAccessScope(user.id, user.email, includeSharedRequested);
     const { supabaseUrl, serviceRoleKey } = getConfig();
     const ownershipQuery = new URLSearchParams({
       select: "id,jobs!inner(manager_id)",
       id: `eq.${params.id}`,
-      "jobs.manager_id": `eq.${userId}`,
+      "jobs.manager_id": access.managerIds.length > 1 ? toSupabaseInFilter(access.managerIds) : `eq.${access.managerIds[0]}`,
       limit: "1",
     });
 

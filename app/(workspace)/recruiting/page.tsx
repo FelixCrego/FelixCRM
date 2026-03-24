@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Job = {
   id: string;
@@ -65,6 +65,8 @@ create index if not exists applicants_applied_at_idx on public.applicants (appli
 export default function RecruitingPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applicants, setApplicants] = useState<Applicant[]>([]);
+  const [canViewShared, setCanViewShared] = useState(false);
+  const [includeShared, setIncludeShared] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -73,34 +75,39 @@ export default function RecruitingPage() {
   const [form, setForm] = useState({ title: "", description: "", department: "" });
   const needsAtsSetup = error.includes(ATS_SETUP_ERROR);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
+      const querySuffix = includeShared ? "?includeShared=1" : "";
       const [jobsRes, applicantsRes] = await Promise.all([
-        fetch("/api/jobs", { cache: "no-store" }),
-        fetch("/api/applicants", { cache: "no-store" }),
+        fetch(`/api/jobs${querySuffix}`, { cache: "no-store" }),
+        fetch(`/api/applicants${querySuffix}`, { cache: "no-store" }),
       ]);
 
-      const jobsPayload = (await jobsRes.json().catch(() => null)) as { jobs?: Job[]; error?: string } | null;
-      const applicantsPayload = (await applicantsRes.json().catch(() => null)) as { applicants?: Applicant[]; error?: string } | null;
+      const jobsPayload = (await jobsRes.json().catch(() => null)) as { jobs?: Job[]; canViewShared?: boolean; includeShared?: boolean; error?: string } | null;
+      const applicantsPayload = (await applicantsRes.json().catch(() => null)) as { applicants?: Applicant[]; canViewShared?: boolean; includeShared?: boolean; error?: string } | null;
 
       if (!jobsRes.ok) throw new Error(jobsPayload?.error || "Unable to load jobs.");
       if (!applicantsRes.ok) throw new Error(applicantsPayload?.error || "Unable to load applicants.");
 
       setJobs(Array.isArray(jobsPayload?.jobs) ? jobsPayload.jobs : []);
       setApplicants(Array.isArray(applicantsPayload?.applicants) ? applicantsPayload.applicants : []);
+      setCanViewShared(Boolean(jobsPayload?.canViewShared || applicantsPayload?.canViewShared));
+      if (!(jobsPayload?.canViewShared || applicantsPayload?.canViewShared)) {
+        setIncludeShared(false);
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load recruiting data.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [includeShared]);
 
   useEffect(() => {
     void loadData();
-  }, []);
+  }, [loadData]);
 
   async function handleCreateJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -140,7 +147,8 @@ export default function RecruitingPage() {
     setError("");
 
     try {
-      const response = await fetch(`/api/applicants/${applicantId}`, {
+      const querySuffix = includeShared ? "?includeShared=1" : "";
+      const response = await fetch(`/api/applicants/${applicantId}${querySuffix}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -182,6 +190,17 @@ export default function RecruitingPage() {
         <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Manager Recruiting ATS</p>
         <h1 className="mt-2 text-2xl font-semibold text-white">Recruiting Dashboard</h1>
         <p className="mt-1 text-sm text-zinc-400">Create jobs, publish unique application links to external boards, and manage applicants through the hiring pipeline.</p>
+        {canViewShared ? (
+          <label className="mt-4 inline-flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200">
+            <input
+              type="checkbox"
+              checked={includeShared}
+              onChange={(event) => setIncludeShared(event.target.checked)}
+              className="h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-blue-500"
+            />
+            <span>Show Eliot&apos;s recruiting plus Felix&apos;s posted jobs and applicants</span>
+          </label>
+        ) : null}
       </section>
 
       {needsAtsSetup ? (

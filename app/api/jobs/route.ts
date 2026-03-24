@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { getRecruitingAccessScope, toSupabaseInFilter } from "@/lib/recruiting-access";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -33,15 +34,17 @@ function getErrorMessage(payload: unknown, fallback: string) {
   return message || details || fallback;
 }
 
-export async function GET() {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(request: Request) {
+  const user = await getAuthenticatedUser();
+  if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
+    const includeSharedRequested = new URL(request.url).searchParams.get("includeShared") === "1";
+    const access = await getRecruitingAccessScope(user.id, user.email, includeSharedRequested);
     const { supabaseUrl, serviceRoleKey } = getConfig();
     const query = new URLSearchParams({
       select: "id,manager_id,title,description,department,status,created_at",
-      manager_id: `eq.${userId}`,
+      manager_id: access.managerIds.length > 1 ? toSupabaseInFilter(access.managerIds) : `eq.${access.managerIds[0]}`,
       order: "created_at.desc",
     });
 
@@ -58,7 +61,11 @@ export async function GET() {
       return NextResponse.json({ error: getErrorMessage(data, "Unable to load jobs.") }, { status: response.status });
     }
 
-    return NextResponse.json({ jobs: Array.isArray(data) ? data : [] });
+    return NextResponse.json({
+      jobs: Array.isArray(data) ? data : [],
+      canViewShared: access.canViewShared,
+      includeShared: access.includeShared,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load jobs.";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -66,8 +73,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = await getAuthenticatedUser();
+  if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const body = (await request.json().catch(() => null)) as { title?: string; description?: string; department?: string | null } | null;
@@ -80,7 +87,7 @@ export async function POST(request: Request) {
     }
 
     const payload = {
-      manager_id: userId,
+      manager_id: user.id,
       title,
       description,
       department,
