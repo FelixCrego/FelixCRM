@@ -549,12 +549,13 @@ export default function RecruitingPage() {
                         <span
                           title={country.name}
                           aria-label={country.name}
-                          className="relative inline-flex min-w-[2.6rem] items-center justify-center overflow-hidden rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-white shadow-[0_0_12px_rgba(59,130,246,0.12)]"
+                          className="relative inline-flex min-w-[2.9rem] items-center justify-center overflow-hidden rounded-full border border-zinc-600 bg-zinc-900 px-2.5 py-1 text-[10px] font-extrabold tracking-[0.14em] text-white shadow-[0_0_16px_rgba(59,130,246,0.16)]"
                         >
-                          <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center text-lg opacity-35">
+                          <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center text-[1.75rem] opacity-80 saturate-150">
                             {country.flag}
                           </span>
-                          <span className="relative z-10">{country.code}</span>
+                          <span className="absolute inset-0 bg-black/28" aria-hidden="true"></span>
+                          <span className="relative z-10 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">{country.code}</span>
                         </span>
                       ) : null}
                     </div>
