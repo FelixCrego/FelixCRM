@@ -72,6 +72,12 @@ export default function RecruitingPage() {
   const [error, setError] = useState("");
   const [creatingJob, setCreatingJob] = useState(false);
   const [updatingApplicantId, setUpdatingApplicantId] = useState<string | null>(null);
+  const [interviewApplicantId, setInterviewApplicantId] = useState<string | null>(null);
+  const [schedulingInterview, setSchedulingInterview] = useState(false);
+  const [interviewDate, setInterviewDate] = useState("");
+  const [interviewTime, setInterviewTime] = useState("10:00");
+  const [interviewTimeZone, setInterviewTimeZone] = useState("America/New_York");
+  const [interviewResult, setInterviewResult] = useState("");
   const [form, setForm] = useState({ title: "", description: "", department: "" });
   const needsAtsSetup = error.includes(ATS_SETUP_ERROR);
 
@@ -182,6 +188,69 @@ export default function RecruitingPage() {
   async function copySetupSql() {
     await navigator.clipboard.writeText(ATS_SETUP_SQL);
     setMessage("ATS setup SQL copied. Run it in Supabase SQL Editor, then reload this page.");
+  }
+
+  function normalizePhone(phone: string | null | undefined) {
+    return (phone || "").replace(/[^\d+]/g, "");
+  }
+
+  function whatsappHref(phone: string | null | undefined, applicantName: string) {
+    const normalized = normalizePhone(phone).replace(/^\+/, "");
+    if (!normalized) return "";
+    return `https://wa.me/${normalized}?text=${encodeURIComponent(`Hi ${applicantName}, this is Felix CRM recruiting following up about your application.`)}`;
+  }
+
+  function smsHref(phone: string | null | undefined) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return "";
+    return `sms:${normalized}`;
+  }
+
+  function toTwelveHourTime(value: string) {
+    const match = value.match(/^(\d{2}):(\d{2})$/);
+    if (!match) return "10:00 AM";
+    const hours = Number(match[1]);
+    const minutes = match[2];
+    const period = hours >= 12 ? "PM" : "AM";
+    const twelveHour = hours % 12 || 12;
+    return `${twelveHour}:${minutes} ${period}`;
+  }
+
+  async function scheduleInterview(applicant: Applicant) {
+    if (!interviewDate) {
+      setError("Choose an interview date first.");
+      return;
+    }
+
+    setSchedulingInterview(true);
+    setError("");
+    setInterviewResult("");
+
+    try {
+      const response = await fetch("/api/calendar/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: interviewDate,
+          time: toTwelveHourTime(interviewTime),
+          timeZone: interviewTimeZone,
+          applicantName: applicant.name,
+          applicantEmail: applicant.email,
+          jobTitle: applicant.jobTitle || undefined,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { meetLink?: string; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error || "Unable to schedule interview.");
+
+      setInterviewResult(payload?.meetLink ? `Interview scheduled. Meet link: ${payload.meetLink}` : "Interview scheduled.");
+      setMessage(`Interview scheduled for ${applicant.name}.`);
+      setInterviewApplicantId(null);
+    } catch (scheduleError) {
+      setError(scheduleError instanceof Error ? scheduleError.message : "Unable to schedule interview.");
+    } finally {
+      setSchedulingInterview(false);
+    }
   }
 
   return (
@@ -298,6 +367,7 @@ export default function RecruitingPage() {
 
       {message ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{message}</p> : null}
       {error ? <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p> : null}
+      {interviewResult ? <p className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-200">{interviewResult}</p> : null}
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
         <h2 className="text-lg font-semibold text-white">Candidate Pipeline</h2>
@@ -316,9 +386,23 @@ export default function RecruitingPage() {
                   <article key={applicant.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
                     <p className="text-sm font-medium text-zinc-100">{applicant.name}</p>
                     <p className="text-xs text-zinc-400">{applicant.email}</p>
+                    {applicant.phone ? <p className="mt-1 text-xs text-zinc-500">{applicant.phone}</p> : null}
                     <p className="mt-1 text-xs text-blue-200">{applicant.jobTitle || "Unknown role"}</p>
 
                     <div className="mt-2 flex gap-1.5">
+                      <a href={`mailto:${encodeURIComponent(applicant.email)}`} className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
+                        Email
+                      </a>
+                      {applicant.phone ? (
+                        <a href={smsHref(applicant.phone)} className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-200">
+                          Text
+                        </a>
+                      ) : null}
+                      {applicant.phone ? (
+                        <a href={whatsappHref(applicant.phone, applicant.name)} target="_blank" rel="noreferrer" className="rounded border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[11px] text-green-200">
+                          WhatsApp
+                        </a>
+                      ) : null}
                       {applicant.resume_url ? (
                         <a href={applicant.resume_url} target="_blank" rel="noreferrer" className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300">
                           Resume
@@ -330,6 +414,54 @@ export default function RecruitingPage() {
                         </a>
                       ) : null}
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInterviewApplicantId((current) => (current === applicant.id ? null : applicant.id));
+                        setInterviewResult("");
+                      }}
+                      className="mt-2 w-full rounded border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] font-medium text-blue-200 transition hover:bg-blue-500/20"
+                    >
+                      Schedule Interview
+                    </button>
+
+                    {interviewApplicantId === applicant.id ? (
+                      <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
+                        <div className="grid gap-2">
+                          <input
+                            type="date"
+                            value={interviewDate}
+                            onChange={(event) => setInterviewDate(event.target.value)}
+                            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none"
+                          />
+                          <input
+                            type="time"
+                            value={interviewTime}
+                            onChange={(event) => setInterviewTime(event.target.value)}
+                            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none"
+                          />
+                          <select
+                            value={interviewTimeZone}
+                            onChange={(event) => setInterviewTimeZone(event.target.value)}
+                            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none"
+                          >
+                            <option value="America/New_York">Eastern</option>
+                            <option value="America/Chicago">Central</option>
+                            <option value="America/Denver">Mountain</option>
+                            <option value="America/Los_Angeles">Pacific</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void scheduleInterview(applicant)}
+                            disabled={schedulingInterview}
+                            className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {schedulingInterview ? "Scheduling..." : "Create Google Meet Interview"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
 
                     <select
                       value={applicant.status}
