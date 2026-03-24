@@ -29,7 +29,7 @@ type Applicant = {
 type CountryInfo = {
   code: string;
   name: string;
-  flag: string;
+  flagImage: string;
 };
 
 type InterviewEvent = {
@@ -250,10 +250,8 @@ export default function RecruitingPage() {
     return digitsOnly.length >= 10 ? `+${digitsOnly}` : "";
   }
 
-  function countryFlagFromCode(code: string) {
-    return code
-      .toUpperCase()
-      .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
+  function flagImageFromCode(code: string) {
+    return `https://flagcdn.com/w40/${code.toLowerCase()}.png`;
   }
 
   function inferCountryFromApplicant(applicant: Applicant): CountryInfo | null {
@@ -270,26 +268,26 @@ export default function RecruitingPage() {
     ];
 
     if (phone.startsWith("+234")) {
-      return { code: "NG", name: "Nigeria", flag: countryFlagFromCode("NG") };
+      return { code: "NG", name: "Nigeria", flagImage: flagImageFromCode("NG") };
     }
     if (phone.startsWith("+63")) {
-      return { code: "PH", name: "Philippines", flag: countryFlagFromCode("PH") };
+      return { code: "PH", name: "Philippines", flagImage: flagImageFromCode("PH") };
     }
     if (phone.startsWith("+1")) {
-      return { code: "US", name: "United States", flag: countryFlagFromCode("US") };
+      return { code: "US", name: "United States", flagImage: flagImageFromCode("US") };
     }
     if (phone.startsWith("+44")) {
-      return { code: "GB", name: "United Kingdom", flag: countryFlagFromCode("GB") };
+      return { code: "GB", name: "United Kingdom", flagImage: flagImageFromCode("GB") };
     }
     if (phone.startsWith("+91")) {
-      return { code: "IN", name: "India", flag: countryFlagFromCode("IN") };
+      return { code: "IN", name: "India", flagImage: flagImageFromCode("IN") };
     }
 
     if (/^(070|071|080|081|090|091)\d{8}$/.test(phone)) {
-      return { code: "NG", name: "Nigeria", flag: countryFlagFromCode("NG") };
+      return { code: "NG", name: "Nigeria", flagImage: flagImageFromCode("NG") };
     }
     if (/^09\d{9}$/.test(phone)) {
-      return { code: "PH", name: "Philippines", flag: countryFlagFromCode("PH") };
+      return { code: "PH", name: "Philippines", flagImage: flagImageFromCode("PH") };
     }
 
     const matchedCountry = knownCountries.find((country) => country.matcher.test(resumeHint));
@@ -297,7 +295,7 @@ export default function RecruitingPage() {
       return {
         code: matchedCountry.code,
         name: matchedCountry.name,
-        flag: countryFlagFromCode(matchedCountry.code),
+        flagImage: flagImageFromCode(matchedCountry.code),
       };
     }
 
@@ -551,9 +549,11 @@ export default function RecruitingPage() {
                           aria-label={country.name}
                           className="relative inline-flex min-w-[2.9rem] items-center justify-center overflow-hidden rounded-full border border-zinc-600 bg-zinc-900 px-2.5 py-1 text-[10px] font-extrabold tracking-[0.14em] text-white shadow-[0_0_16px_rgba(59,130,246,0.16)]"
                         >
-                          <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center text-[1.75rem] opacity-80 saturate-150">
-                            {country.flag}
-                          </span>
+                          <span
+                            aria-hidden="true"
+                            className="absolute inset-0 bg-center bg-cover opacity-85"
+                            style={{ backgroundImage: `url(${country.flagImage})` }}
+                          ></span>
                           <span className="absolute inset-0 bg-black/28" aria-hidden="true"></span>
                           <span className="relative z-10 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">{country.code}</span>
                         </span>
