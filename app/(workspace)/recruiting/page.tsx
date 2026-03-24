@@ -32,6 +32,14 @@ type CountryInfo = {
   flag: string;
 };
 
+type InterviewEvent = {
+  id: string;
+  title: string;
+  start: string;
+  meetLink: string;
+  attendees: string[];
+};
+
 const STATUSES: ApplicantStatus[] = ["New", "Reviewing", "Interviewing", "Hired", "Rejected"];
 
 const ATS_SETUP_ERROR = "Recruiting tables are not installed in Supabase yet.";
@@ -84,6 +92,7 @@ export default function RecruitingPage() {
   const [interviewTime, setInterviewTime] = useState("10:00");
   const [interviewTimeZone, setInterviewTimeZone] = useState("America/New_York");
   const [interviewResult, setInterviewResult] = useState("");
+  const [scheduledInterviews, setScheduledInterviews] = useState<InterviewEvent[]>([]);
   const [form, setForm] = useState({ title: "", description: "", department: "" });
   const needsAtsSetup = error.includes(ATS_SETUP_ERROR);
 
@@ -109,6 +118,12 @@ export default function RecruitingPage() {
       setCanViewShared(Boolean(jobsPayload?.canViewShared || applicantsPayload?.canViewShared));
       if (!(jobsPayload?.canViewShared || applicantsPayload?.canViewShared)) {
         setIncludeShared(false);
+      }
+
+      const interviewsRes = await fetch("/api/calendar/interview", { cache: "no-store" });
+      const interviewsPayload = (await interviewsRes.json().catch(() => null)) as { interviews?: InterviewEvent[]; error?: string } | null;
+      if (interviewsRes.ok) {
+        setScheduledInterviews(Array.isArray(interviewsPayload?.interviews) ? interviewsPayload.interviews : []);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load recruiting data.");
@@ -252,6 +267,16 @@ export default function RecruitingPage() {
     }
 
     return null;
+  }
+
+  function formatInterviewStart(value: string) {
+    if (!value) return "Date unavailable";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(date);
   }
 
   function whatsappHref(phone: string | null | undefined, applicantName: string) {
@@ -430,6 +455,42 @@ export default function RecruitingPage() {
       {interviewResult ? <p className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-200">{interviewResult}</p> : null}
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Scheduled Interviews</h2>
+            <p className="mt-1 text-sm text-zinc-400">All upcoming interview meetings in one place.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:border-zinc-500"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {scheduledInterviews.length === 0 ? <p className="text-sm text-zinc-400">No upcoming interviews scheduled yet.</p> : null}
+          {scheduledInterviews.map((interview) => (
+            <article key={interview.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+              <p className="text-sm font-semibold text-white">{interview.title}</p>
+              <p className="mt-1 text-xs text-zinc-400">{formatInterviewStart(interview.start)}</p>
+              {interview.attendees[0] ? <p className="mt-1 text-xs text-blue-200">{interview.attendees[0]}</p> : null}
+              {interview.meetLink ? (
+                <a
+                  href={interview.meetLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-200 transition hover:bg-blue-500/20"
+                >
+                  Open Meet Link
+                </a>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
         <h2 className="text-lg font-semibold text-white">Candidate Pipeline</h2>
         {loading ? <p className="mt-2 text-sm text-zinc-400">Loading applicants...</p> : null}
 
@@ -453,9 +514,12 @@ export default function RecruitingPage() {
                         <span
                           title={country.name}
                           aria-label={country.name}
-                          className="inline-flex min-w-[2.4rem] items-center justify-center rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm shadow-[0_0_12px_rgba(59,130,246,0.12)]"
+                          className="relative inline-flex min-w-[2.6rem] items-center justify-center overflow-hidden rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-bold tracking-[0.14em] text-white shadow-[0_0_12px_rgba(59,130,246,0.12)]"
                         >
-                          <span aria-hidden="true">{country.flag}</span>
+                          <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center text-lg opacity-35">
+                            {country.flag}
+                          </span>
+                          <span className="relative z-10">{country.code}</span>
                         </span>
                       ) : null}
                     </div>
@@ -463,7 +527,7 @@ export default function RecruitingPage() {
                     {applicant.phone ? <p className="mt-1 text-xs text-zinc-500">{applicant.phone}</p> : null}
                     <p className="mt-1 text-xs text-blue-200">{applicant.jobTitle || "Unknown role"}</p>
 
-                    <div className="mt-2 flex gap-1.5">
+                    <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                       <a href={`mailto:${encodeURIComponent(applicant.email)}`} className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
                         Email
                       </a>

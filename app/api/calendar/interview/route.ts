@@ -124,3 +124,49 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to schedule interview." }, { status: 500 });
   }
 }
+
+export async function GET() {
+  const user = await getAuthenticatedUser();
+  if (!user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const clientId = requiredEnv("GOOGLE_CLIENT_ID");
+    const clientSecret = requiredEnv("GOOGLE_CLIENT_SECRET");
+    const redirectUri = requiredEnv("GOOGLE_REDIRECT_URI");
+    const refreshToken = requiredEnv("GOOGLE_REFRESH_TOKEN");
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+    const eventsResponse = await calendar.events.list({
+      calendarId: "primary",
+      timeMin: new Date().toISOString(),
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 25,
+      q: "Interview",
+    });
+
+    const interviews = (eventsResponse.data.items ?? [])
+      .filter((event) => typeof event.summary === "string" && event.summary.toLowerCase().includes("interview"))
+      .map((event) => ({
+        id: event.id ?? "",
+        title: event.summary ?? "Interview",
+        start: event.start?.dateTime ?? event.start?.date ?? "",
+        meetLink:
+          event.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video")?.uri ??
+          event.hangoutLink ??
+          "",
+        attendees: (event.attendees ?? [])
+          .map((attendee) => attendee.email ?? "")
+          .filter((email) => Boolean(email)),
+      }));
+
+    return NextResponse.json({ interviews });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load interviews." }, { status: 500 });
+  }
+}
