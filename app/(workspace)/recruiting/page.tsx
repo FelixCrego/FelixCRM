@@ -200,6 +200,16 @@ export default function RecruitingPage() {
     [applicants],
   );
 
+  const applicantsByEmail = useMemo(() => {
+    const map = new Map<string, Applicant>();
+    applicants.forEach((applicant) => {
+      if (applicant.email) {
+        map.set(applicant.email.toLowerCase(), applicant);
+      }
+    });
+    return map;
+  }, [applicants]);
+
   async function copyApplicationLink(jobId: string) {
     const link = `${window.location.origin}/apply/${jobId}`;
     await navigator.clipboard.writeText(link);
@@ -250,8 +260,70 @@ export default function RecruitingPage() {
     return digitsOnly.length >= 10 ? `+${digitsOnly}` : "";
   }
 
+  function svgFlagDataUri(svg: string) {
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  }
+
   function flagImageFromCode(code: string) {
-    return `https://flagcdn.com/w40/${code.toLowerCase()}.png`;
+    const flags: Record<string, string> = {
+      NG: svgFlagDataUri(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+          <rect width="20" height="40" x="0" y="0" fill="#128a49"/>
+          <rect width="20" height="40" x="20" y="0" fill="#ffffff"/>
+          <rect width="20" height="40" x="40" y="0" fill="#128a49"/>
+        </svg>
+      `),
+      PH: svgFlagDataUri(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+          <rect width="60" height="20" x="0" y="0" fill="#0038a8"/>
+          <rect width="60" height="20" x="0" y="20" fill="#ce1126"/>
+          <polygon points="0,0 24,20 0,40" fill="#ffffff"/>
+          <circle cx="8" cy="20" r="4" fill="#fcd116"/>
+        </svg>
+      `),
+      US: svgFlagDataUri(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+          <rect width="60" height="40" fill="#ffffff"/>
+          <rect width="60" height="4" y="0" fill="#b22234"/>
+          <rect width="60" height="4" y="8" fill="#b22234"/>
+          <rect width="60" height="4" y="16" fill="#b22234"/>
+          <rect width="60" height="4" y="24" fill="#b22234"/>
+          <rect width="60" height="4" y="32" fill="#b22234"/>
+          <rect width="26" height="18" x="0" y="0" fill="#3c3b6e"/>
+        </svg>
+      `),
+      GB: svgFlagDataUri(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+          <rect width="60" height="40" fill="#012169"/>
+          <path d="M0 0 L24 0 L60 24 L60 40 L36 40 L0 16 Z" fill="#ffffff"/>
+          <path d="M60 0 L36 0 L0 24 L0 40 L24 40 L60 16 Z" fill="#ffffff"/>
+          <path d="M0 0 L18 0 L60 28 L60 40 L42 40 L0 12 Z" fill="#c8102e"/>
+          <path d="M60 0 L42 0 L0 28 L0 40 L18 40 L60 12 Z" fill="#c8102e"/>
+          <rect width="60" height="8" y="16" fill="#ffffff"/>
+          <rect width="8" height="40" x="26" fill="#ffffff"/>
+          <rect width="60" height="4" y="18" fill="#c8102e"/>
+          <rect width="4" height="40" x="28" fill="#c8102e"/>
+        </svg>
+      `),
+      CA: svgFlagDataUri(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+          <rect width="15" height="40" x="0" y="0" fill="#d80621"/>
+          <rect width="30" height="40" x="15" y="0" fill="#ffffff"/>
+          <rect width="15" height="40" x="45" y="0" fill="#d80621"/>
+          <path d="M30 8l2 5 5-2-2 5 5 2-5 2 2 5-5-2-2 7-2-7-5 2 2-5-5-2 5-2-2-5 5 2z" fill="#d80621"/>
+        </svg>
+      `),
+      IN: svgFlagDataUri(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+          <rect width="60" height="13.33" y="0" fill="#ff9933"/>
+          <rect width="60" height="13.33" y="13.33" fill="#ffffff"/>
+          <rect width="60" height="13.34" y="26.66" fill="#138808"/>
+          <circle cx="30" cy="20" r="4.5" fill="none" stroke="#000080" stroke-width="1.2"/>
+        </svg>
+      `),
+    };
+
+    return flags[code] || flags.US;
   }
 
   function inferCountryFromApplicant(applicant: Applicant): CountryInfo | null {
@@ -503,23 +575,51 @@ export default function RecruitingPage() {
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {scheduledInterviews.length === 0 ? <p className="text-sm text-zinc-400">No upcoming interviews scheduled yet.</p> : null}
-          {scheduledInterviews.map((interview) => (
-            <article key={interview.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-              <p className="text-sm font-semibold text-white">{interview.title}</p>
-              <p className="mt-1 text-xs text-zinc-400">{formatInterviewStart(interview.start)}</p>
-              {interview.attendees[0] ? <p className="mt-1 text-xs text-blue-200">{interview.attendees[0]}</p> : null}
-              {interview.meetLink ? (
-                <a
-                  href={interview.meetLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-3 inline-flex rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-200 transition hover:bg-blue-500/20"
-                >
-                  Open Meet Link
-                </a>
-              ) : null}
-            </article>
-          ))}
+          {scheduledInterviews.map((interview) => {
+            const attendeeEmail = interview.attendees[0]?.toLowerCase() || "";
+            const matchedApplicant = attendeeEmail ? applicantsByEmail.get(attendeeEmail) : undefined;
+
+            return (
+              <article key={interview.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+                <p className="text-sm font-semibold text-white">{interview.title}</p>
+                <p className="mt-1 text-xs text-zinc-400">{formatInterviewStart(interview.start)}</p>
+                {interview.attendees[0] ? <p className="mt-1 text-xs text-blue-200">{interview.attendees[0]}</p> : null}
+
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {interview.meetLink ? (
+                    <a
+                      href={interview.meetLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition hover:bg-blue-500/20"
+                    >
+                      Open Meet Link
+                    </a>
+                  ) : null}
+                  {matchedApplicant?.resume_url ? (
+                    <a
+                      href={matchedApplicant.resume_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-500"
+                    >
+                      Resume
+                    </a>
+                  ) : null}
+                  {matchedApplicant?.linkedin_url ? (
+                    <a
+                      href={matchedApplicant.linkedin_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-500"
+                    >
+                      LinkedIn
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
 
@@ -547,15 +647,15 @@ export default function RecruitingPage() {
                         <span
                           title={country.name}
                           aria-label={country.name}
-                          className="relative inline-flex min-w-[2.9rem] items-center justify-center overflow-hidden rounded-full border border-zinc-600 bg-zinc-900 px-2.5 py-1 text-[10px] font-extrabold tracking-[0.14em] text-white shadow-[0_0_16px_rgba(59,130,246,0.16)]"
+                          className="relative inline-flex min-w-[3rem] items-center justify-center overflow-hidden rounded-full border border-zinc-500 bg-zinc-900 px-2.5 py-1 text-[10px] font-extrabold tracking-[0.14em] text-white shadow-[0_0_18px_rgba(59,130,246,0.22)]"
                         >
                           <span
                             aria-hidden="true"
-                            className="absolute inset-0 bg-center bg-cover opacity-85"
+                            className="absolute inset-0 bg-center bg-cover opacity-100"
                             style={{ backgroundImage: `url(${country.flagImage})` }}
                           ></span>
-                          <span className="absolute inset-0 bg-black/28" aria-hidden="true"></span>
-                          <span className="relative z-10 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">{country.code}</span>
+                          <span className="absolute inset-0 bg-black/18" aria-hidden="true"></span>
+                          <span className="relative z-10 rounded-full bg-black/40 px-1.5 py-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">{country.code}</span>
                         </span>
                       ) : null}
                     </div>
