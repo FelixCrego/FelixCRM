@@ -26,6 +26,12 @@ type Applicant = {
   jobTitle?: string;
 };
 
+type CountryInfo = {
+  code: string;
+  name: string;
+  flag: string;
+};
+
 const STATUSES: ApplicantStatus[] = ["New", "Reviewing", "Interviewing", "Hired", "Rejected"];
 
 const ATS_SETUP_ERROR = "Recruiting tables are not installed in Supabase yet.";
@@ -192,6 +198,60 @@ export default function RecruitingPage() {
 
   function normalizePhone(phone: string | null | undefined) {
     return (phone || "").replace(/[^\d+]/g, "");
+  }
+
+  function countryFlagFromCode(code: string) {
+    return code
+      .toUpperCase()
+      .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
+  }
+
+  function inferCountryFromApplicant(applicant: Applicant): CountryInfo | null {
+    const phone = normalizePhone(applicant.phone);
+    const resumeHint = `${applicant.resume_url || ""} ${applicant.linkedin_url || ""}`.toLowerCase();
+
+    const knownCountries: Array<{ code: string; name: string; matcher: RegExp }> = [
+      { code: "NG", name: "Nigeria", matcher: /\bnigeria|lagos|abuja|port-harcourt|ibadan\b/ },
+      { code: "PH", name: "Philippines", matcher: /\bphilippines|manila|cebu|davao\b/ },
+      { code: "US", name: "United States", matcher: /\bunited-states|usa|us\b/ },
+      { code: "GB", name: "United Kingdom", matcher: /\buk|united-kingdom|england|london\b/ },
+      { code: "CA", name: "Canada", matcher: /\bcanada|ontario|toronto\b/ },
+      { code: "IN", name: "India", matcher: /\bindia|mumbai|delhi|bangalore\b/ },
+    ];
+
+    if (phone.startsWith("+234")) {
+      return { code: "NG", name: "Nigeria", flag: countryFlagFromCode("NG") };
+    }
+    if (phone.startsWith("+63")) {
+      return { code: "PH", name: "Philippines", flag: countryFlagFromCode("PH") };
+    }
+    if (phone.startsWith("+1")) {
+      return { code: "US", name: "United States", flag: countryFlagFromCode("US") };
+    }
+    if (phone.startsWith("+44")) {
+      return { code: "GB", name: "United Kingdom", flag: countryFlagFromCode("GB") };
+    }
+    if (phone.startsWith("+91")) {
+      return { code: "IN", name: "India", flag: countryFlagFromCode("IN") };
+    }
+
+    if (/^(070|071|080|081|090|091)\d{8}$/.test(phone)) {
+      return { code: "NG", name: "Nigeria", flag: countryFlagFromCode("NG") };
+    }
+    if (/^09\d{9}$/.test(phone)) {
+      return { code: "PH", name: "Philippines", flag: countryFlagFromCode("PH") };
+    }
+
+    const matchedCountry = knownCountries.find((country) => country.matcher.test(resumeHint));
+    if (matchedCountry) {
+      return {
+        code: matchedCountry.code,
+        name: matchedCountry.name,
+        flag: countryFlagFromCode(matchedCountry.code),
+      };
+    }
+
+    return null;
   }
 
   function whatsappHref(phone: string | null | undefined, applicantName: string) {
@@ -382,9 +442,23 @@ export default function RecruitingPage() {
               </div>
 
               <div className="space-y-2">
-                {groupedApplicants[status].map((applicant) => (
+                {groupedApplicants[status].map((applicant) => {
+                  const country = inferCountryFromApplicant(applicant);
+
+                  return (
                   <article key={applicant.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
-                    <p className="text-sm font-medium text-zinc-100">{applicant.name}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium text-zinc-100">{applicant.name}</p>
+                      {country ? (
+                        <span
+                          title={country.name}
+                          aria-label={country.name}
+                          className="inline-flex min-w-[2.4rem] items-center justify-center rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm shadow-[0_0_12px_rgba(59,130,246,0.12)]"
+                        >
+                          <span aria-hidden="true">{country.flag}</span>
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="text-xs text-zinc-400">{applicant.email}</p>
                     {applicant.phone ? <p className="mt-1 text-xs text-zinc-500">{applicant.phone}</p> : null}
                     <p className="mt-1 text-xs text-blue-200">{applicant.jobTitle || "Unknown role"}</p>
@@ -476,7 +550,8 @@ export default function RecruitingPage() {
                       ))}
                     </select>
                   </article>
-                ))}
+                  );
+                })}
 
                 {groupedApplicants[status].length === 0 ? <p className="text-xs text-zinc-500">No candidates</p> : null}
               </div>
