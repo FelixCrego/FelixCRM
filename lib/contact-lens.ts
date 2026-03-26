@@ -417,14 +417,20 @@ export function sanitizeContactLensNoteContent(content: string): string {
 }
 
 export function isContactLensWebhookAuthorized(request: Request): boolean {
-  const secret = process.env.CONTACT_LENS_WEBHOOK_SECRET?.trim();
-  if (!secret) return true;
+  const secrets = [
+    process.env.CONTACT_LENS_WEBHOOK_SECRET,
+    process.env.FELIXCRM_WEBHOOK_SECRET,
+    process.env.AMAZON_CONNECT_WEBHOOK_SECRET,
+  ]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean);
 
-  const bearer = request.headers.get("authorization");
-  if (bearer === `Bearer ${secret}`) return true;
+  if (!secrets.length) return true;
 
-  const headerSecret = request.headers.get("x-felix-webhook-secret");
-  return headerSecret === secret;
+  const bearer = request.headers.get("authorization")?.trim() ?? "";
+  const headerSecret = request.headers.get("x-felix-webhook-secret")?.trim() ?? "";
+
+  return secrets.some((secret) => bearer === `Bearer ${secret}` || headerSecret === secret);
 }
 
 export function normalizeContactLensPayload(payload: unknown): ContactLensWebhookPayload {
