@@ -1304,6 +1304,56 @@ export default function LeadExecutionPage() {
     await persistContacts(nextContacts);
   };
 
+  async function ensureAuthenticatedSession() {
+    const response = await fetch("/api/profile", {
+      cache: "no-store",
+      credentials: "include",
+    });
+
+    if (response.status === 401) {
+      throw new Error("Your CRM session expired. Refresh the page and sign in again.");
+    }
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error || "Unable to verify your session right now.");
+    }
+  }
+
+  async function requestLeadResearchSummary() {
+    await ensureAuthenticatedSession();
+
+    const response = await fetch("/api/leads/research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      cache: "no-store",
+      body: JSON.stringify({ leadId }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { summary?: string; error?: string } | null;
+
+    if (response.status === 401) {
+      throw new Error("Your CRM session expired. Refresh the page and sign in again.");
+    }
+
+    if (!response.ok) {
+      throw new Error(payload?.error || "Research failed.");
+    }
+
+    const summary = (payload?.summary || "").trim();
+    if (!summary) {
+      throw new Error("Research ran but no summary was returned.");
+    }
+
+    const { data: refreshedLead } = await supabase.from<LeadRecord>("leads").select("*").eq("id", leadId).single();
+    if (refreshedLead) {
+      setLead(refreshedLead);
+    }
+
+    return summary;
+  }
+
   async function runResearch() {
     if (!leadId) {
       setResearchError("This lead is missing an id, so analysis cannot be run.");
@@ -1314,29 +1364,8 @@ export default function LeadExecutionPage() {
     setResearchError("");
 
     try {
-      const response = await fetch("/api/leads/research", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId }),
-      });
-
-      const payload = (await response.json().catch(() => null)) as { summary?: string; error?: string } | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Research failed.");
-      }
-
-      const summary = (payload?.summary || "").trim();
-      if (!summary) {
-        throw new Error("Research ran but no summary was returned.");
-      }
-
+      const summary = await requestLeadResearchSummary();
       setResearchInsight(summary);
-
-      const { data: refreshedLead } = await supabase.from<LeadRecord>("leads").select("*").eq("id", leadId).single();
-      if (refreshedLead) {
-        setLead(refreshedLead);
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to run AI analysis right now.";
       setResearchError(message);
@@ -1880,19 +1909,37 @@ export default function LeadExecutionPage() {
   const handleAIDraft = async () => {
     setIsDrafting(true);
     setSmsAssistStatus("");
-    setNotesDraft("Drafting with Gemini...");
+    setNotesError("");
+    setNotesDraft(activeTab === "SMS" && !researchInsight.trim() ? "Running deep research..." : "Drafting with Gemini...");
 
     try {
+      await ensureAuthenticatedSession();
+
+      let researchContext = researchInsight.trim();
+      if (activeTab === "SMS" && !researchContext && leadId) {
+        const summary = await requestLeadResearchSummary();
+        setResearchInsight(summary);
+        researchContext = summary;
+        setNotesDraft("Drafting with Gemini...");
+      }
+
       const response = await fetch("/api/generate-copy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({
           leadName,
           activeTab,
-          researchContext: researchInsight || `Website: ${leadWebsite}`,
+          researchContext: researchContext || `Website: ${leadWebsite}`,
         }),
       });
       const data = (await response.json().catch(() => null)) as { draft?: string; error?: string } | null;
+
+      if (response.status === 401) {
+        setNotesDraft("Error: Your CRM session expired. Refresh the page and sign in again.");
+        return;
+      }
 
       if (response.ok && data?.draft) {
         setNotesDraft(data.draft);
@@ -1974,9 +2021,12 @@ export default function LeadExecutionPage() {
     setPlaybookError("");
 
     try {
+      await ensureAuthenticatedSession();
       const response = await fetch("/api/generate-copy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({
           leadName,
           activeTab: "PLAYBOOK",
@@ -1994,6 +2044,12 @@ export default function LeadExecutionPage() {
       if (!data) {
         setAiPlaybook(fallbackPlaybook);
         setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
+        return;
+      }
+
+      if (response.status === 401) {
+        setAiPlaybook(fallbackPlaybook);
+        setPlaybookError("Your CRM session expired. Refresh the page and sign in again.");
         return;
       }
 
