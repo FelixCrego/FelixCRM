@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { canUserViewAllLeads, getLeadById } from "@/lib/store";
 import { getCallAnalyticsByLeadId, upsertCallAnalytics } from "@/lib/call-analytics-store";
-import { hydrateContactLensPayloadFromS3, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
+import { hydrateCallAnalyticsPayload, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 import type { ContactLensWebhookPayload } from "@/lib/contact-lens";
 
 type CallAnalyticsRow = {
@@ -42,9 +42,9 @@ type RecoveredRecording = Partial<
 >;
 
 function needsHydration(row: CallAnalyticsRow) {
+  const hasTranscript = Boolean(row.transcript_text || row.transcript_json);
   return Boolean(
-    (!row.recording_s3_uri || !row.overall_sentiment || !row.ai_summary || !row.transcript_text || !row.transcript_json) &&
-      row.contact_id,
+    (!row.recording_s3_uri || !row.ai_summary || !hasTranscript) && row.contact_id,
   );
 }
 
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
         ? await hydrateRecordingPayloadFromS3(row.contact_id).catch(() => ({}))
         : {};
       const recordingS3Uri = recoveredRecording.recordingS3Uri ?? row.recording_s3_uri ?? null;
-      const hydrated: HydratedAnalytics = await hydrateContactLensPayloadFromS3({
+      const hydrated: HydratedAnalytics = await hydrateCallAnalyticsPayload({
         contactId: row.contact_id,
         recordingS3Uri,
       }).catch((): HydratedAnalytics => ({}));

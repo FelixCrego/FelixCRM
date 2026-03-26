@@ -8,7 +8,7 @@ import {
   type ContactLensWebhookPayload,
   toContactLensCrmRecord,
 } from "@/lib/contact-lens";
-import { hydrateContactLensPayloadFromS3 } from "@/lib/contact-lens-artifacts";
+import { hydrateCallAnalyticsPayload } from "@/lib/contact-lens-artifacts";
 
 type CallAnalyticsRecord = {
   lead_id: string;
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
       !payload.transcriptText &&
       !payload.transcriptJson &&
       payload.recordingS3Uri
-        ? await hydrateContactLensPayloadFromS3(payload).catch((error) => {
+        ? await hydrateCallAnalyticsPayload(payload).catch((error) => {
             console.warn("Contact Lens S3 hydration failed:", error);
             return {} as HydratedAnalytics;
           })

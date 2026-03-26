@@ -1,5 +1,6 @@
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { normalizeContactLensPayload, parseAmazonS3Uri, type ContactLensWebhookPayload } from "@/lib/contact-lens";
+import { hydrateContactLensPayloadFromTranscribe } from "@/lib/transcription-fallback";
 
 type TranscriptHydration = Partial<
   Pick<
@@ -178,6 +179,20 @@ export async function hydrateContactLensPayloadFromS3(payload: ContactLensWebhoo
     eventSource: normalized.eventSource ?? "contact-lens-analysis-artifact",
     sourceEventTime: normalized.sourceEventTime ?? null,
   };
+}
+
+export async function hydrateCallAnalyticsPayload(payload: ContactLensWebhookPayload): Promise<TranscriptHydration> {
+  const hydratedFromS3: TranscriptHydration = await hydrateContactLensPayloadFromS3(payload).catch(() => ({}));
+  if (
+    hydratedFromS3.analysisS3Uri ||
+    hydratedFromS3.aiSummary ||
+    hydratedFromS3.transcriptText ||
+    hydratedFromS3.transcriptJson
+  ) {
+    return hydratedFromS3;
+  }
+
+  return hydrateContactLensPayloadFromTranscribe(payload).catch(() => ({} as TranscriptHydration));
 }
 
 export async function hydrateRecordingPayloadFromS3(contactId: string, daysBack = 7): Promise<RecordingHydration> {

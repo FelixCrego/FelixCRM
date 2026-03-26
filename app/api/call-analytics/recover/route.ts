@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getCallAnalyticsByContactId, upsertCallAnalytics } from "@/lib/call-analytics-store";
 import { canUserViewAllLeads, getLeadById } from "@/lib/store";
-import { hydrateContactLensPayloadFromS3, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
+import { hydrateCallAnalyticsPayload, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 import type { ContactLensWebhookPayload } from "@/lib/contact-lens";
 
 type RecoveredRecording = Partial<
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     const recordingS3Uri = recoveredRecording.recordingS3Uri ?? existing?.recording_s3_uri ?? null;
 
     const hydrated: HydratedAnalytics = recordingS3Uri
-      ? await hydrateContactLensPayloadFromS3({
+      ? await hydrateCallAnalyticsPayload({
           contactId,
           recordingS3Uri,
         }).catch(() => ({}))

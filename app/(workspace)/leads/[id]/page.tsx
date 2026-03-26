@@ -207,6 +207,7 @@ type CallIntelRecord = {
   agent_talk_time_pct?: number | string | null;
   customer_talk_time_pct?: number | string | null;
   interruptions?: number | string | null;
+  event_source?: string | null;
   transcript_text?: string | null;
   transcript_json?: CallIntelTranscriptLine[] | null;
 };
@@ -325,6 +326,7 @@ function getCallAnalysisState(record: CallIntelRecord | null): CallAnalysisState
   const hasAnalysis = Boolean(record.ai_summary || record.analysis_s3_uri || record.transcript_text || record.transcript_json);
   const hasRecording = Boolean(record.recording_s3_uri || record.recording_url);
   const hasSentiment = Boolean(record.overall_sentiment);
+  const eventSource = typeof record.event_source === "string" ? record.event_source.trim().toLowerCase() : "";
 
   if (hasAnalysis && hasSentiment) {
     return {
@@ -338,15 +340,34 @@ function getCallAnalysisState(record: CallIntelRecord | null): CallAnalysisState
     return {
       label: "Partial Analysis",
       tone: "border-sky-500/30 bg-sky-500/10 text-sky-300",
-      description: "Contact Lens returned some analysis, but not every field is populated.",
+      description:
+        eventSource === "amazon-transcribe-fallback"
+          ? "Automatic transcript recovery completed, but some call analytics fields are still missing."
+          : "Contact Lens returned some analysis, but not every field is populated.",
     };
   }
 
   if (hasRecording) {
+    if (eventSource === "amazon-transcribe-pending") {
+      return {
+        label: "Transcription Pending",
+        tone: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+        description: "The recording is attached and an automatic transcript fallback is running now.",
+      };
+    }
+
+    if (eventSource === "amazon-transcribe-failed") {
+      return {
+        label: "Transcription Failed",
+        tone: "border-rose-500/30 bg-rose-500/10 text-rose-300",
+        description: "Automatic transcript recovery failed for this call. The recording is still available.",
+      };
+    }
+
     return {
       label: "Analysis Pending",
       tone: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-      description: "The recording is attached, but Contact Lens analysis has not landed yet.",
+      description: "The recording is attached, but call analysis has not landed yet.",
     };
   }
 
@@ -720,7 +741,7 @@ export default function LeadExecutionPage() {
 
     let cancelled = false;
     setRecoveringContactId(currentContactId);
-    const retryDelaysMs = [0, 3000, 10000, 30000, 90000];
+    const retryDelaysMs = [0, 3000, 10000, 30000, 90000, 180000, 300000, 420000];
     const timeoutIds: number[] = [];
 
     const recoverLatestCall = async () => {
