@@ -9,7 +9,16 @@ import {
   refreshSupabaseSession,
 } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/login", "/signup", "/apply", "/api/auth/login", "/api/auth/signup", "/api/public"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/signup",
+  "/apply",
+  "/api/auth/login",
+  "/api/auth/signup",
+  "/api/public",
+  "/api/webhooks/contact-lens",
+  "/api/webhooks/stripe",
+];
 
 function normalizeEnvValue(value?: string | null) {
   if (!value) return "";
