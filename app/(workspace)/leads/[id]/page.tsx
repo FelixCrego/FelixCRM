@@ -1978,22 +1978,17 @@ export default function LeadExecutionPage() {
       copiedDraft = false;
     }
 
-    const popup = window.open(
-      GOOGLE_VOICE_MESSAGES_URL,
-      "google-voice-sms",
-      "popup=yes,width=1280,height=900,left=80,top=80",
-    );
+    const voiceTab = window.open(GOOGLE_VOICE_MESSAGES_URL, "_blank", "noopener,noreferrer");
 
-    if (!popup) {
-      setNotesError("Popup blocked. Allow popups for this CRM, then try Google Voice again.");
+    if (!voiceTab) {
+      setNotesError("The Google Voice tab was blocked. Allow popups/new tabs for this CRM, then try again.");
       return;
     }
 
-    popup.focus();
     setSmsAssistStatus(
       copiedDraft
-        ? `Google Voice opened. SMS draft copied. Send to ${phone}.`
-        : `Google Voice opened. Copy the SMS draft manually and send to ${phone}.`,
+        ? `Google Voice opened in a new tab. SMS draft copied. Send to ${phone}.`
+        : `Google Voice opened in a new tab. Copy the SMS draft manually and send to ${phone}.`,
     );
   };
 
