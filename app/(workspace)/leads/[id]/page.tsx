@@ -166,6 +166,8 @@ type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Demo Booked" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
+const GOOGLE_VOICE_MESSAGES_URL = "https://voice.google.com/u/0/messages";
+
 
 
 type AwsActiveContact = {
@@ -301,6 +303,14 @@ function formatCallDuration(value: CallIntelRecord["duration_seconds"]): string 
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = Math.floor(totalSeconds % 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function normalizeGoogleVoicePhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  return value.trim();
 }
 
 function getCallAnalysisState(record: CallIntelRecord | null): CallAnalysisState {
@@ -516,6 +526,7 @@ export default function LeadExecutionPage() {
   const [playbookError, setPlaybookError] = useState("");
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
+  const [smsAssistStatus, setSmsAssistStatus] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
   const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
@@ -1809,6 +1820,7 @@ export default function LeadExecutionPage() {
 
     setNotesLoading(true);
     setNotesError("");
+    setSmsAssistStatus("");
     const route =
       activeTab === "SMS" ? "/api/sms/send" : activeTab === "Email" ? "/api/email/send" : "/api/lead-notes";
 
@@ -1867,6 +1879,7 @@ export default function LeadExecutionPage() {
 
   const handleAIDraft = async () => {
     setIsDrafting(true);
+    setSmsAssistStatus("");
     setNotesDraft("Drafting with Gemini...");
 
     try {
@@ -1891,6 +1904,68 @@ export default function LeadExecutionPage() {
       setNotesDraft("Error connecting to Gemini AI.");
     } finally {
       setIsDrafting(false);
+    }
+  };
+
+  const handleGoogleVoiceFallback = async () => {
+    const content = notesDraft.trim();
+    const phone = normalizeGoogleVoicePhone(dialNumber || lead?.phone || "");
+
+    setNotesError("");
+    setSmsAssistStatus("");
+
+    if (!content) {
+      setNotesError("Write or generate the SMS draft first.");
+      return;
+    }
+
+    if (!phone) {
+      setNotesError("A phone number is required before opening Google Voice.");
+      return;
+    }
+
+    let copiedDraft = true;
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      copiedDraft = false;
+    }
+
+    const popup = window.open(
+      GOOGLE_VOICE_MESSAGES_URL,
+      "google-voice-sms",
+      "popup=yes,width=1280,height=900,left=80,top=80",
+    );
+
+    if (!popup) {
+      setNotesError("Popup blocked. Allow popups for this CRM, then try Google Voice again.");
+      return;
+    }
+
+    popup.focus();
+    setSmsAssistStatus(
+      copiedDraft
+        ? `Google Voice opened. SMS draft copied. Send to ${phone}.`
+        : `Google Voice opened. Copy the SMS draft manually and send to ${phone}.`,
+    );
+  };
+
+  const copySmsPhone = async () => {
+    const phone = normalizeGoogleVoicePhone(dialNumber || lead?.phone || "");
+
+    if (!phone) {
+      setNotesError("A phone number is required before copying.");
+      setSmsAssistStatus("");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(phone);
+      setNotesError("");
+      setSmsAssistStatus(`Recipient number copied: ${phone}`);
+    } catch {
+      setNotesError("Could not copy the recipient phone number.");
+      setSmsAssistStatus("");
     }
   };
 
@@ -3083,12 +3158,13 @@ export default function LeadExecutionPage() {
                 <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No {activeTab.toLowerCase()} activity yet for this lead.</div>
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
+              {activeTab === "SMS" && smsAssistStatus ? <div className="text-xs text-emerald-300">{smsAssistStatus}</div> : null}
               {notesError ? <div className="text-xs text-rose-300">{notesError}</div> : null}
               </div>
             )}
 
             {activeTab !== "Call Audio & AI" ? (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 p-2">
               <button
                 onClick={handleAIDraft}
                 disabled={isDrafting}
@@ -3115,6 +3191,25 @@ export default function LeadExecutionPage() {
               >
                 {activeTab === "SMS" ? "Send SMS" : activeTab === "Email" ? "Send Email" : "Save Note"}
               </button>
+              {activeTab === "SMS" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleGoogleVoiceFallback}
+                    disabled={notesLoading || !notesDraft.trim()}
+                    className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Send via Google Voice
+                  </button>
+                  <button
+                    type="button"
+                    onClick={copySmsPhone}
+                    className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-300 transition hover:border-zinc-500"
+                  >
+                    Copy Number
+                  </button>
+                </>
+              ) : null}
               </div>
             ) : null}
           </div>
