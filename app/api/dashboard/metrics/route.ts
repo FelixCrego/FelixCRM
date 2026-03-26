@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { canUserViewAllLeads, getEffectiveUserRole, listLeads } from "@/lib/store";
+import { canUserViewAllLeads, getEffectiveUserRole, getReviewedDashboardNotificationIds, listLeads } from "@/lib/store";
 import type { Lead } from "@/lib/types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -40,6 +40,7 @@ type DashboardLeaderboardRow = {
   claimedLeads: number;
   dialsToday: number;
   conversationsToday: number;
+  talkMinutesToday: number;
   demosThisWeek: number;
   closesThisMonth: number;
   revenueThisMonth: number;
@@ -55,6 +56,15 @@ type DemoRow = {
   selected_time?: string | null;
   rep_id?: string | null;
   rep_email?: string | null;
+};
+
+type DashboardNotification = {
+  id: string;
+  title: string;
+  detail: string;
+  tone: "blue" | "emerald" | "amber" | "rose";
+  href: string;
+  createdAt: string;
 };
 
 function getHeaders() {
@@ -453,6 +463,10 @@ function normalizeSentiment(value?: string | null) {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
+function formatPercent(value: number) {
+  return `${Math.round(value)}%`;
+}
+
 export async function GET() {
   try {
     const user = await getAuthenticatedUser();
@@ -464,12 +478,13 @@ export async function GET() {
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
 
-    const [visibleLeads, tableUsersById, authUsersById, recentCalls, visibleDemoRows] = await Promise.all([
+    const [visibleLeads, tableUsersById, authUsersById, recentCalls, visibleDemoRows, reviewedNotificationIds] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
       listAuthUsersById(),
       listRecentCalls(),
       listDemoRows({ includeAll, userId: user.id, userEmail: user.email }),
+      getReviewedDashboardNotificationIds(user.id),
     ]);
 
     const usersById = new Map<string, string>(authUsersById);
@@ -649,6 +664,7 @@ export async function GET() {
         claimedLeads,
         dialsToday: 0,
         conversationsToday: 0,
+        talkMinutesToday: 0,
         demosThisWeek: 0,
         closesThisMonth: 0,
         revenueThisMonth: 0,
@@ -665,6 +681,7 @@ export async function GET() {
           claimedLeads: 0,
           dialsToday: 0,
           conversationsToday: 0,
+          talkMinutesToday: 0,
           demosThisWeek: 0,
           closesThisMonth: 0,
           revenueThisMonth: 0,
@@ -684,6 +701,7 @@ export async function GET() {
         return at ? isSameDayInTimeZone(at, now) : false;
       });
       const conversationsToday = callsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
+      const talkMinutesToday = Math.round(sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60);
       const demosThisWeek = ownedLeads.filter((lead) => {
         const bookedAt = parseDate(lead.demoBooking?.bookedAt);
         if (bookedAt) return isOnOrAfterWeekStartInTimeZone(bookedAt, now);
@@ -702,6 +720,7 @@ export async function GET() {
       row.userName = usersById.get(row.userId) ?? row.userName;
       row.dialsToday = callsToday.length;
       row.conversationsToday = conversationsToday.length;
+      row.talkMinutesToday = talkMinutesToday;
       row.demosThisWeek = demosThisWeek.length;
       row.closesThisMonth = closedThisMonth.length;
       row.revenueThisMonth = sum(closedThisMonth.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0)));
@@ -733,6 +752,138 @@ export async function GET() {
       return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
     const liveSitesAll = visibleLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
+    const scorecards = [...leaderboard]
+      .map((row) => {
+        const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
+        const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
+        const demosBookedTotal = ownedLeads.filter((lead) => Boolean(lead.demoBooking?.date)).length;
+        const closesTotal = soldLeads.length;
+        const demoToCloseRate = demosBookedTotal > 0 ? (closesTotal / demosBookedTotal) * 100 : 0;
+        const workingRate = row.dialsToday > 0 ? (row.conversationsToday / row.dialsToday) * 100 : 0;
+        return {
+          userId: row.userId,
+          userName: row.userName,
+          pipelineLeads: row.claimedLeads,
+          talkMinutesToday: row.talkMinutesToday,
+          workingRateLabel: formatPercent(workingRate),
+          demoToCloseLabel: demosBookedTotal > 0 ? formatPercent(demoToCloseRate) : "No demo history",
+          revenueThisMonth: row.revenueThisMonth,
+          streakDays: row.streakDays,
+        };
+      })
+      .slice(0, 6);
+
+    const callLeaderboard = [...leaderboard]
+      .filter((row) => row.dialsToday > 0 || row.talkMinutesToday > 0)
+      .sort((a, b) =>
+        b.talkMinutesToday - a.talkMinutesToday ||
+        b.conversationsToday - a.conversationsToday ||
+        b.dialsToday - a.dialsToday ||
+        a.userName.localeCompare(b.userName))
+      .slice(0, 6)
+      .map((row) => ({
+        userId: row.userId,
+        userName: row.userName,
+        talkMinutesToday: row.talkMinutesToday,
+        dialsToday: row.dialsToday,
+        conversationsToday: row.conversationsToday,
+        avgTalkPerCallLabel: row.dialsToday > 0 ? `${Math.round((row.talkMinutesToday / row.dialsToday) * 10) / 10} min` : "0 min",
+      }));
+
+    const funnel = [...leaderboardSeed.values()]
+      .map((row) => {
+        const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
+        const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
+        const demosBooked = ownedLeads.filter((lead) => Boolean(lead.demoBooking?.date)).length;
+        const closesWon = soldLeads.length;
+        const closeRate = demosBooked > 0 ? (closesWon / demosBooked) * 100 : 0;
+        return {
+          userId: row.userId,
+          userName: row.userName,
+          claimedLeads: row.claimedLeads,
+          demosBooked,
+          closesWon,
+          closeRateLabel: demosBooked > 0 ? formatPercent(closeRate) : "No demos yet",
+        };
+      })
+      .filter((row) => row.claimedLeads > 0 || row.demosBooked > 0 || row.closesWon > 0)
+      .sort((a, b) => b.closesWon - a.closesWon || b.demosBooked - a.demosBooked || b.claimedLeads - a.claimedLeads)
+      .slice(0, 8);
+
+    const notifications: DashboardNotification[] = [];
+
+    for (const lead of visibleLeads) {
+      const bookedAt = parseDate(lead.demoBooking?.bookedAt);
+      if (bookedAt && now.getTime() - bookedAt.getTime() <= 24 * 60 * 60 * 1000) {
+        notifications.push({
+          id: `demo-${lead.id}-${bookedAt.toISOString()}`,
+          title: `New demo booked: ${lead.businessName}`,
+          detail: `${lead.demoBooking?.date ?? "Upcoming"} ${lead.demoBooking?.time ?? ""}`.trim(),
+          tone: "blue",
+          href: `/leads/${lead.id}`,
+          createdAt: bookedAt.toISOString(),
+        });
+      }
+
+      const closedAt = parseDate(lead.closedAt);
+      if (closedAt && now.getTime() - closedAt.getTime() <= 72 * 60 * 60 * 1000) {
+        notifications.push({
+          id: `close-${lead.id}-${closedAt.toISOString()}`,
+          title: `Closed won: ${lead.businessName}`,
+          detail: typeof lead.closedDealValue === "number" ? currency(lead.closedDealValue) : "Value pending",
+          tone: "emerald",
+          href: `/leads/${lead.id}`,
+          createdAt: closedAt.toISOString(),
+        });
+      }
+
+      if (lead.siteStatus === "FAILED") {
+        notifications.push({
+          id: `deploy-${lead.id}`,
+          title: `Deploy failed: ${lead.businessName}`,
+          detail: "Generated site needs a redeploy or template fix.",
+          tone: "rose",
+          href: `/leads/${lead.id}`,
+          createdAt: lead.updatedAt,
+        });
+      }
+
+      if (lead.billingProfile?.billingType === "RECURRING" && (lead.billingProfile.billingStatus === "PAUSED" || lead.billingProfile.billingStatus === "CANCELLED")) {
+        notifications.push({
+          id: `billing-${lead.id}`,
+          title: `Recurring billing at risk: ${lead.businessName}`,
+          detail: `Status is ${lead.billingProfile.billingStatus.toLowerCase()}.`,
+          tone: "amber",
+          href: `/leads/${lead.id}`,
+          createdAt: lead.updatedAt,
+        });
+      }
+    }
+
+    for (const call of calls) {
+      const callAt = parseDate(call.created_at);
+      if (!callAt || now.getTime() - callAt.getTime() < 20 * 60 * 1000) continue;
+      if (call.overall_sentiment) continue;
+      const lead = call.lead_id ? leadsById.get(call.lead_id) : null;
+      if (!lead) continue;
+      notifications.push({
+        id: `analysis-${call.contact_id ?? lead.id}-${callAt.toISOString()}`,
+        title: `Call analysis still pending: ${lead.businessName}`,
+        detail: `Recording landed ${formatRelative(callAt, now)} but Contact Lens has not filled sentiment yet.`,
+        tone: "amber",
+        href: `/leads/${lead.id}`,
+        createdAt: callAt.toISOString(),
+      });
+    }
+
+    const reviewedSet = new Set(reviewedNotificationIds);
+    const visibleNotifications = notifications.filter((notification) => !reviewedSet.has(notification.id));
+
+    visibleNotifications.sort((a, b) => {
+      const bTime = parseDate(b.createdAt)?.getTime() ?? 0;
+      const aTime = parseDate(a.createdAt)?.getTime() ?? 0;
+      return bTime - aTime;
+    });
 
     return NextResponse.json({
       generatedAt: now.toISOString(),
@@ -772,8 +923,13 @@ export async function GET() {
           upcomingDemos: upcomingDemos.length,
           closedRevenueThisMonth: sum(closedThisMonthAll.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0))),
           liveSites: liveSitesAll,
+          alerts: visibleNotifications.length,
         },
         leaderboard,
+        scorecards,
+        callLeaderboard,
+        funnel,
+        notifications: visibleNotifications.slice(0, 8),
         topPerformer: leaderboard[0] ?? null,
         needsAttention: leaderboard
           .filter((row) => row.dialsToday === 0 && row.claimedLeads > 0)

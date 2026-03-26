@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { canUserManageAllLeads, createManagedUser, inviteManagedUser, listManagedUsers, saveManagedUserSettings } from "@/lib/store";
+import {
+  canUserManageAllLeads,
+  createManagedUser,
+  inviteManagedUser,
+  listManagedUsers,
+  resendManagedUserInvite,
+  resetManagedUserPassword,
+  saveManagedUserSettings,
+  setManagedUserActive,
+} from "@/lib/store";
 import type { UserRole } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -29,12 +38,16 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as {
+      action?: "save" | "reset_password" | "resend_invite" | "toggle_active";
       userId?: string;
       name?: string;
       role?: UserRole;
       commissionRate?: number | null;
+      password?: string;
+      active?: boolean;
     };
 
+    const action = body.action ?? "save";
     const userId = typeof body.userId === "string" ? body.userId.trim() : "";
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const role = body.role === "SUPER_ADMIN" || body.role === "MANAGER" || body.role === "TEAM_LEAD" ? body.role : "REP";
@@ -45,8 +58,34 @@ export async function POST(request: Request) {
           ? body.commissionRate
           : null;
 
-    if (!userId || !name) {
-      return NextResponse.json({ error: "userId and name are required." }, { status: 400 });
+    if (!userId) {
+      return NextResponse.json({ error: "userId is required." }, { status: 400 });
+    }
+
+    if (action === "reset_password") {
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!password) {
+        return NextResponse.json({ error: "password is required." }, { status: 400 });
+      }
+      await resetManagedUserPassword(userId, password);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === "resend_invite") {
+      await resendManagedUserInvite(userId);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === "toggle_active") {
+      if (typeof body.active !== "boolean") {
+        return NextResponse.json({ error: "active is required." }, { status: 400 });
+      }
+      await setManagedUserActive(userId, body.active);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (!name) {
+      return NextResponse.json({ error: "name is required." }, { status: 400 });
     }
 
     await saveManagedUserSettings(userId, { name, role, commissionRate });

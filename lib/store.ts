@@ -75,6 +75,10 @@ type AuthAdminUser = {
   email?: string | null;
   created_at?: string | null;
   last_sign_in_at?: string | null;
+  email_confirmed_at?: string | null;
+  confirmed_at?: string | null;
+  invited_at?: string | null;
+  banned_until?: string | null;
   user_metadata?: Record<string, unknown> | null;
 };
 
@@ -89,6 +93,8 @@ export type ManagedUser = AssignableUser & {
   role: UserRole;
   createdAt: string | null;
   lastSignInAt: string | null;
+  emailConfirmedAt: string | null;
+  status: "ACTIVE" | "INVITED" | "SUSPENDED";
 };
 
 export type FinanceExpense = {
@@ -219,6 +225,21 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
           : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
             ? "SUPER_ADMIN"
             : "REP";
+      const bannedUntil = typeof user.banned_until === "string" ? user.banned_until : null;
+      const emailConfirmedAt =
+        typeof user.email_confirmed_at === "string"
+          ? user.email_confirmed_at
+          : typeof user.confirmed_at === "string"
+            ? user.confirmed_at
+            : null;
+      const invitedAt = typeof user.invited_at === "string" ? user.invited_at : null;
+      const bannedUntilDate = bannedUntil ? new Date(bannedUntil) : null;
+      const isSuspended = Boolean(bannedUntilDate && !Number.isNaN(bannedUntilDate.getTime()) && bannedUntilDate.getTime() > Date.now());
+      const status: ManagedUser["status"] = isSuspended
+        ? "SUSPENDED"
+        : !user.last_sign_in_at && invitedAt && !emailConfirmedAt
+          ? "INVITED"
+          : "ACTIVE";
       return {
         id: user.id,
         email,
@@ -227,6 +248,8 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
         commissionRate: parseCommissionRateValue(metadata.commissionRate),
         createdAt: typeof user.created_at === "string" ? user.created_at : null,
         lastSignInAt: typeof user.last_sign_in_at === "string" ? user.last_sign_in_at : null,
+        emailConfirmedAt,
+        status,
       } satisfies ManagedUser;
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -352,6 +375,136 @@ export async function createManagedUser(input: {
   }
 
   return text ? (parseJsonSafely<Record<string, unknown>>(text) ?? {}) : {};
+}
+
+export async function setManagedUserActive(userId: string, active: boolean) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to update user status.");
+
+  const targetUser = await getAuthAdminUserById(userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ban_duration: active ? "none" : "876000h",
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || `Failed to ${active ? "reactivate" : "deactivate"} user.`);
+  }
+
+  return text ? (parseJsonSafely<Record<string, unknown>>(text) ?? {}) : {};
+}
+
+export async function resetManagedUserPassword(userId: string, password: string) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to reset passwords.");
+  if (password.length < 8) throw new Error("Password must be at least 8 characters.");
+
+  const targetUser = await getAuthAdminUserById(userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      password,
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || "Failed to reset password.");
+  }
+
+  return text ? (parseJsonSafely<Record<string, unknown>>(text) ?? {}) : {};
+}
+
+export async function resendManagedUserInvite(userId: string) {
+  const targetUser = await getAuthAdminUserById(userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const metadata = targetUser.user_metadata && typeof targetUser.user_metadata === "object" ? targetUser.user_metadata : {};
+  const email = typeof targetUser.email === "string" ? targetUser.email.trim().toLowerCase() : "";
+  const name =
+    typeof metadata.name === "string" && metadata.name.trim()
+      ? metadata.name.trim()
+      : typeof metadata.full_name === "string" && metadata.full_name.trim()
+        ? metadata.full_name.trim()
+        : email
+          ? prettyNameFromEmail(email)
+          : "";
+  const role = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "REP";
+
+  if (!email) throw new Error("User email not found.");
+
+  await inviteManagedUser({
+    email,
+    name: name || email,
+    role: role === "SUPER_ADMIN" || role === "MANAGER" || role === "TEAM_LEAD" ? (role as UserRole) : "REP",
+    commissionRate: parseCommissionRateValue(metadata.commissionRate),
+  });
+}
+
+function normalizeReviewedDashboardNotificationIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim())
+    .slice(-200);
+}
+
+export async function getReviewedDashboardNotificationIds(userId: string): Promise<string[]> {
+  const targetUser = await getAuthAdminUserById(userId);
+  if (!targetUser) return [];
+  const metadata = targetUser.user_metadata && typeof targetUser.user_metadata === "object" ? targetUser.user_metadata : {};
+  return normalizeReviewedDashboardNotificationIds(metadata.reviewedDashboardNotificationIds);
+}
+
+export async function setDashboardNotificationReviewed(userId: string, notificationId: string, reviewed: boolean) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to update dashboard notifications.");
+  const targetUser = await getAuthAdminUserById(userId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const cleanId = notificationId.trim();
+  if (!cleanId) throw new Error("notificationId is required.");
+
+  const metadata =
+    targetUser.user_metadata && typeof targetUser.user_metadata === "object"
+      ? { ...targetUser.user_metadata }
+      : {};
+  const currentIds = normalizeReviewedDashboardNotificationIds(metadata.reviewedDashboardNotificationIds);
+  const nextIds = reviewed ? [...new Set([...currentIds, cleanId])].slice(-200) : currentIds.filter((id) => id !== cleanId);
+  metadata.reviewedDashboardNotificationIds = nextIds;
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      user_metadata: metadata,
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || "Failed to update reviewed notifications.");
+  }
+
+  return nextIds;
 }
 
 export async function saveAssignableUserCommissionRate(userId: string, commissionRate: number | null) {
@@ -731,6 +884,18 @@ function leadToMemory(lead: any): Lead {
       : sourcePayload.commission_payout && typeof sourcePayload.commission_payout === "object"
         ? (sourcePayload.commission_payout as Record<string, unknown>)
         : null;
+  const accountManagementRaw =
+    sourcePayload.accountManagement && typeof sourcePayload.accountManagement === "object"
+      ? (sourcePayload.accountManagement as Record<string, unknown>)
+      : sourcePayload.account_management && typeof sourcePayload.account_management === "object"
+        ? (sourcePayload.account_management as Record<string, unknown>)
+        : null;
+  const seoTasksRaw =
+    accountManagementRaw && Array.isArray(accountManagementRaw.seoTasks)
+      ? accountManagementRaw.seoTasks
+      : accountManagementRaw && Array.isArray(accountManagementRaw.seo_tasks)
+        ? accountManagementRaw.seo_tasks
+        : [];
 
   return {
     id: lead.id,
@@ -839,11 +1004,106 @@ function leadToMemory(lead: any): Lead {
       (typeof lead.stripeCheckoutLink === "string" ? lead.stripeCheckoutLink : null) ??
       (typeof lead.stripe_checkout_link === "string" ? lead.stripe_checkout_link : null) ??
       stripeCheckoutLinkFromPayload,
+    accountManagement:
+      accountManagementRaw
+        ? {
+            serviceStatus:
+              accountManagementRaw.serviceStatus === "ONBOARDING" ||
+              accountManagementRaw.serviceStatus === "ACTIVE" ||
+              accountManagementRaw.serviceStatus === "AT_RISK" ||
+              accountManagementRaw.serviceStatus === "PAUSED"
+                ? accountManagementRaw.serviceStatus
+                : "ONBOARDING",
+            primaryOwnerId: typeof accountManagementRaw.primaryOwnerId === "string" ? accountManagementRaw.primaryOwnerId : null,
+            primaryOwnerName: typeof accountManagementRaw.primaryOwnerName === "string" ? accountManagementRaw.primaryOwnerName : null,
+            startDate: typeof accountManagementRaw.startDate === "string" ? accountManagementRaw.startDate : null,
+            renewalDate: typeof accountManagementRaw.renewalDate === "string" ? accountManagementRaw.renewalDate : null,
+            seo: normalizeManagedServiceLine(accountManagementRaw.seo),
+            seoTasks: seoTasksRaw
+              .filter((task): task is Record<string, unknown> => Boolean(task) && typeof task === "object")
+              .map((task, index) => ({
+                id: typeof task.id === "string" ? task.id : `seo-task-${index + 1}`,
+                title: typeof task.title === "string" ? task.title : `SEO Task ${index + 1}`,
+                instruction: typeof task.instruction === "string" ? task.instruction : "",
+                completed: Boolean(task.completed),
+              })),
+            ppc: normalizeManagedServiceLine(accountManagementRaw.ppc),
+            social: normalizeManagedServiceLine(accountManagementRaw.social),
+            analyticsConnections:
+              accountManagementRaw.analyticsConnections && typeof accountManagementRaw.analyticsConnections === "object"
+                ? {
+                    gscConnected: Boolean((accountManagementRaw.analyticsConnections as Record<string, unknown>).gscConnected),
+                    gscPropertyUrl:
+                      typeof (accountManagementRaw.analyticsConnections as Record<string, unknown>).gscPropertyUrl === "string"
+                        ? ((accountManagementRaw.analyticsConnections as Record<string, unknown>).gscPropertyUrl as string)
+                        : null,
+                    ga4Connected: Boolean((accountManagementRaw.analyticsConnections as Record<string, unknown>).ga4Connected),
+                    ga4PropertyId:
+                      typeof (accountManagementRaw.analyticsConnections as Record<string, unknown>).ga4PropertyId === "string"
+                        ? ((accountManagementRaw.analyticsConnections as Record<string, unknown>).ga4PropertyId as string)
+                        : null,
+                    lastAiReviewAt:
+                      typeof (accountManagementRaw.analyticsConnections as Record<string, unknown>).lastAiReviewAt === "string"
+                        ? ((accountManagementRaw.analyticsConnections as Record<string, unknown>).lastAiReviewAt as string)
+                        : null,
+                    aiSuggestions:
+                      typeof (accountManagementRaw.analyticsConnections as Record<string, unknown>).aiSuggestions === "string"
+                        ? ((accountManagementRaw.analyticsConnections as Record<string, unknown>).aiSuggestions as string)
+                        : null,
+                  }
+                : null,
+            clientHealth:
+              accountManagementRaw.clientHealth && typeof accountManagementRaw.clientHealth === "object"
+                ? {
+                    lastTouchAt:
+                      typeof (accountManagementRaw.clientHealth as Record<string, unknown>).lastTouchAt === "string"
+                        ? ((accountManagementRaw.clientHealth as Record<string, unknown>).lastTouchAt as string)
+                        : null,
+                    nextMeetingAt:
+                      typeof (accountManagementRaw.clientHealth as Record<string, unknown>).nextMeetingAt === "string"
+                        ? ((accountManagementRaw.clientHealth as Record<string, unknown>).nextMeetingAt as string)
+                        : null,
+                    satisfaction:
+                      (accountManagementRaw.clientHealth as Record<string, unknown>).satisfaction === "STRONG" ||
+                      (accountManagementRaw.clientHealth as Record<string, unknown>).satisfaction === "STABLE" ||
+                      (accountManagementRaw.clientHealth as Record<string, unknown>).satisfaction === "WATCH" ||
+                      (accountManagementRaw.clientHealth as Record<string, unknown>).satisfaction === "AT_RISK"
+                        ? ((accountManagementRaw.clientHealth as Record<string, unknown>).satisfaction as "STRONG" | "STABLE" | "WATCH" | "AT_RISK")
+                        : "STABLE",
+                    blockers:
+                      typeof (accountManagementRaw.clientHealth as Record<string, unknown>).blockers === "string"
+                        ? ((accountManagementRaw.clientHealth as Record<string, unknown>).blockers as string)
+                        : null,
+                    expansionOpportunity:
+                      typeof (accountManagementRaw.clientHealth as Record<string, unknown>).expansionOpportunity === "string"
+                        ? ((accountManagementRaw.clientHealth as Record<string, unknown>).expansionOpportunity as string)
+                        : null,
+                  }
+                : null,
+          }
+        : null,
     transferRequests: Array.isArray(sourcePayload.transferRequests)
       ? sourcePayload.transferRequests.filter((request: any) =>
           request && typeof request.requesterId === "string" && typeof request.requestedAt === "string" && typeof request.status === "string",
         )
       : [],
+  };
+}
+
+function normalizeManagedServiceLine(value: unknown): NonNullable<Lead["accountManagement"]>["seo"] {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  return {
+    enabled: Boolean(record.enabled),
+    status:
+      record.status === "NOT_STARTED" || record.status === "ON_TRACK" || record.status === "NEEDS_ATTENTION" || record.status === "PAUSED"
+        ? record.status
+        : "NOT_STARTED",
+    cadence: record.cadence === "WEEKLY" || record.cadence === "BIWEEKLY" || record.cadence === "MONTHLY" ? record.cadence : "MONTHLY",
+    deliverables: typeof record.deliverables === "string" ? record.deliverables : null,
+    kpiSummary: typeof record.kpiSummary === "string" ? record.kpiSummary : null,
+    nextReportDate: typeof record.nextReportDate === "string" ? record.nextReportDate : null,
+    notes: typeof record.notes === "string" ? record.notes : null,
   };
 }
 
@@ -884,6 +1144,11 @@ export async function saveProfile(userId: string, profile: { niche: string; tone
 }
 
 export async function canUserViewAllLeads(userId: string, email?: string | null) {
+  const role = await getEffectiveUserRole(userId, email);
+  return role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
+export async function canUserAccessAccountManagement(userId: string, email?: string | null) {
   const role = await getEffectiveUserRole(userId, email);
   return role === "MANAGER" || role === "SUPER_ADMIN";
 }
@@ -1467,6 +1732,42 @@ export async function saveLeadBillingProfile(
           isSnakeLeadsTable(table)
             ? { source_payload: { ...payload, billingProfile } }
             : { sourcePayload: { ...payload, billingProfile } },
+        ),
+      },
+      { id: `eq.${leadId}` },
+    ),
+  );
+}
+
+export async function saveLeadAccountManagementProfile(
+  leadId: string,
+  accountManagement: NonNullable<Lead["accountManagement"]>,
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save account management profiles.");
+
+  const rows = await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(table, undefined, {
+      select: isSnakeLeadsTable(table) ? "id,source_payload" : "id,sourcePayload",
+      id: `eq.${leadId}`,
+      limit: "1",
+    }),
+  );
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
+
+  await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(
+      table,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(
+          isSnakeLeadsTable(table)
+            ? { source_payload: { ...payload, accountManagement } }
+            : { sourcePayload: { ...payload, accountManagement } },
         ),
       },
       { id: `eq.${leadId}` },

@@ -24,6 +24,7 @@ import {
   CalendarDays,
   CircleDollarSign,
   Menu,
+  FolderKanban,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -109,6 +110,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/team-performance", label: "Team Performance", icon: Trophy },
     { href: "/team-goals", label: "Rep Goals", icon: MapIcon },
     { href: "/payouts", label: "Payouts", icon: Briefcase },
+    { href: "/account-management", label: "Account Management", icon: FolderKanban },
   ],
   SUPER_ADMIN: [
     { href: "/dashboard", label: "Global Command Center", icon: Shield },
@@ -120,6 +122,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/billing", label: "Billing/Stripe", icon: Banknote },
+    { href: "/account-management", label: "Account Management", icon: FolderKanban },
     { href: "/user-management", label: "User Management", icon: Users },
     { href: "/system-logs", label: "System Logs", icon: ScrollText },
   ],

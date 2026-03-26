@@ -3,12 +3,28 @@ import type { NextRequest } from "next/server";
 import {
   AUTH_ACCESS_TOKEN_COOKIE,
   AUTH_REFRESH_TOKEN_COOKIE,
+  AUTH_USER_EMAIL_HEADER,
   AUTH_USER_HEADER,
   getSupabaseUserByAccessToken,
   refreshSupabaseSession,
 } from "@/lib/auth";
 
 const PUBLIC_PATHS = ["/login", "/signup", "/apply", "/api/auth/login", "/api/auth/signup", "/api/public"];
+
+function normalizeEnvValue(value?: string | null) {
+  if (!value) return "";
+  return value.trim().replace(/^['"]|['"]$/g, "");
+}
+
+function hasMarketingHubSyncAccess(request: NextRequest) {
+  if (request.nextUrl.pathname !== "/api/account-management/clients") return false;
+  const expected = normalizeEnvValue(process.env.MARKETING_HUB_SYNC_TOKEN);
+  if (!expected) return false;
+
+  const headerToken = normalizeEnvValue(request.headers.get("x-marketing-hub-token"));
+  const queryToken = normalizeEnvValue(request.nextUrl.searchParams.get("token"));
+  return headerToken === expected || queryToken === expected;
+}
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
@@ -26,7 +42,7 @@ function unauthorizedResponse(request: NextRequest) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (isPublicPath(pathname)) return NextResponse.next();
+  if (isPublicPath(pathname) || hasMarketingHubSyncAccess(request)) return NextResponse.next();
 
   const accessToken = request.cookies.get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
   const refreshToken = request.cookies.get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? "";
@@ -40,6 +56,7 @@ export async function middleware(request: NextRequest) {
   if (user?.id) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set(AUTH_USER_HEADER, user.id);
+    requestHeaders.set(AUTH_USER_EMAIL_HEADER, user.email ?? "");
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
@@ -51,6 +68,7 @@ export async function middleware(request: NextRequest) {
     const refreshed = await refreshSupabaseSession(refreshToken);
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set(AUTH_USER_HEADER, refreshed.userId);
+    requestHeaders.set(AUTH_USER_EMAIL_HEADER, refreshed.email ?? "");
 
     const response = NextResponse.next({ request: { headers: requestHeaders } });
     response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, refreshed.accessToken, {

@@ -89,6 +89,12 @@ type LeadRecord = {
   } | null;
   aiResearchSummary?: string | null;
   contacts?: LeadContactRecord[];
+  closedAt?: string | null;
+  closed_at?: string | null;
+  closedDealValue?: number | null;
+  closed_deal_value?: number | null;
+  stripeCheckoutLink?: string | null;
+  stripe_checkout_link?: string | null;
 };
 
 const LEAD_RESEARCH_CACHE_KEY = "leadResearchSummary";
@@ -792,8 +798,16 @@ export default function LeadExecutionPage() {
           if (existingDemoBooking?.time) setSelectedMeetingTime(existingDemoBooking.time);
           if (existingDemoBooking?.meetLink) setMeetingLink(existingDemoBooking.meetLink);
 
-          const resolvedStatus = data.status as ExecutionLeadStatus | undefined;
-          if (
+          const resolvedStatus = typeof data.status === "string" ? data.status : "";
+          const leadIsClosed =
+            resolvedStatus.toUpperCase() === "CLOSED" ||
+            typeof data.closedAt === "string" ||
+            typeof data.closed_at === "string" ||
+            typeof data.closedDealValue === "number" ||
+            typeof data.closed_deal_value === "number";
+          if (leadIsClosed) {
+            setLeadExecutionStatus("Closed Won");
+          } else if (
             resolvedStatus === "New" ||
             resolvedStatus === "Pitched" ||
             resolvedStatus === "Demo Booked" ||
@@ -1109,7 +1123,14 @@ export default function LeadExecutionPage() {
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
   const leadDemoBooking = lead?.source_payload?.demoBooking ?? lead?.sourcePayload?.demoBooking;
-  const isDemoBooked = hasBookedDemo(lead) || leadExecutionStatus === "Demo Booked";
+  const closedAt = lead?.closedAt ?? lead?.closed_at ?? null;
+  const closedDealValue = lead?.closedDealValue ?? lead?.closed_deal_value ?? null;
+  const isClosedDeal =
+    leadExecutionStatus === "Closed Won" ||
+    (typeof lead?.status === "string" && lead.status.toUpperCase() === "CLOSED") ||
+    typeof closedAt === "string" ||
+    typeof closedDealValue === "number";
+  const isDemoBooked = !isClosedDeal && (hasBookedDemo(lead) || leadExecutionStatus === "Demo Booked");
   const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
   const hasLeadWebsite = leadWebsite !== "No website on file";
   const leadWebsiteHref = leadWebsite.startsWith("http://") || leadWebsite.startsWith("https://") ? leadWebsite : `https://${leadWebsite}`;
@@ -2353,13 +2374,30 @@ export default function LeadExecutionPage() {
             <div className="mt-3 space-y-3">
               <span
                 className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                  isDemoBooked
+                  isClosedDeal
+                    ? "border-emerald-300/70 bg-emerald-500/25 text-emerald-100 shadow-[0_0_24px_rgba(16,185,129,0.35)]"
+                    : isDemoBooked
                     ? "border-fuchsia-300/70 bg-fuchsia-500/25 text-fuchsia-100 shadow-[0_0_24px_rgba(217,70,239,0.4)]"
                     : "border-indigo-400/30 bg-indigo-500/15 text-indigo-200"
                 }`}
               >
-                {isDemoBooked ? "Demo Booked" : leadExecutionStatus}
+                {isClosedDeal ? "Closed Won" : isDemoBooked ? "Demo Booked" : leadExecutionStatus}
               </span>
+              {isClosedDeal ? (
+                <div className="rounded-lg border border-emerald-300/70 bg-gradient-to-r from-emerald-600/35 to-teal-600/35 p-3 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-100">Closed Deal</p>
+                  <p className="mt-1 text-xs text-emerald-100/90">
+                    {typeof closedDealValue === "number"
+                      ? `Value: ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(closedDealValue)}`
+                      : "This lead is already marked as closed."}
+                  </p>
+                  {closedAt ? (
+                    <p className="mt-1 text-xs text-emerald-100/80">
+                      Closed {new Date(closedAt).toLocaleString("en-US")}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {isDemoBooked ? (
                 <div className="rounded-lg border border-fuchsia-300/70 bg-gradient-to-r from-fuchsia-600/35 to-violet-600/35 p-3 shadow-[0_0_30px_rgba(217,70,239,0.25)]">
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-fuchsia-100">Demo Booked</p>
@@ -2370,7 +2408,7 @@ export default function LeadExecutionPage() {
                   </p>
                 </div>
               ) : null}
-              {canOverrideSoldBy ? (
+              {!isClosedDeal && canOverrideSoldBy ? (
                 <label className="block rounded-lg border border-emerald-400/20 bg-emerald-500/5 p-3 text-left">
                   <span className="block text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-200">Sold By</span>
                   <select
@@ -2388,19 +2426,25 @@ export default function LeadExecutionPage() {
                     Superadmin can override the seller. Lead ownership stays unchanged.
                   </span>
                 </label>
-              ) : (
+              ) : !isClosedDeal ? (
                 <p className="text-[11px] text-zinc-500">
                   Sold by will credit the current lead owner automatically.
                 </p>
+              ) : null}
+              {isClosedDeal ? (
+                <div className="w-full rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-3 text-xs text-emerald-100">
+                  This lead is already in closed deals. The close action is locked.
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={markLeadAsClosedDeal}
+                  disabled={closingDeal || (canOverrideSoldBy && !soldByUserId)}
+                  className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
+                </button>
               )}
-              <button
-                type="button"
-                onClick={markLeadAsClosedDeal}
-                disabled={closingDeal || (canOverrideSoldBy && !soldByUserId)}
-                className="w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {closingDeal ? "Moving to closed deals..." : "Mark as Closed Deal"}
-              </button>
               {closeDealError ? <p className="text-xs text-rose-300">{closeDealError}</p> : null}
             </div>
           </div>

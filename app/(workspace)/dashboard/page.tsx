@@ -72,6 +72,7 @@ type DashboardMetrics = {
       upcomingDemos: number;
       closedRevenueThisMonth: number;
       liveSites: number;
+      alerts: number;
     };
     leaderboard: Array<{
       userId: string;
@@ -79,11 +80,46 @@ type DashboardMetrics = {
       claimedLeads: number;
       dialsToday: number;
       conversationsToday: number;
+      talkMinutesToday: number;
       demosThisWeek: number;
       closesThisMonth: number;
       revenueThisMonth: number;
       scoreToday: number;
       streakDays: number;
+    }>;
+    scorecards: Array<{
+      userId: string;
+      userName: string;
+      pipelineLeads: number;
+      talkMinutesToday: number;
+      workingRateLabel: string;
+      demoToCloseLabel: string;
+      revenueThisMonth: number;
+      streakDays: number;
+    }>;
+    callLeaderboard: Array<{
+      userId: string;
+      userName: string;
+      talkMinutesToday: number;
+      dialsToday: number;
+      conversationsToday: number;
+      avgTalkPerCallLabel: string;
+    }>;
+    funnel: Array<{
+      userId: string;
+      userName: string;
+      claimedLeads: number;
+      demosBooked: number;
+      closesWon: number;
+      closeRateLabel: string;
+    }>;
+    notifications: Array<{
+      id: string;
+      title: string;
+      detail: string;
+      tone: "blue" | "emerald" | "amber" | "rose";
+      href: string;
+      createdAt: string;
     }>;
     topPerformer: {
       userId: string;
@@ -365,10 +401,12 @@ function ManagerDashboard({
   metrics,
   loading,
   showRepWorkspace = true,
+  onReviewNotification,
 }: {
   metrics: DashboardMetrics | null;
   loading: boolean;
   showRepWorkspace?: boolean;
+  onReviewNotification: (notificationId: string) => void;
 }) {
   const [lockedPlan, setLockedPlan] = useState<ManagerLockedPlan | null>(null);
 
@@ -443,6 +481,118 @@ function ManagerDashboard({
           detail="Ready for proof-driven follow-up"
           icon={Rocket}
         />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Scorecards</h3>
+              <p className="mt-1 text-sm text-zinc-400">Pipeline load, working rate, talk minutes, and demo-to-close efficiency.</p>
+            </div>
+            <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
+              {metrics?.team.scorecards.length ?? 0} tracked
+            </span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {(metrics?.team.scorecards.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                Rep scorecards will appear once calls and demos are landing.
+              </div>
+            ) : (
+              metrics?.team.scorecards.map((rep) => (
+                <article key={rep.userId} className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">{rep.userName}</h4>
+                      <p className="mt-1 text-xs text-zinc-500">{rep.pipelineLeads} leads in active rotation</p>
+                    </div>
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-200">
+                      {rep.streakDays}d streak
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-zinc-300">
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+                      <p className="text-zinc-500">Talk today</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.talkMinutesToday} min</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+                      <p className="text-zinc-500">Working rate</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.workingRateLabel}</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+                      <p className="text-zinc-500">Demo to close</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.demoToCloseLabel}</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+                      <p className="text-zinc-500">Closed revenue</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{formatCurrency(rep.revenueThisMonth)}</p>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Admin Alerts</h3>
+              <p className="mt-1 text-sm text-zinc-400">Recent demos, closes, billing issues, deploy failures, and delayed call analysis.</p>
+            </div>
+            <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
+              {metrics?.team.summary.alerts ?? 0} alerts
+            </span>
+          </div>
+          <div className="space-y-2">
+            {(metrics?.team.notifications.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                No superadmin alerts right now.
+              </div>
+            ) : (
+              metrics?.team.notifications.map((notification) => (
+                <div
+                  key={notification.id}
+                  className={`rounded-xl border px-3 py-3 ${
+                    notification.tone === "rose"
+                      ? "border-rose-500/20 bg-rose-500/5"
+                      : notification.tone === "amber"
+                        ? "border-amber-500/20 bg-amber-500/5"
+                        : notification.tone === "emerald"
+                          ? "border-emerald-500/20 bg-emerald-500/5"
+                          : "border-blue-500/20 bg-blue-500/5"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-white">{notification.title}</p>
+                      <p className="mt-1 text-xs text-zinc-300">{notification.detail}</p>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                      {new Date(notification.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <Link
+                      href={notification.href}
+                      className="inline-flex rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-zinc-600"
+                    >
+                      Open Lead
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => onReviewNotification(notification.id)}
+                      className="inline-flex rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-600"
+                    >
+                      Mark Reviewed
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1.4fr_0.8fr]">
@@ -526,6 +676,64 @@ function ManagerDashboard({
             </div>
           </article>
         </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Call Leaderboard</h3>
+          <div className="space-y-2">
+            {(metrics?.team.callLeaderboard.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                No call pacing data yet.
+              </div>
+            ) : (
+              metrics?.team.callLeaderboard.map((rep, index) => (
+                <div key={rep.userId} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">#{index + 1} {rep.userName}</p>
+                      <p className="mt-1 text-xs text-zinc-400">
+                        {rep.dialsToday} dials, {rep.conversationsToday} connected, avg {rep.avgTalkPerCallLabel}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">Talk today</p>
+                      <p className="mt-1 text-lg font-semibold text-white">{rep.talkMinutesToday} min</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Demo to Close Funnel</h3>
+          <div className="space-y-2">
+            {(metrics?.team.funnel.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                Funnel stats will show once leads start moving through demo and close stages.
+              </div>
+            ) : (
+              metrics?.team.funnel.map((rep) => (
+                <div key={rep.userId} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{rep.userName}</p>
+                      <p className="mt-1 text-xs text-zinc-400">
+                        {rep.claimedLeads} owned leads, {rep.demosBooked} booked demos, {rep.closesWon} closes
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">Close rate</p>
+                      <p className="mt-1 text-lg font-semibold text-white">{rep.closeRateLabel}</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
       </section>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
@@ -663,6 +871,16 @@ export default function DashboardPage() {
       });
   };
 
+  const reviewNotification = (notificationId: string) => {
+    void fetch("/api/dashboard/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notificationId, reviewed: true }),
+    }).finally(() => {
+      refreshBoard();
+    });
+  };
+
   if (shouldShowTeamBoard) {
     return (
       <div className="space-y-3">
@@ -678,7 +896,7 @@ export default function DashboardPage() {
             Refresh Board
           </button>
         </div>
-        <ManagerDashboard metrics={metrics} loading={loading} showRepWorkspace={!shouldShowBothBoards} />
+        <ManagerDashboard metrics={metrics} loading={loading} showRepWorkspace={!shouldShowBothBoards} onReviewNotification={reviewNotification} />
         {shouldShowBothBoards ? (
           <section className="space-y-3">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">

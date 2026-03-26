@@ -22,6 +22,50 @@ export type LeadEnrichmentPayload = {
   structured: LeadResearchStructuredPayload;
 };
 
+export type ManagedServiceLine = {
+  enabled?: boolean;
+  status?: "NOT_STARTED" | "ON_TRACK" | "NEEDS_ATTENTION" | "PAUSED";
+  cadence?: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
+  deliverables?: string | null;
+  kpiSummary?: string | null;
+  nextReportDate?: string | null;
+  notes?: string | null;
+};
+
+export type SeoTaskChecklistItem = {
+  id: string;
+  title: string;
+  instruction: string;
+  completed?: boolean;
+};
+
+export type LeadAccountManagementProfile = {
+  serviceStatus?: "ONBOARDING" | "ACTIVE" | "AT_RISK" | "PAUSED";
+  primaryOwnerId?: string | null;
+  primaryOwnerName?: string | null;
+  startDate?: string | null;
+  renewalDate?: string | null;
+  seo?: ManagedServiceLine | null;
+  seoTasks?: SeoTaskChecklistItem[] | null;
+  ppc?: ManagedServiceLine | null;
+  social?: ManagedServiceLine | null;
+  analyticsConnections?: {
+    gscConnected?: boolean;
+    gscPropertyUrl?: string | null;
+    ga4Connected?: boolean;
+    ga4PropertyId?: string | null;
+    lastAiReviewAt?: string | null;
+    aiSuggestions?: string | null;
+  } | null;
+  clientHealth?: {
+    lastTouchAt?: string | null;
+    nextMeetingAt?: string | null;
+    satisfaction?: "STRONG" | "STABLE" | "WATCH" | "AT_RISK";
+    blockers?: string | null;
+    expansionOpportunity?: string | null;
+  } | null;
+};
+
 export type Lead = {
   id: string;
   businessName: string;
@@ -80,6 +124,7 @@ export type Lead = {
   closedDealValue?: number | null;
   closedAt?: string | null;
   stripeCheckoutLink?: string | null;
+  accountManagement?: LeadAccountManagementProfile | null;
   transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
   updatedAt: string;
 };
