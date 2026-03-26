@@ -1,7 +1,7 @@
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-type CallAnalyticsRecord = {
+export type CallAnalyticsRecord = {
   id?: string | null;
   lead_id?: string | null;
   contact_id: string;
@@ -77,6 +77,36 @@ export async function getCallAnalyticsByLeadAndContactId(leadId: string, contact
 export async function getCallAnalyticsByLeadId(leadId: string, limit = 25) {
   const url = new URL("/rest/v1/call_analytics", supabaseUrl);
   url.searchParams.set("lead_id", `eq.${leadId}`);
+  url.searchParams.set("select", "*");
+  url.searchParams.set("order", "created_at.desc");
+  url.searchParams.set("limit", String(limit));
+
+  const response = await fetch(url, {
+    headers: getSupabaseHeaders(),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  return (await response.json()) as CallAnalyticsRecord[];
+}
+
+export async function listCallAnalyticsByLeadIds(leadIds: string[], limit = 100) {
+  const normalizedLeadIds = Array.from(
+    new Set(
+      leadIds
+        .filter((leadId): leadId is string => typeof leadId === "string")
+        .map((leadId) => leadId.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!normalizedLeadIds.length) return [] as CallAnalyticsRecord[];
+
+  const url = new URL("/rest/v1/call_analytics", supabaseUrl);
+  url.searchParams.set("lead_id", `in.(${normalizedLeadIds.join(",")})`);
   url.searchParams.set("select", "*");
   url.searchParams.set("order", "created_at.desc");
   url.searchParams.set("limit", String(limit));

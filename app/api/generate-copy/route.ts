@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { buildSalesLearningSnapshot } from "@/lib/sales-learning";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -121,7 +123,7 @@ function parsePlaybookFromText(text: string): PlaybookPayload | null {
   return null;
 }
 
-function buildFallbackPlaybook(leadName: string, researchContext?: string): PlaybookPayload {
+function buildFallbackPlaybook(leadName: string, researchContext?: string, learnedData: string[] = []): PlaybookPayload {
   const contextSnippet = (researchContext || "")
     .split("\n")
     .map((line) => line.trim())
@@ -153,7 +155,9 @@ function buildFallbackPlaybook(leadName: string, researchContext?: string): Play
     ],
     closing: "Want me to lock your deployment slot so this can go live today?",
     roiSnapshot: "Even a few recovered mobile bookings per month can add meaningful recurring revenue.",
-    injectedData: ["AI research context", "Mobile conversion gap", "Fast deployment offer"],
+    injectedData: Array.from(
+      new Set(["AI research context", "Mobile conversion gap", "Fast deployment offer", ...learnedData].filter(Boolean)),
+    ).slice(0, 5),
   };
 }
 
@@ -179,6 +183,7 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
 }
 
 type GenerateCopyPayload = {
+  leadId?: string;
   leadName?: string;
   activeTab?: string;
   researchContext?: string;
@@ -186,6 +191,7 @@ type GenerateCopyPayload = {
 
 export async function POST(req: Request) {
   let leadName = "this business";
+  let leadId = "";
   let activeTab = "";
   let researchContext = "";
   let rawBody = "";
@@ -200,6 +206,12 @@ export async function POST(req: Request) {
       payload = {};
     }
 
+    const user = await getAuthenticatedUser();
+    if (!user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : "";
     leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
     researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
@@ -220,6 +232,15 @@ export async function POST(req: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
+    const learningSnapshot = await buildSalesLearningSnapshot({
+      userId: user.id,
+      userEmail: user.email,
+      currentLeadId: leadId || null,
+    }).catch(() => null);
+    const learnedContext =
+      learningSnapshot?.promptContext ||
+      "No team learning snapshot is available yet. Use only the target lead research context.";
+    const learnedInjectedData = learningSnapshot?.injectedData ?? [];
 
     const systemPrompt =
       activeTab === "PLAYBOOK"
@@ -227,6 +248,7 @@ export async function POST(req: Request) {
 Create a highly persuasive, context-aware playbook for ${leadName}.
 
 CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on mobile booking, speed-to-lead, and conversion lift."}
+TEAM LEARNING CONTEXT (Booked demos, winning calls, objections): ${learnedContext}
 
 Return VALID JSON only (no markdown) with this exact shape:
 {
@@ -248,17 +270,20 @@ Return VALID JSON only (no markdown) with this exact shape:
 Rules:
 - Be specific, persuasive, and natural.
 - Mention website/mobile performance, missed lead capture, and fast deployment.
+- Reuse only the winning patterns, objections, and language that are supported by the CRM learning context above.
 - Include objection handling and close-ready language.
 - Do not include placeholders like [Your Name].`
         : `You are an elite, high-converting tech sales copywriter.
 Write a draft for a ${activeTab} to a prospect named ${leadName}.
 
 CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on web optimization and speed-to-lead."}
+TEAM LEARNING CONTEXT (Booked demos, winning calls, objections): ${learnedContext}
 
 RULES FOR FORMATTING:
 - If SMS: Keep it extremely casual, under 2 sentences. No emojis. Sound like a quick text from a human rep. Do NOT include placeholders like [Your Name].
 - If EMAIL: Include a catchy subject line like "Subject: [Your Subject]". Keep the body under 4 sentences. Focus directly on the gap found in the research.
 - If NOTE: Write a concise internal strategy note on how we should pitch this lead based on the research.
+- Borrow the strongest proven positioning and objection framing from the team learning context when it fits.
 
 Output ONLY the draft text. No robotic greetings, no filler.`;
 
@@ -269,11 +294,12 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       if (activeTab === "PLAYBOOK") {
         const parsedPlaybook = parsePlaybookFromText(text);
         if (parsedPlaybook) {
+          parsedPlaybook.injectedData = Array.from(new Set([...learnedInjectedData, ...parsedPlaybook.injectedData])).slice(0, 5);
           return NextResponse.json({ playbook: parsedPlaybook, draft: text, model: generation.modelName });
         }
 
         return NextResponse.json({
-          playbook: buildFallbackPlaybook(leadName, researchContext),
+          playbook: buildFallbackPlaybook(leadName, researchContext, learnedInjectedData),
           draft: text,
           model: generation.modelName,
           warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
@@ -295,7 +321,7 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
         const fallbackMessage = "Gemini is temporarily unavailable. Showing fallback playbook.";
 
         return NextResponse.json({
-          playbook: buildFallbackPlaybook(leadName, researchContext),
+          playbook: buildFallbackPlaybook(leadName, researchContext, learnedInjectedData),
           warning: fallbackMessage,
         });
       }

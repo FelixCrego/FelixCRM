@@ -229,7 +229,10 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
       const response = await fetch("/api/generate-copy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({
+          leadId: lead.id,
           leadName: lead.businessName || "this business",
           activeTab,
           researchContext: analysisResult || `Website: ${lead.websiteUrl || "Unknown"}`,
@@ -238,7 +241,9 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
 
       const data = (await response.json().catch(() => null)) as { draft?: string; error?: string } | null;
 
-      if (response.ok && data?.draft) {
+      if (response.status === 401) {
+        setNoteText("Error: Your CRM session expired. Refresh the page and sign in again.");
+      } else if (response.ok && data?.draft) {
         setNoteText(data.draft);
       } else {
         setNoteText(`Error: ${data?.error || "Could not generate draft."}`);

@@ -1929,6 +1929,7 @@ export default function LeadExecutionPage() {
         credentials: "include",
         cache: "no-store",
         body: JSON.stringify({
+          leadId,
           leadName,
           activeTab,
           researchContext: researchContext || `Website: ${leadWebsite}`,
@@ -2017,16 +2018,23 @@ export default function LeadExecutionPage() {
 
     try {
       await ensureAuthenticatedSession();
+      let playbookResearchContext = researchInsight.trim();
+      if (!playbookResearchContext && leadId) {
+        const summary = await requestLeadResearchSummary();
+        setResearchInsight(summary);
+        playbookResearchContext = summary;
+      }
       const response = await fetch("/api/generate-copy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         cache: "no-store",
         body: JSON.stringify({
+          leadId,
           leadName,
           activeTab: "PLAYBOOK",
           researchContext: [
-            researchInsight || "No AI research summary available.",
+            playbookResearchContext || "No AI research summary available.",
             `Website: ${leadWebsite}`,
             `City: ${leadCity}`,
             deployedUrl ? `Preview Link: ${deployedUrl}` : "No preview link available.",
