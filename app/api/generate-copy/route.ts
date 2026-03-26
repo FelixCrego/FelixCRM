@@ -4,11 +4,9 @@ import { NextResponse } from "next/server";
 const apiKey = process.env.GEMINI_API_KEY;
 
 const GEMINI_MODELS = [
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
-  "gemini-1.5-flash-latest",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
 ] as const;
 
 type PlaybookPayload = {
@@ -284,21 +282,33 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
 
       return NextResponse.json({ draft: text, model: generation.modelName });
     } catch (generationError) {
+      if (generationError instanceof GeminiModelFallbackError) {
+        console.error("Gemini Draft Generation Error (all models failed):", {
+          attemptedModels: generationError.attemptedModels,
+          modelErrors: generationError.modelErrors,
+        });
+      } else {
+        console.error("Gemini Draft Generation Error:", generationError);
+      }
+
       if (activeTab === "PLAYBOOK") {
         const fallbackMessage = "Gemini is temporarily unavailable. Showing fallback playbook.";
 
-        if (generationError instanceof GeminiModelFallbackError) {
-          console.error("Gemini Playbook Generation Error (all models failed):", {
-            attemptedModels: generationError.attemptedModels,
-            modelErrors: generationError.modelErrors,
-          });
-        } else {
-          console.error("Gemini Playbook Generation Error:", generationError);
-        }
         return NextResponse.json({
           playbook: buildFallbackPlaybook(leadName, researchContext),
           warning: fallbackMessage,
         });
+      }
+
+      if (generationError instanceof GeminiModelFallbackError) {
+        const firstError = generationError.modelErrors[0]?.message ?? "All configured Gemini models failed.";
+        return NextResponse.json(
+          {
+            error: `Gemini request failed: ${firstError}`,
+            attemptedModels: generationError.attemptedModels,
+          },
+          { status: 500 },
+        );
       }
 
       throw generationError;

@@ -1879,12 +1879,12 @@ export default function LeadExecutionPage() {
           researchContext: researchInsight || `Website: ${leadWebsite}`,
         }),
       });
-      const data = (await response.json().catch(() => null)) as { draft?: string } | null;
+      const data = (await response.json().catch(() => null)) as { draft?: string; error?: string } | null;
 
       if (response.ok && data?.draft) {
         setNotesDraft(data.draft);
       } else {
-        setNotesDraft("Error: Could not generate draft.");
+        setNotesDraft(`Error: ${data?.error || "Could not generate draft."}`);
       }
     } catch (error) {
       console.error("Drafting failed", error);

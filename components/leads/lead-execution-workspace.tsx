@@ -236,12 +236,12 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
         }),
       });
 
-      const data = await response.json();
+      const data = (await response.json().catch(() => null)) as { draft?: string; error?: string } | null;
 
-      if (response.ok && data.draft) {
+      if (response.ok && data?.draft) {
         setNoteText(data.draft);
       } else {
-        setNoteText("Error: Could not generate draft.");
+        setNoteText(`Error: ${data?.error || "Could not generate draft."}`);
       }
     } catch (error) {
       console.error("Drafting failed", error);
