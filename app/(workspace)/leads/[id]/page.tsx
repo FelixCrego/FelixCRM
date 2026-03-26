@@ -166,7 +166,7 @@ type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
 type ScriptTab = "Scripts" | "Objections";
 type ExecutionLeadStatus = "New" | "Pitched" | "Demo Booked" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
-const GOOGLE_VOICE_MESSAGES_URL = "https://voice.google.com/u/0/messages";
+const GOOGLE_VOICE_HOME_URL = "https://voice.google.com";
 
 
 
@@ -1978,7 +1978,7 @@ export default function LeadExecutionPage() {
       copiedDraft = false;
     }
 
-    const voiceTab = window.open(GOOGLE_VOICE_MESSAGES_URL, "_blank", "noopener,noreferrer");
+    const voiceTab = window.open(GOOGLE_VOICE_HOME_URL, "_blank", "noopener,noreferrer");
 
     if (!voiceTab) {
       setNotesError("The Google Voice tab was blocked. Allow popups/new tabs for this CRM, then try again.");
@@ -1987,7 +1987,7 @@ export default function LeadExecutionPage() {
 
     setSmsAssistStatus(
       copiedDraft
-        ? `Google Voice opened in a new tab. SMS draft copied. Send to ${phone}.`
+        ? `Google Voice opened in a new tab. SMS draft copied. If Google asks you to sign in, finish sign-in there, then start the message to ${phone}.`
         : `Google Voice opened in a new tab. Copy the SMS draft manually and send to ${phone}.`,
     );
   };
@@ -3209,7 +3209,14 @@ export default function LeadExecutionPage() {
                 <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-sm text-zinc-500">No {activeTab.toLowerCase()} activity yet for this lead.</div>
               ) : null}
               {notesLoading ? <div className="text-xs text-zinc-500">Loading notes...</div> : null}
-              {activeTab === "SMS" && smsAssistStatus ? <div className="text-xs text-emerald-300">{smsAssistStatus}</div> : null}
+              {activeTab === "SMS" ? (
+                <div className="space-y-1">
+                  <div className="text-xs text-zinc-500">
+                    Temporary fallback: copy the draft, open Google Voice, and send manually from the Voice tab. Google controls sign-in and final send.
+                  </div>
+                  {smsAssistStatus ? <div className="text-xs text-emerald-300">{smsAssistStatus}</div> : null}
+                </div>
+              ) : null}
               {notesError ? <div className="text-xs text-rose-300">{notesError}</div> : null}
               </div>
             )}
@@ -3250,7 +3257,7 @@ export default function LeadExecutionPage() {
                     disabled={notesLoading || !notesDraft.trim()}
                     className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400 hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Send via Google Voice
+                    Open Google Voice
                   </button>
                   <button
                     type="button"
