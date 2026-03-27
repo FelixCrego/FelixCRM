@@ -47,7 +47,8 @@ function toPipelineStage(lead: Lead): Stage {
   if (rawStatus === "DISQUALIFIED" || rawStatus === "NO SHOW") return "No Show";
   if (lead.stripeCheckoutLink || rawStatus === "PAYMENT PENDING") return "Payment Pending";
   if (rawStatus === "AWAITING APPROVAL" || rawStatus === "AWAITING_APPROVAL") return "Awaiting Approval";
-  if (rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
+  if (rawStatus === "DEMO_BOOKED" || rawStatus === "DEMO BOOKED") return "Awaiting Approval";
+  if (rawStatus === "ATTEMPTED" || rawStatus === "IN_PROGRESS" || rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
   return "New";
 }
 
@@ -122,11 +123,7 @@ export default function PipelinePage() {
         }
 
         if (isMounted) {
-          setLiveDeals(
-            payload.leads
-              .filter((lead) => String(lead.status ?? "").trim().toUpperCase() !== "IN_PROGRESS")
-              .map(leadToDeal),
-          );
+          setLiveDeals(payload.leads.map(leadToDeal));
         }
       } catch {
         if (isMounted) setLiveDeals([]);

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowRight, ArrowUp, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, Clock3, Search, SlidersHorizontal } from "lucide-react";
 import type { Lead } from "@/lib/types";
 import { AddLeadModal } from "@/components/leads/add-lead-modal";
 
@@ -12,11 +12,34 @@ type LeadsListViewProps = {
   viewMode?: "open" | "closed";
 };
 
-const statusLabelMap: Record<Lead["status"], string> = {
+type WorkspaceLeadStatus =
+  | "NEW"
+  | "ATTEMPTED"
+  | "CONTACTED"
+  | "DEMO_BOOKED"
+  | "AWAITING_APPROVAL"
+  | "PAYMENT_PENDING"
+  | "CLOSED"
+  | "DISQUALIFIED";
+
+const workspaceStatusOptions: WorkspaceLeadStatus[] = [
+  "NEW",
+  "ATTEMPTED",
+  "CONTACTED",
+  "DEMO_BOOKED",
+  "AWAITING_APPROVAL",
+  "PAYMENT_PENDING",
+  "DISQUALIFIED",
+];
+
+const statusLabelMap: Record<WorkspaceLeadStatus, string> = {
   NEW: "Not Contacted",
+  ATTEMPTED: "Attempted Contact",
   CONTACTED: "Contacted",
-  IN_PROGRESS: "In Progress",
-  CLOSED: "Closed",
+  DEMO_BOOKED: "Demo Booked",
+  AWAITING_APPROVAL: "Awaiting Approval",
+  PAYMENT_PENDING: "Payment Pending",
+  CLOSED: "Closed Won",
   DISQUALIFIED: "Disqualified",
 };
 
@@ -29,10 +52,13 @@ const vercelStatusMap: Record<LeadSiteStatus, string> = {
   FAILED: "Failed",
 } as const;
 
-const leadStatusPillMap: Record<Lead["status"], string> = {
+const leadStatusPillMap: Record<WorkspaceLeadStatus, string> = {
   NEW: "border-zinc-700/90 bg-zinc-800/80 text-zinc-300",
+  ATTEMPTED: "border-amber-500/40 bg-amber-500/15 text-amber-300",
   CONTACTED: "border-sky-500/30 bg-sky-500/10 text-sky-300",
-  IN_PROGRESS: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  DEMO_BOOKED: "border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-200",
+  AWAITING_APPROVAL: "border-violet-500/40 bg-violet-500/15 text-violet-200",
+  PAYMENT_PENDING: "border-emerald-500/35 bg-emerald-500/15 text-emerald-300",
   CLOSED: "border-emerald-500/35 bg-emerald-500/15 text-emerald-300",
   DISQUALIFIED: "border-rose-500/30 bg-rose-500/10 text-rose-300",
 };
@@ -54,14 +80,7 @@ function normalizeLead(raw: unknown): Lead | null {
 
   const updatedAtSource = typeof lead.updatedAt === "string" ? lead.updatedAt : new Date().toISOString();
   const updatedAt = Number.isNaN(new Date(updatedAtSource).getTime()) ? new Date().toISOString() : updatedAtSource;
-  const status =
-    lead.status === "NEW" ||
-    lead.status === "CONTACTED" ||
-    lead.status === "IN_PROGRESS" ||
-    lead.status === "CLOSED" ||
-    lead.status === "DISQUALIFIED"
-      ? lead.status
-      : "NEW";
+  const status = typeof lead.status === "string" && lead.status.trim() ? lead.status.trim() : "NEW";
 
   const siteStatus =
     lead.siteStatus === "UNBUILT" || lead.siteStatus === "BUILDING" || lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED"
@@ -139,6 +158,52 @@ function leadHasBookedDemo(lead: Lead) {
   return Boolean(lead.demoBooking?.meetLink && lead.demoBooking?.date && lead.demoBooking?.time);
 }
 
+function normalizeWorkspaceStatus(input?: string | null): WorkspaceLeadStatus {
+  const normalized = String(input ?? "").trim().toUpperCase().replace(/\s+/g, "_");
+
+  if (normalized === "ATTEMPTED" || normalized === "IN_PROGRESS") return "ATTEMPTED";
+  if (normalized === "CONTACTED" || normalized === "PITCHED") return "CONTACTED";
+  if (normalized === "DEMO_BOOKED") return "DEMO_BOOKED";
+  if (normalized === "AWAITING_APPROVAL") return "AWAITING_APPROVAL";
+  if (normalized === "PAYMENT_PENDING") return "PAYMENT_PENDING";
+  if (normalized === "CLOSED" || normalized === "CLOSED_WON") return "CLOSED";
+  if (normalized === "DISQUALIFIED" || normalized === "NO_SHOW") return "DISQUALIFIED";
+  return "NEW";
+}
+
+function resolveWorkspaceStatus(lead: Lead): WorkspaceLeadStatus {
+  const normalizedStatus = normalizeWorkspaceStatus(lead.status);
+  if (normalizedStatus === "CLOSED") return "CLOSED";
+  if (normalizedStatus === "AWAITING_APPROVAL" || normalizedStatus === "PAYMENT_PENDING") return normalizedStatus;
+  if (leadHasBookedDemo(lead) || normalizedStatus === "DEMO_BOOKED") return "DEMO_BOOKED";
+  return normalizedStatus;
+}
+
+function formatLastTouched(updatedAt?: string | null) {
+  const parsed = new Date(updatedAt ?? "");
+  if (Number.isNaN(parsed.getTime())) return "No touch logged";
+
+  const diffMs = Date.now() - parsed.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffHours < 1) return "Touched just now";
+  if (diffHours < 24) return `Touched ${diffHours}h ago`;
+  if (diffDays < 7) return `Touched ${diffDays}d ago`;
+  return `Touched ${parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
+function getSuggestedNextStep(status: WorkspaceLeadStatus) {
+  if (status === "NEW") return "Make first outreach";
+  if (status === "ATTEMPTED") return "Try a second touch";
+  if (status === "CONTACTED") return "Push for the demo";
+  if (status === "DEMO_BOOKED") return "Prep and confirm show";
+  if (status === "AWAITING_APPROVAL") return "Follow up on decision";
+  if (status === "PAYMENT_PENDING") return "Collect payment";
+  if (status === "DISQUALIFIED") return "No action needed";
+  return "Closed won";
+}
+
 export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsListViewProps) {
   const LEADS_PER_PAGE = 10;
   const router = useRouter();
@@ -151,7 +216,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"ALL" | Lead["status"]>("ALL");
+  const [status, setStatus] = useState<"ALL" | WorkspaceLeadStatus>("ALL");
   const [industry, setIndustry] = useState("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
@@ -160,6 +225,8 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
   const [storageLeads, setStorageLeads] = useState<Lead[]>([]);
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
   const [remoteSearchLeads, setRemoteSearchLeads] = useState<Lead[]>([]);
+  const [leadOverrides, setLeadOverrides] = useState<Record<string, Partial<Lead>>>({});
+  const [savingStatusLeadId, setSavingStatusLeadId] = useState<string | null>(null);
   const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
   const [calculatorCallToDemoRate, setCalculatorCallToDemoRate] = useState(20);
   const [calculatorShowRate, setCalculatorShowRate] = useState(70);
@@ -223,8 +290,10 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     const mergedLeads = createdLeads.length > 0 ? [...createdLeads, ...normalizedServerLeads] : normalizedServerLeads.length > 0 ? normalizedServerLeads : storageLeads;
     const shouldIncludeClosed = viewMode === "closed";
     const baseLeads = search.trim().length >= 2 && remoteSearchLeads.length > 0 ? remoteSearchLeads : mergedLeads;
-    return baseLeads.filter((lead) => (shouldIncludeClosed ? lead.status === "CLOSED" : lead.status !== "CLOSED"));
-  }, [createdLeads, normalizedServerLeads, remoteSearchLeads, search, storageLeads, viewMode]);
+    return baseLeads
+      .map((lead) => ({ ...lead, ...(leadOverrides[lead.id] ?? {}) }))
+      .filter((lead) => (shouldIncludeClosed ? resolveWorkspaceStatus(lead) === "CLOSED" : resolveWorkspaceStatus(lead) !== "CLOSED"));
+  }, [createdLeads, leadOverrides, normalizedServerLeads, remoteSearchLeads, search, storageLeads, viewMode]);
 
   async function handleAddLead() {
     setAddLeadError(null);
@@ -299,11 +368,43 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
     }
   }
 
+  async function handleStatusUpdate(leadId: string, nextStatus: WorkspaceLeadStatus) {
+    setDeleteError(null);
+    setSavingStatusLeadId(leadId);
+
+    try {
+      const response = await fetch("/api/leads", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId, status: nextStatus }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { status?: string; updatedAt?: string; error?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Unable to update lead status.");
+      }
+
+      setLeadOverrides((previous) => ({
+        ...previous,
+        [leadId]: {
+          ...(previous[leadId] ?? {}),
+          status: nextStatus,
+          updatedAt: payload?.updatedAt ?? new Date().toISOString(),
+        },
+      }));
+      router.refresh();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Unable to update lead status.");
+    } finally {
+      setSavingStatusLeadId(null);
+    }
+  }
+
   const filteredLeads = useMemo(() => {
     return (displayLeads || []).filter((lead) => {
       const safeSearchBlob = [lead?.businessName ?? "", lead?.businessType ?? "", lead?.phone ?? "", lead?.email ?? ""].join(" ").toLowerCase();
       const matchesSearch = safeSearchBlob.includes(search.toLowerCase());
-      const matchesStatus = status === "ALL" || lead?.status === status;
+      const matchesStatus = status === "ALL" || resolveWorkspaceStatus(lead) === status;
       const matchesIndustry = industry === "ALL" || lead?.businessType === industry;
       const matchesLastContacted = lastContacted === "ALL" || safelyBucketLastContact(lead?.updatedAt) === lastContacted;
       const matchesClosedDate = viewMode === "closed" ? isClosedWithinRange(lead?.closedAt, closedDateRange) : true;
@@ -348,6 +449,16 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
 
   const selectedCount = selectedLeadIds.length;
   const selectableLeadIds = useMemo(() => paginatedLeads.map((lead) => lead.id), [paginatedLeads]);
+  const openStatusCounts = useMemo(
+    () => ({
+      total: sortedLeads.length,
+      notContacted: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "NEW").length,
+      attempted: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "ATTEMPTED").length,
+      contacted: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "CONTACTED").length,
+      demoBooked: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "DEMO_BOOKED").length,
+    }),
+    [sortedLeads],
+  );
 
   const cumulativeClosedValue = useMemo(() => sortedLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [sortedLeads]);
   const attributedSellerCount = useMemo(
@@ -401,7 +512,7 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             <p className="mt-1 text-sm text-zinc-400">
               {viewMode === "closed"
                 ? "Recently won deals that were moved out of active outreach."
-                : "Claimed territory ready for live outreach and rapid deployment closes."}
+                : "Rep workspace for claimed leads, last-touch visibility, and fast movement from first dial to booked demo."}
             </p>
           </div>
           {viewMode === "open" ? (
@@ -421,6 +532,36 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
 
       {deleteError ? <p className="rounded-lg border border-rose-600/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{deleteError}</p> : null}
       {deleteSuccess ? <p className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{deleteSuccess}</p> : null}
+
+      {viewMode === "open" ? (
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Claimed Leads</p>
+            <p className="mt-2 text-3xl font-semibold text-zinc-100">{openStatusCounts.total}</p>
+            <p className="mt-1 text-xs text-zinc-400">Active leads in this rep workspace</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Not Contacted</p>
+            <p className="mt-2 text-3xl font-semibold text-zinc-100">{openStatusCounts.notContacted}</p>
+            <p className="mt-1 text-xs text-zinc-400">Fresh leads that still need first outreach</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Attempted Contact</p>
+            <p className="mt-2 text-3xl font-semibold text-amber-300">{openStatusCounts.attempted}</p>
+            <p className="mt-1 text-xs text-zinc-400">Worked leads that still need another touch</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Contacted</p>
+            <p className="mt-2 text-3xl font-semibold text-sky-300">{openStatusCounts.contacted}</p>
+            <p className="mt-1 text-xs text-zinc-400">Live conversations moving toward demos</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Demo Booked</p>
+            <p className="mt-2 text-3xl font-semibold text-fuchsia-200">{openStatusCounts.demoBooked}</p>
+            <p className="mt-1 text-xs text-zinc-400">Confirmed meetings ready for follow-through</p>
+          </div>
+        </section>
+      ) : null}
 
       {viewMode === "closed" ? (
         <section className="grid gap-3 md:grid-cols-3">
@@ -596,13 +737,13 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
 
           <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
             <SlidersHorizontal className="h-4 w-4 text-zinc-500" />
-            <select value={status} onChange={(event) => setStatus(event.target.value as "ALL" | Lead["status"])} className="w-full bg-transparent outline-none">
+            <select value={status} onChange={(event) => setStatus(event.target.value as "ALL" | WorkspaceLeadStatus)} className="w-full bg-transparent outline-none">
               <option value="ALL">Status: All</option>
-              <option value="NEW">Not Contacted</option>
-              <option value="CONTACTED">Contacted</option>
-              <option value="IN_PROGRESS">In Progress</option>
-              <option value="CLOSED">Closed</option>
-              <option value="DISQUALIFIED">Disqualified</option>
+              {workspaceStatusOptions.map((option) => (
+                <option key={option} value={option}>
+                  {statusLabelMap[option]}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -665,20 +806,25 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                   />
                 </th>
               ) : null}
-              <th className="px-4 py-3">Business Name</th>
-              <th className="px-4 py-3">
-                <button
-                  type="button"
-                  onClick={() => setLocationSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
-                  className="inline-flex items-center gap-1 text-zinc-400 transition hover:text-zinc-100"
-                >
-                  Location
-                  {locationSortDirection === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
-                </button>
-              </th>
-              <th className="px-4 py-3">Phone</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Vercel Status</th>
+              <th className="px-4 py-3">Lead</th>
+              {viewMode === "open" ? <th className="px-4 py-3">Last Touch</th> : null}
+              {viewMode === "open" ? <th className="px-4 py-3">Status</th> : null}
+              {viewMode === "open" ? <th className="px-4 py-3">Next Step</th> : null}
+              {viewMode === "closed" ? (
+                <th className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setLocationSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
+                    className="inline-flex items-center gap-1 text-zinc-400 transition hover:text-zinc-100"
+                  >
+                    Location
+                    {locationSortDirection === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+                  </button>
+                </th>
+              ) : null}
+              {viewMode === "closed" ? <th className="px-4 py-3">Phone</th> : null}
+              {viewMode === "closed" ? <th className="px-4 py-3">Status</th> : null}
+              {viewMode === "closed" ? <th className="px-4 py-3">Vercel Status</th> : null}
               {viewMode === "closed" ? <th className="px-4 py-3">Deal Value</th> : null}
               {viewMode === "closed" ? <th className="px-4 py-3">Sold By</th> : null}
               {viewMode === "closed" ? <th className="px-4 py-3">Closed Date</th> : null}
@@ -686,7 +832,11 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
             </tr>
           </thead>
           <tbody>
-            {(paginatedLeads || []).map((lead) => (
+            {(paginatedLeads || []).map((lead) => {
+              const workspaceStatus = resolveWorkspaceStatus(lead);
+              const nextStep = getSuggestedNextStep(workspaceStatus);
+
+              return (
               <tr
                 key={lead?.id}
                 onClick={() => router.push(`/leads/${lead?.id}`)}
@@ -710,31 +860,67 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                   </td>
                 ) : null}
                 <td className="px-4 py-3 font-semibold text-white">
-                  <div className="flex items-center gap-2">
-                    <span>{lead?.businessName ?? "Unknown business"}</span>
-                    {leadHasBookedDemo(lead) ? (
-                      <span className="inline-flex items-center rounded-full border border-fuchsia-400/60 bg-fuchsia-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-fuchsia-200 shadow-[0_0_18px_rgba(217,70,239,0.35)]">
-                        Demo Booked
-                      </span>
-                    ) : null}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span>{lead?.businessName ?? "Unknown business"}</span>
+                      {workspaceStatus === "DEMO_BOOKED" ? (
+                        <span className="inline-flex items-center rounded-full border border-fuchsia-400/60 bg-fuchsia-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-fuchsia-200 shadow-[0_0_18px_rgba(217,70,239,0.35)]">
+                          Demo Booked
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-xs font-normal text-zinc-400">
+                      {lead?.businessType || "Unknown industry"} - {lead?.city || "Unknown city"}
+                    </p>
+                    <p className="text-xs font-normal text-zinc-500">
+                      {lead?.phone || "No phone"} {lead?.email ? `- ${lead.email}` : ""}
+                    </p>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-zinc-400">{lead?.city || "Unknown"}</td>
-                <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${leadStatusPillMap[lead?.status ?? "NEW"]}`}
-                  >
-                    {statusLabelMap[lead?.status ?? "NEW"]}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${vercelStatusPillMap[lead?.siteStatus ?? "UNBUILT"]}`}
-                  >
-                    {vercelStatusMap[lead?.siteStatus ?? "UNBUILT"]}
-                  </span>
-                </td>
+                {viewMode === "open" ? (
+                  <td className="px-4 py-3 text-zinc-300">
+                    <div className="space-y-1">
+                      <p className="inline-flex items-center gap-1 text-sm text-zinc-200">
+                        <Clock3 className="h-3.5 w-3.5 text-zinc-500" />
+                        {formatLastTouched(lead.updatedAt)}
+                      </p>
+                      {lead.demoBooking?.date ? (
+                        <p className="inline-flex items-center gap-1 text-xs text-fuchsia-200">
+                          <CalendarDays className="h-3.5 w-3.5 text-fuchsia-300" />
+                          {lead.demoBooking.date} {lead.demoBooking.time ?? ""}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-zinc-500">No demo scheduled yet</p>
+                      )}
+                    </div>
+                  </td>
+                ) : null}
+                {viewMode === "open" ? (
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${leadStatusPillMap[workspaceStatus]}`}>
+                      {statusLabelMap[workspaceStatus]}
+                    </span>
+                  </td>
+                ) : null}
+                {viewMode === "open" ? <td className="px-4 py-3 text-zinc-300">{nextStep}</td> : null}
+                {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.city || "Unknown"}</td> : null}
+                {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td> : null}
+                {viewMode === "closed" ? (
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${leadStatusPillMap[workspaceStatus]}`}>
+                      {statusLabelMap[workspaceStatus]}
+                    </span>
+                  </td>
+                ) : null}
+                {viewMode === "closed" ? (
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${vercelStatusPillMap[lead?.siteStatus ?? "UNBUILT"]}`}
+                    >
+                      {vercelStatusMap[lead?.siteStatus ?? "UNBUILT"]}
+                    </span>
+                  </td>
+                ) : null}
                 {viewMode === "closed" ? <td className="px-4 py-3 font-medium text-emerald-200">{formatCurrency(lead?.closedDealValue)}</td> : null}
                 {viewMode === "closed" ? (
                   <td className="px-4 py-3 text-zinc-300">
@@ -746,7 +932,21 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                 ) : null}
                 {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.closedAt ? new Date(lead.closedAt).toLocaleDateString() : "—"}</td> : null}
                 <td className="px-4 py-3 text-right" onClick={(event) => event.stopPropagation()}>
-                  <div className="inline-flex items-center gap-2">
+                  <div className="inline-flex flex-col items-end gap-2">
+                    {viewMode === "open" ? (
+                      <select
+                        value={workspaceStatus}
+                        onChange={(event) => void handleStatusUpdate(lead.id, event.target.value as WorkspaceLeadStatus)}
+                        disabled={savingStatusLeadId === lead.id}
+                        className="rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-200 outline-none disabled:opacity-60"
+                      >
+                        {workspaceStatusOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {statusLabelMap[option]}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
                     {viewMode === "open" ? (
                       <button
                         type="button"
@@ -763,7 +963,8 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
 

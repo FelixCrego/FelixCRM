@@ -461,6 +461,7 @@ function computeStreak(
 
 function getLeadStatusLabel(lead: Lead, now: Date) {
   const demoAt = parseDemoDate(lead);
+  const normalizedStatus = String(lead.status ?? "").trim().toUpperCase();
   if (demoAt && demoAt.getTime() >= now.getTime()) {
     return `Demo ${formatRelative(demoAt, now)}`;
   }
@@ -468,23 +469,30 @@ function getLeadStatusLabel(lead: Lead, now: Date) {
   if (lead.siteStatus === "LIVE" || lead.deployedUrl) return "Site live - follow up";
   if (lead.siteStatus === "BUILDING") return "Site deploying";
   if (lead.siteStatus === "FAILED") return "Deploy failed - recover";
-  if (lead.status === "CONTACTED") return "Needs next touch";
-  if (lead.status === "IN_PROGRESS") return "In motion";
+  if (normalizedStatus === "PAYMENT_PENDING") return "Payment pending";
+  if (normalizedStatus === "AWAITING_APPROVAL") return "Awaiting approval";
+  if (normalizedStatus === "DEMO_BOOKED") return "Demo booked";
+  if (normalizedStatus === "CONTACTED" || normalizedStatus === "PITCHED") return "Needs next touch";
+  if (normalizedStatus === "ATTEMPTED" || normalizedStatus === "IN_PROGRESS") return "Attempted outreach";
   return "Fresh lead";
 }
 
 function scoreLeadPriority(lead: Lead, now: Date) {
   const demoAt = parseDemoDate(lead);
   const updatedAt = parseDate(lead.updatedAt);
+  const normalizedStatus = String(lead.status ?? "").trim().toUpperCase();
   let score = 0;
 
-  if (lead.status === "CLOSED" || lead.status === "DISQUALIFIED") return -1;
+  if (normalizedStatus === "CLOSED" || normalizedStatus === "DISQUALIFIED") return -1;
   if (demoAt && demoAt.getTime() >= now.getTime()) score += demoAt.getTime() - now.getTime() <= 86400000 ? 40 : 28;
   if (lead.siteStatus === "FAILED") score += 30;
   if (lead.siteStatus === "BUILDING") score += 22;
   if (lead.siteStatus === "LIVE" || lead.deployedUrl) score += 16;
-  if (lead.status === "CONTACTED") score += 12;
-  if (lead.status === "IN_PROGRESS") score += 8;
+  if (normalizedStatus === "PAYMENT_PENDING") score += 26;
+  if (normalizedStatus === "AWAITING_APPROVAL") score += 22;
+  if (normalizedStatus === "DEMO_BOOKED") score += 18;
+  if (normalizedStatus === "CONTACTED" || normalizedStatus === "PITCHED") score += 12;
+  if (normalizedStatus === "ATTEMPTED" || normalizedStatus === "IN_PROGRESS") score += 8;
   if (lead.phone) score += 2;
   if (lead.email) score += 2;
   if (updatedAt && now.getTime() - updatedAt.getTime() <= 2 * 86400000) score += 5;

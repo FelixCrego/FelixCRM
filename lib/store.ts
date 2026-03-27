@@ -1569,6 +1569,7 @@ export async function setLeadDemoBooking(
     meetLink: booking.meetLink,
     bookedAt: booking.bookedAt ?? new Date().toISOString(),
   };
+  const updatedAt = new Date().toISOString();
 
   await withLeadTableFallback((table) =>
     supabaseRequest(
@@ -1579,12 +1580,16 @@ export async function setLeadDemoBooking(
         body: JSON.stringify(
           isSnakeLeadsTable(table)
             ? {
+                status: "DEMO_BOOKED",
+                updated_at: updatedAt,
                 source_payload: {
                   ...payload,
                   demoBooking: nextDemoBooking,
                 },
               }
             : {
+                status: "DEMO_BOOKED",
+                updatedAt,
                 sourcePayload: {
                   ...payload,
                   demoBooking: nextDemoBooking,
@@ -1595,6 +1600,54 @@ export async function setLeadDemoBooking(
       { id: `eq.${leadId}` },
     ),
   );
+}
+
+export async function setLeadStatus(
+  leadId: string,
+  ownerId: string,
+  status: string,
+  options?: { bypassOwnership?: boolean },
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to update lead status.");
+
+  const nextStatus = status.trim();
+  if (!nextStatus) throw new Error("Lead status is required.");
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id" : "id,ownerId",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
+  if (!options?.bypassOwnership && leadOwnerId && leadOwnerId !== ownerId) {
+    throw new Error("Forbidden");
+  }
+
+  const updatedAt = new Date().toISOString();
+
+  await withLeadTableFallback((table) => {
+    const ownerColumn = isSnakeLeadsTable(table) ? "owner_id" : "ownerId";
+    const filters = {
+      id: `eq.${leadId}`,
+      ...(!options?.bypassOwnership && leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
+    } as Record<string, string>;
+
+    return supabaseRequest(table, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(
+        isSnakeLeadsTable(table)
+          ? { status: nextStatus, updated_at: updatedAt }
+          : { status: nextStatus, updatedAt },
+      ),
+    }, filters);
+  });
+
+  return { status: nextStatus, updatedAt };
 }
 
 
@@ -1885,10 +1938,15 @@ export async function claimLeads(leadIds: string[], ownerId: string) {
   let claimed = 0;
   if (ownableLeadIds.length) {
     const ownableIdFilter = `in.(${ownableLeadIds.join(",")})`;
+    const updatedAt = new Date().toISOString();
     const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
       method: "PATCH",
       headers: { Prefer: "return=representation" },
-      body: JSON.stringify(isSnakeLeadsTable(table) ? { owner_id: ownerId, status: "IN_PROGRESS" } : { ownerId, status: "IN_PROGRESS" }),
+      body: JSON.stringify(
+        isSnakeLeadsTable(table)
+          ? { owner_id: ownerId, updated_at: updatedAt }
+          : { ownerId, updatedAt },
+      ),
     }, {
       id: ownableIdFilter,
       [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: "is.null",

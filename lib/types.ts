@@ -93,7 +93,7 @@ export type Lead = {
     meetLink?: string;
     bookedAt?: string;
   } | null;
-  status: "NEW" | "CONTACTED" | "IN_PROGRESS" | "CLOSED" | "DISQUALIFIED";
+  status: string;
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
   vercelDeploymentId?: string | null;

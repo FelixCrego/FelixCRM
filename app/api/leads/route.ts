@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { canUserViewAllLeads, createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads } from "@/lib/store";
+import { canUserViewAllLeads, createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads, setLeadStatus } from "@/lib/store";
 import { getAuthenticatedUser, getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET(request: Request) {
@@ -61,5 +61,40 @@ export async function DELETE(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to delete leads." }, { status: 500 });
+  }
+}
+
+const ALLOWED_LEAD_STATUSES = new Set([
+  "NEW",
+  "ATTEMPTED",
+  "CONTACTED",
+  "IN_PROGRESS",
+  "DEMO_BOOKED",
+  "AWAITING_APPROVAL",
+  "PAYMENT_PENDING",
+  "DISQUALIFIED",
+]);
+
+export async function PATCH(request: Request) {
+  try {
+    const userId = await getAuthenticatedUserId();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const body = (await request.json()) as { leadId?: string; status?: string };
+    const leadId = typeof body?.leadId === "string" ? body.leadId.trim() : "";
+    const nextStatus = typeof body?.status === "string" ? body.status.trim().toUpperCase() : "";
+
+    if (!leadId) {
+      return NextResponse.json({ error: "Lead id is required." }, { status: 400 });
+    }
+
+    if (!ALLOWED_LEAD_STATUSES.has(nextStatus)) {
+      return NextResponse.json({ error: "Invalid lead status." }, { status: 400 });
+    }
+
+    const result = await setLeadStatus(leadId, userId, nextStatus);
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to update lead." }, { status: 500 });
   }
 }
