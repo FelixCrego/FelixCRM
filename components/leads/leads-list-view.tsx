@@ -10,6 +10,8 @@ type LeadsListViewProps = {
   leads?: Lead[] | null;
   errorMessage?: string | null;
   viewMode?: "open" | "closed";
+  openTitle?: string;
+  openDescription?: string;
 };
 
 type WorkspaceLeadStatus =
@@ -204,7 +206,13 @@ function getSuggestedNextStep(status: WorkspaceLeadStatus) {
   return "Closed won";
 }
 
-export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsListViewProps) {
+export function LeadsListView({
+  leads,
+  errorMessage,
+  viewMode = "open",
+  openTitle = "My Leads",
+  openDescription = "Rep workspace for claimed leads, last-touch visibility, and fast movement from first dial to booked demo.",
+}: LeadsListViewProps) {
   const LEADS_PER_PAGE = 10;
   const router = useRouter();
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
@@ -508,11 +516,11 @@ export function LeadsListView({ leads, errorMessage, viewMode = "open" }: LeadsL
       <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-100">{viewMode === "closed" ? "Closed Deals" : "My Leads"}</h1>
+            <h1 className="text-2xl font-semibold text-zinc-100">{viewMode === "closed" ? "Closed Deals" : openTitle}</h1>
             <p className="mt-1 text-sm text-zinc-400">
               {viewMode === "closed"
                 ? "Recently won deals that were moved out of active outreach."
-                : "Rep workspace for claimed leads, last-touch visibility, and fast movement from first dial to booked demo."}
+                : openDescription}
             </p>
           </div>
           {viewMode === "open" ? (
