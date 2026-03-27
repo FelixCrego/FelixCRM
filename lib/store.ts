@@ -1247,7 +1247,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
             normalized_domain: domain.toLowerCase(),
             dedupe_key: computedDedupeKey,
-            status: "NEW",
+            status: null,
             site_status: "UNBUILT",
             owner_id: ownerId,
             source_payload: {
@@ -1267,7 +1267,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
             normalizedDomain: domain.toLowerCase(),
             dedupeKey: computedDedupeKey,
-            status: "NEW",
+            status: null,
             siteStatus: "UNBUILT",
             ownerId,
             sourcePayload: {
@@ -1378,7 +1378,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
               normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
               normalized_domain: domain.toLowerCase(),
               dedupe_key: key,
-              status: "IN_PROGRESS",
+              status: "NEW",
               site_status: "UNBUILT",
               owner_id: ownerId,
               source_payload: {
@@ -1400,7 +1400,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
               normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
               normalizedDomain: domain.toLowerCase(),
               dedupeKey: key,
-              status: "IN_PROGRESS",
+              status: "NEW",
               siteStatus: "UNBUILT",
               ownerId,
               sourcePayload: {
@@ -1605,13 +1605,12 @@ export async function setLeadDemoBooking(
 export async function setLeadStatus(
   leadId: string,
   ownerId: string,
-  status: string,
+  status: string | null,
   options?: { bypassOwnership?: boolean },
 ) {
   if (!hasDb) throw new Error("Supabase environment variables are required to update lead status.");
 
-  const nextStatus = status.trim();
-  if (!nextStatus) throw new Error("Lead status is required.");
+  const nextStatus = typeof status === "string" ? status.trim() : "";
 
   const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
     select: isSnakeLeadsTable(table) ? "id,owner_id" : "id,ownerId",
@@ -1641,13 +1640,13 @@ export async function setLeadStatus(
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify(
         isSnakeLeadsTable(table)
-          ? { status: nextStatus, updated_at: updatedAt }
-          : { status: nextStatus, updatedAt },
+          ? { status: nextStatus || null, updated_at: updatedAt }
+          : { status: nextStatus || null, updatedAt },
       ),
     }, filters);
   });
 
-  return { status: nextStatus, updatedAt };
+  return { status: nextStatus || null, updatedAt };
 }
 
 

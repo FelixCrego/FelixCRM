@@ -15,6 +15,7 @@ type LeadsListViewProps = {
 };
 
 type WorkspaceLeadStatus =
+  | "UNSET"
   | "NEW"
   | "ATTEMPTED"
   | "CONTACTED"
@@ -25,7 +26,7 @@ type WorkspaceLeadStatus =
   | "DISQUALIFIED";
 
 const workspaceStatusOptions: WorkspaceLeadStatus[] = [
-  "NEW",
+  "UNSET",
   "ATTEMPTED",
   "CONTACTED",
   "DEMO_BOOKED",
@@ -35,6 +36,7 @@ const workspaceStatusOptions: WorkspaceLeadStatus[] = [
 ];
 
 const statusLabelMap: Record<WorkspaceLeadStatus, string> = {
+  UNSET: "No Status",
   NEW: "Not Contacted",
   ATTEMPTED: "Attempted Contact",
   CONTACTED: "Contacted",
@@ -55,6 +57,7 @@ const vercelStatusMap: Record<LeadSiteStatus, string> = {
 } as const;
 
 const leadStatusPillMap: Record<WorkspaceLeadStatus, string> = {
+  UNSET: "border-zinc-800 bg-transparent text-zinc-500",
   NEW: "border-zinc-700/90 bg-zinc-800/80 text-zinc-300",
   ATTEMPTED: "border-amber-500/40 bg-amber-500/15 text-amber-300",
   CONTACTED: "border-sky-500/30 bg-sky-500/10 text-sky-300",
@@ -82,7 +85,7 @@ function normalizeLead(raw: unknown): Lead | null {
 
   const updatedAtSource = typeof lead.updatedAt === "string" ? lead.updatedAt : new Date().toISOString();
   const updatedAt = Number.isNaN(new Date(updatedAtSource).getTime()) ? new Date().toISOString() : updatedAtSource;
-  const status = typeof lead.status === "string" && lead.status.trim() ? lead.status.trim() : "NEW";
+  const status = typeof lead.status === "string" ? lead.status.trim() : "";
 
   const siteStatus =
     lead.siteStatus === "UNBUILT" || lead.siteStatus === "BUILDING" || lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED"
@@ -163,14 +166,15 @@ function leadHasBookedDemo(lead: Lead) {
 function normalizeWorkspaceStatus(input?: string | null): WorkspaceLeadStatus {
   const normalized = String(input ?? "").trim().toUpperCase().replace(/\s+/g, "_");
 
-  if (normalized === "ATTEMPTED" || normalized === "IN_PROGRESS") return "ATTEMPTED";
+  if (!normalized || normalized === "NEW" || normalized === "IN_PROGRESS") return "UNSET";
+  if (normalized === "ATTEMPTED") return "ATTEMPTED";
   if (normalized === "CONTACTED" || normalized === "PITCHED") return "CONTACTED";
   if (normalized === "DEMO_BOOKED") return "DEMO_BOOKED";
   if (normalized === "AWAITING_APPROVAL") return "AWAITING_APPROVAL";
   if (normalized === "PAYMENT_PENDING") return "PAYMENT_PENDING";
   if (normalized === "CLOSED" || normalized === "CLOSED_WON") return "CLOSED";
   if (normalized === "DISQUALIFIED" || normalized === "NO_SHOW") return "DISQUALIFIED";
-  return "NEW";
+  return "UNSET";
 }
 
 function resolveWorkspaceStatus(lead: Lead): WorkspaceLeadStatus {
@@ -196,6 +200,7 @@ function formatLastTouched(updatedAt?: string | null) {
 }
 
 function getSuggestedNextStep(status: WorkspaceLeadStatus) {
+  if (status === "UNSET") return "Make first outreach";
   if (status === "NEW") return "Make first outreach";
   if (status === "ATTEMPTED") return "Try a second touch";
   if (status === "CONTACTED") return "Push for the demo";
@@ -384,10 +389,10 @@ export function LeadsListView({
       const response = await fetch("/api/leads", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId, status: nextStatus }),
+        body: JSON.stringify({ leadId, status: nextStatus === "UNSET" ? null : nextStatus }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { status?: string; updatedAt?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as { status?: string | null; updatedAt?: string; error?: string } | null;
       if (!response.ok) {
         throw new Error(payload?.error ?? "Unable to update lead status.");
       }
@@ -396,7 +401,7 @@ export function LeadsListView({
         ...previous,
         [leadId]: {
           ...(previous[leadId] ?? {}),
-          status: nextStatus,
+          status: nextStatus === "UNSET" ? "" : nextStatus,
           updatedAt: payload?.updatedAt ?? new Date().toISOString(),
         },
       }));
@@ -460,7 +465,7 @@ export function LeadsListView({
   const openStatusCounts = useMemo(
     () => ({
       total: sortedLeads.length,
-      notContacted: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "NEW").length,
+      noStatus: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "UNSET" || resolveWorkspaceStatus(lead) === "NEW").length,
       attempted: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "ATTEMPTED").length,
       contacted: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "CONTACTED").length,
       demoBooked: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "DEMO_BOOKED").length,
@@ -549,9 +554,9 @@ export function LeadsListView({
             <p className="mt-1 text-xs text-zinc-400">Active leads in this rep workspace</p>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Not Contacted</p>
-            <p className="mt-2 text-3xl font-semibold text-zinc-100">{openStatusCounts.notContacted}</p>
-            <p className="mt-1 text-xs text-zinc-400">Fresh leads that still need first outreach</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">No Status</p>
+            <p className="mt-2 text-3xl font-semibold text-zinc-100">{openStatusCounts.noStatus}</p>
+            <p className="mt-1 text-xs text-zinc-400">Leads with no Connect disposition logged yet</p>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Attempted Contact</p>

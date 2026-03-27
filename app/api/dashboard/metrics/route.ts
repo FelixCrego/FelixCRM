@@ -473,7 +473,7 @@ function getLeadStatusLabel(lead: Lead, now: Date) {
   if (normalizedStatus === "AWAITING_APPROVAL") return "Awaiting approval";
   if (normalizedStatus === "DEMO_BOOKED") return "Demo booked";
   if (normalizedStatus === "CONTACTED" || normalizedStatus === "PITCHED") return "Needs next touch";
-  if (normalizedStatus === "ATTEMPTED" || normalizedStatus === "IN_PROGRESS") return "Attempted outreach";
+  if (normalizedStatus === "ATTEMPTED") return "Attempted outreach";
   return "Fresh lead";
 }
 
@@ -492,7 +492,7 @@ function scoreLeadPriority(lead: Lead, now: Date) {
   if (normalizedStatus === "AWAITING_APPROVAL") score += 22;
   if (normalizedStatus === "DEMO_BOOKED") score += 18;
   if (normalizedStatus === "CONTACTED" || normalizedStatus === "PITCHED") score += 12;
-  if (normalizedStatus === "ATTEMPTED" || normalizedStatus === "IN_PROGRESS") score += 8;
+  if (normalizedStatus === "ATTEMPTED") score += 8;
   if (lead.phone) score += 2;
   if (lead.email) score += 2;
   if (updatedAt && now.getTime() - updatedAt.getTime() <= 2 * 86400000) score += 5;

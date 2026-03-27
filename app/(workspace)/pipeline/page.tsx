@@ -48,7 +48,7 @@ function toPipelineStage(lead: Lead): Stage {
   if (lead.stripeCheckoutLink || rawStatus === "PAYMENT PENDING") return "Payment Pending";
   if (rawStatus === "AWAITING APPROVAL" || rawStatus === "AWAITING_APPROVAL") return "Awaiting Approval";
   if (rawStatus === "DEMO_BOOKED" || rawStatus === "DEMO BOOKED") return "Awaiting Approval";
-  if (rawStatus === "ATTEMPTED" || rawStatus === "IN_PROGRESS" || rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
+  if (rawStatus === "ATTEMPTED" || rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
   return "New";
 }
 

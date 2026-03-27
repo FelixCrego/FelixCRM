@@ -80,19 +80,20 @@ export async function PATCH(request: Request) {
     const userId = await getAuthenticatedUserId();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json()) as { leadId?: string; status?: string };
+    const body = (await request.json()) as { leadId?: string; status?: string | null };
     const leadId = typeof body?.leadId === "string" ? body.leadId.trim() : "";
-    const nextStatus = typeof body?.status === "string" ? body.status.trim().toUpperCase() : "";
+    const rawStatus = typeof body?.status === "string" ? body.status.trim().toUpperCase() : "";
+    const nextStatus = rawStatus === "UNSET" ? "" : rawStatus;
 
     if (!leadId) {
       return NextResponse.json({ error: "Lead id is required." }, { status: 400 });
     }
 
-    if (!ALLOWED_LEAD_STATUSES.has(nextStatus)) {
+    if (nextStatus && !ALLOWED_LEAD_STATUSES.has(nextStatus)) {
       return NextResponse.json({ error: "Invalid lead status." }, { status: 400 });
     }
 
-    const result = await setLeadStatus(leadId, userId, nextStatus);
+    const result = await setLeadStatus(leadId, userId, nextStatus || null);
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to update lead." }, { status: 500 });
