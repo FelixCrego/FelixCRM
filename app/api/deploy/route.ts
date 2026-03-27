@@ -427,6 +427,12 @@ function toHttpsUrl(value: unknown): string | undefined {
   return `https://${trimmed}`;
 }
 
+function projectHostname(projectName: string): string | undefined {
+  const normalized = projectName.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  if (!normalized) return undefined;
+  return toHttpsUrl(`${normalized}.vercel.app`);
+}
+
 function firstDeploymentAlias(payload: Record<string, unknown>): string | undefined {
   const singleAlias = toHttpsUrl(payload.alias);
   if (singleAlias) return singleAlias;
@@ -796,15 +802,15 @@ export async function POST(request: Request) {
     const payload = (await response.json()) as Record<string, unknown>;
     const deploymentId = typeof payload.id === "string" ? payload.id : undefined;
     const deploymentAliasUrl = firstDeploymentAlias(payload);
-    const projectAliasUrl = toHttpsUrl(`${vercelProjectName}.vercel.app`);
+    const projectAliasUrl = projectHostname(vercelProjectName);
     const fallbackDeploymentUrl = toHttpsUrl(payload.url);
-    const deployedUrl = deploymentAliasUrl ?? projectAliasUrl ?? fallbackDeploymentUrl;
+    const deployedUrl = deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl;
 
     await setLeadDeployment(leadId, { siteStatus: "BUILDING", deployedUrl, vercelDeploymentId: deploymentId });
     return NextResponse.json({
       url: deployedUrl,
       deployedUrl,
-      liveUrl: deploymentAliasUrl ?? projectAliasUrl,
+      liveUrl: deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl,
       deploymentId,
       project: vercelProjectName,
       repository: clonedRepoFullName,
