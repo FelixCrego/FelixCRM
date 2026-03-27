@@ -4,23 +4,45 @@ export const TEMPLATE_CONFIG_VERSION = "1.1.0";
 
 type Primitive = string | number | boolean | null;
 type JsonValue = Primitive | JsonValue[] | { [key: string]: JsonValue };
-type GeocodeResult = {
+
+type AddressComponent = {
+  long_name?: string;
+  short_name?: string;
+  types?: string[];
+};
+
+type PlaceSearchResult = {
+  place_id?: string;
+  name?: string;
+  formatted_address?: string;
   geometry?: {
     location?: {
       lat?: number;
       lng?: number;
     };
   };
-  address_components?: Array<{
-    long_name?: string;
-    short_name?: string;
-    types?: string[];
-  }>;
 };
 
-type GeocodeApiResponse = {
+type PlaceSearchResponse = {
   status?: string;
-  results?: GeocodeResult[];
+  results?: PlaceSearchResult[];
+};
+
+type PlaceDetailsResult = {
+  name?: string;
+  formatted_address?: string;
+  geometry?: {
+    location?: {
+      lat?: number;
+      lng?: number;
+    };
+  };
+  address_components?: AddressComponent[];
+};
+
+type PlaceDetailsResponse = {
+  status?: string;
+  result?: PlaceDetailsResult;
 };
 
 export type TemplateConfig = {
@@ -126,8 +148,8 @@ function toPartialObject(value: unknown): Record<string, unknown> {
 
 const SERVICE_AREA_LOOKUP_TIMEOUT_MS = 7000;
 const SERVICE_AREA_MAX_RESULTS = 8;
-const SERVICE_AREA_BEARINGS = [0, 60, 120, 180, 240, 300];
-const SERVICE_AREA_RINGS_KM = [18, 35, 55];
+const SERVICE_AREA_RADIUS_METERS = 60000;
+const MAX_SERVICE_AREA_PLACE_RESULTS = 12;
 
 function fallbackServiceAreas(city: string): string[] {
   const normalizedCity = city.trim();
@@ -160,7 +182,7 @@ function dedupeAreas(values: string[]): string[] {
 }
 
 function getAddressComponentName(
-  components: Array<{ long_name?: string; short_name?: string; types?: string[] }> | undefined,
+  components: AddressComponent[] | undefined,
   targetTypes: string[],
 ): string {
   if (!Array.isArray(components)) return "";
@@ -174,7 +196,19 @@ function getAddressComponentName(
   return "";
 }
 
-async function fetchGeocodeResult(url: string): Promise<GeocodeResult | null> {
+function getServiceAreaLocality(components: AddressComponent[] | undefined): string {
+  const country = getAddressComponentName(components, ["country"]);
+  if (country === "Puerto Rico") {
+    return (
+      getAddressComponentName(components, ["administrative_area_level_1"]) ||
+      getAddressComponentName(components, ["locality", "postal_town"])
+    );
+  }
+
+  return getAddressComponentName(components, ["locality", "postal_town"]);
+}
+
+async function fetchJsonWithTimeout<T>(url: string): Promise<T | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SERVICE_AREA_LOOKUP_TIMEOUT_MS);
 
@@ -183,11 +217,8 @@ async function fetchGeocodeResult(url: string): Promise<GeocodeResult | null> {
       cache: "no-store",
       signal: controller.signal,
     });
-
     if (!response.ok) return null;
-    const payload = (await response.json()) as GeocodeApiResponse;
-    if (payload.status !== "OK") return null;
-    return payload.results?.[0] ?? null;
+    return (await response.json()) as T;
   } catch {
     return null;
   } finally {
@@ -195,74 +226,174 @@ async function fetchGeocodeResult(url: string): Promise<GeocodeResult | null> {
   }
 }
 
-function destinationPoint(lat: number, lng: number, distanceKm: number, bearingDegrees: number) {
-  const earthRadiusKm = 6371;
-  const angularDistance = distanceKm / earthRadiusKm;
-  const bearing = (bearingDegrees * Math.PI) / 180;
-  const latitude = (lat * Math.PI) / 180;
-  const longitude = (lng * Math.PI) / 180;
-
-  const nextLatitude = Math.asin(
-    Math.sin(latitude) * Math.cos(angularDistance) +
-      Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing),
-  );
-
-  const nextLongitude =
-    longitude +
-    Math.atan2(
-      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
-      Math.cos(angularDistance) - Math.sin(latitude) * Math.sin(nextLatitude),
-    );
-
-  return {
-    lat: (nextLatitude * 180) / Math.PI,
-    lng: ((nextLongitude * 180) / Math.PI + 540) % 360 - 180,
-  };
+function toQueryParam(value: string): string {
+  return encodeURIComponent(value.trim());
 }
 
-async function resolveNearbyServiceAreas(city: string): Promise<string[]> {
-  const normalizedCity = city.trim();
-  if (!normalizedCity) return [];
+function haversineDistanceKm(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number },
+): number {
+  const earthRadiusKm = 6371;
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+  const deltaLat = toRadians(to.lat - from.lat);
+  const deltaLng = toRadians(to.lng - from.lng);
+  const startLat = toRadians(from.lat);
+  const endLat = toRadians(to.lat);
+  const a =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2;
 
-  const mapsApiKey = process.env.MAPS_API_KEY?.trim();
-  if (!mapsApiKey) return fallbackServiceAreas(normalizedCity);
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
-  const originResult = await fetchGeocodeResult(
-    `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(normalizedCity)}&key=${mapsApiKey}`,
+async function searchPlaces(params: {
+  query: string;
+  mapsApiKey: string;
+  location?: { lat: number; lng: number };
+  radiusMeters?: number;
+}): Promise<PlaceSearchResult[]> {
+  const query = params.query.trim();
+  if (!query) return [];
+
+  const searchParams = new URLSearchParams({
+    query,
+    key: params.mapsApiKey,
+  });
+
+  if (params.location && typeof params.radiusMeters === "number") {
+    searchParams.set("location", `${params.location.lat},${params.location.lng}`);
+    searchParams.set("radius", String(params.radiusMeters));
+  }
+
+  const payload = await fetchJsonWithTimeout<PlaceSearchResponse>(
+    `https://maps.googleapis.com/maps/api/place/textsearch/json?${searchParams.toString()}`,
   );
 
-  const originLocation = originResult?.geometry?.location;
-  if (typeof originLocation?.lat !== "number" || typeof originLocation?.lng !== "number") {
-    return fallbackServiceAreas(normalizedCity);
+  if (!payload || (payload.status !== "OK" && payload.status !== "ZERO_RESULTS")) return [];
+  return payload.results ?? [];
+}
+
+async function fetchPlaceDetails(placeId: string, mapsApiKey: string): Promise<PlaceDetailsResult | null> {
+  const payload = await fetchJsonWithTimeout<PlaceDetailsResponse>(
+    `https://maps.googleapis.com/maps/api/place/details/json?place_id=${toQueryParam(placeId)}&fields=name,formatted_address,address_component,geometry&key=${mapsApiKey}`,
+  );
+
+  if (!payload || payload.status !== "OK") return null;
+  return payload.result ?? null;
+}
+
+async function resolveNearbyServiceAreas(input: {
+  businessName: string;
+  businessType: string;
+  city: string;
+}): Promise<{ primaryLocation: string; serviceAreas: string[] }> {
+  const fallbackPrimaryLocation = input.city.trim();
+  const fallback = {
+    primaryLocation: fallbackPrimaryLocation,
+    serviceAreas: fallbackServiceAreas(fallbackPrimaryLocation),
+  };
+  if (!fallbackPrimaryLocation) return fallback;
+
+  const mapsApiKey = process.env.MAPS_API_KEY?.trim();
+  if (!mapsApiKey) return fallback;
+
+  const anchorQueries = Array.from(
+    new Set(
+      [`${input.businessName} ${input.city}`, input.businessName]
+        .map((query) => query.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  let anchorDetails: PlaceDetailsResult | null = null;
+
+  for (const query of anchorQueries) {
+    const results = await searchPlaces({ query, mapsApiKey });
+    if (!results.length) continue;
+
+    const matchedResult =
+      results.find((result) => normalizeAreaKey(result.name ?? "") === normalizeAreaKey(input.businessName)) ?? results[0];
+
+    if (!matchedResult?.place_id) continue;
+
+    anchorDetails = await fetchPlaceDetails(matchedResult.place_id, mapsApiKey);
+    if (anchorDetails) break;
   }
 
-  const originLocality =
-    getAddressComponentName(originResult?.address_components, ["locality", "postal_town"]) || normalizedCity;
+  const anchorLocation = anchorDetails?.geometry?.location;
+  const anchorPrimaryLocation = getServiceAreaLocality(anchorDetails?.address_components) || fallbackPrimaryLocation;
 
-  const blockedKeys = new Set<string>([normalizeAreaKey(normalizedCity), normalizeAreaKey(originLocality)]);
-  const nearbyAreas: string[] = [];
+  if (typeof anchorLocation?.lat !== "number" || typeof anchorLocation?.lng !== "number") {
+    return {
+      primaryLocation: anchorPrimaryLocation,
+      serviceAreas: fallbackServiceAreas(anchorPrimaryLocation),
+    };
+  }
 
-  for (const radiusKm of SERVICE_AREA_RINGS_KM) {
-    for (const bearing of SERVICE_AREA_BEARINGS) {
-      const point = destinationPoint(originLocation.lat, originLocation.lng, radiusKm, bearing);
-      const nearbyResult = await fetchGeocodeResult(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${point.lat},${point.lng}&result_type=locality|postal_town&key=${mapsApiKey}`,
+  const anchorCountry = getAddressComponentName(anchorDetails?.address_components, ["country"]);
+  const nicheQuery = input.businessType.trim() || input.businessName.trim();
+  const nearbyQueries = Array.from(
+    new Set(
+      [
+        nicheQuery,
+        `${nicheQuery} near ${anchorPrimaryLocation}`,
+        anchorCountry ? `${nicheQuery} near ${anchorPrimaryLocation} ${anchorCountry}` : "",
+      ]
+        .map((query) => query.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const bestAreaByKey = new Map<string, { name: string; distanceKm: number }>();
+  const seenPlaceIds = new Set<string>();
+
+  for (const query of nearbyQueries) {
+    const results = await searchPlaces({
+      query,
+      mapsApiKey,
+      location: { lat: anchorLocation.lat, lng: anchorLocation.lng },
+      radiusMeters: SERVICE_AREA_RADIUS_METERS,
+    });
+
+    for (const result of results.slice(0, MAX_SERVICE_AREA_PLACE_RESULTS)) {
+      if (!result.place_id || seenPlaceIds.has(result.place_id)) continue;
+      seenPlaceIds.add(result.place_id);
+
+      const candidateLocation = result.geometry?.location;
+      if (typeof candidateLocation?.lat !== "number" || typeof candidateLocation?.lng !== "number") continue;
+
+      const distanceKm = haversineDistanceKm(
+        { lat: anchorLocation.lat, lng: anchorLocation.lng },
+        { lat: candidateLocation.lat, lng: candidateLocation.lng },
       );
+      if (distanceKm > SERVICE_AREA_RADIUS_METERS / 1000) continue;
 
-      const nearbyLocality = getAddressComponentName(nearbyResult?.address_components, ["locality", "postal_town"]);
-      const localityKey = normalizeAreaKey(nearbyLocality);
-      if (!nearbyLocality || !localityKey || blockedKeys.has(localityKey)) continue;
+      const details = await fetchPlaceDetails(result.place_id, mapsApiKey);
+      const locality = getServiceAreaLocality(details?.address_components);
+      const localityKey = normalizeAreaKey(locality);
+      if (!locality || !localityKey || localityKey === normalizeAreaKey(anchorPrimaryLocation)) continue;
 
-      blockedKeys.add(localityKey);
-      nearbyAreas.push(nearbyLocality);
+      const candidateCountry = getAddressComponentName(details?.address_components, ["country"]);
+      if (anchorCountry && candidateCountry && candidateCountry !== anchorCountry) continue;
 
-      if (nearbyAreas.length >= SERVICE_AREA_MAX_RESULTS - 1) {
-        return [normalizedCity, ...nearbyAreas].slice(0, SERVICE_AREA_MAX_RESULTS);
+      const existing = bestAreaByKey.get(localityKey);
+      if (!existing || distanceKm < existing.distanceKm) {
+        bestAreaByKey.set(localityKey, { name: locality, distanceKm });
       }
     }
+
+    if (bestAreaByKey.size >= SERVICE_AREA_MAX_RESULTS - 1) break;
   }
 
-  return dedupeAreas([normalizedCity, ...nearbyAreas]).slice(0, SERVICE_AREA_MAX_RESULTS);
+  const nearbyAreas = [...bestAreaByKey.values()]
+    .sort((left, right) => left.distanceKm - right.distanceKm)
+    .map((entry) => entry.name);
+
+  return {
+    primaryLocation: anchorPrimaryLocation,
+    serviceAreas: dedupeAreas([anchorPrimaryLocation, ...nearbyAreas]).slice(0, SERVICE_AREA_MAX_RESULTS),
+  };
 }
 
 function firstNonEmptyString(values: Array<unknown>): string {
@@ -278,28 +409,41 @@ export async function buildTemplateConfig(lead: Lead, overrides: unknown): Promi
   const safeOverrides = toPartialObject(overrides) as TemplateConfigOverrides;
   const enrichmentBranding = lead.enrichment?.structured;
   const [primaryEnrichmentColor = "", secondaryEnrichmentColor = ""] = enrichmentBranding?.brandColors ?? [];
+  const businessOverrides = toPartialObject(safeOverrides.business);
   const geoOverrides = toPartialObject(safeOverrides.geo);
-  const requestedPrimaryLocation = asString(geoOverrides.primaryLocation) || lead.city;
+  const requestedBusinessName = asString(businessOverrides.name) || lead.businessName;
+  const requestedBusinessCity = asString(businessOverrides.city) || lead.city;
+  const requestedBusinessCategory = asString(businessOverrides.category) || lead.businessType;
+  const requestedPrimaryLocation = asString(geoOverrides.primaryLocation) || requestedBusinessCity;
   const serviceAreasOverride = Array.isArray(geoOverrides.serviceAreas)
     ? (geoOverrides.serviceAreas as unknown[])
         .map((entry) => asString(entry).trim())
         .filter(Boolean)
         .slice(0, 12)
     : [];
-  const defaultServiceAreas =
-    serviceAreasOverride.length > 0 ? serviceAreasOverride : await resolveNearbyServiceAreas(requestedPrimaryLocation);
+  const resolvedGeo =
+    serviceAreasOverride.length > 0
+      ? { primaryLocation: requestedPrimaryLocation, serviceAreas: serviceAreasOverride }
+      : await resolveNearbyServiceAreas({
+          businessName: requestedBusinessName,
+          businessType: requestedBusinessCategory,
+          city: requestedPrimaryLocation,
+        });
+  const defaultBusinessCity = asString(businessOverrides.city) || resolvedGeo.primaryLocation || lead.city;
+  const defaultPrimaryLocation = asString(geoOverrides.primaryLocation) || resolvedGeo.primaryLocation || defaultBusinessCity;
+  const defaultServiceAreas = serviceAreasOverride.length > 0 ? serviceAreasOverride : resolvedGeo.serviceAreas;
 
   const defaultConfig: TemplateConfig = {
     templateVersion: TEMPLATE_CONFIG_VERSION,
     leadId: lead.id,
     business: {
-      name: lead.businessName,
-      city: lead.city,
-      category: lead.businessType,
+      name: requestedBusinessName,
+      city: defaultBusinessCity,
+      category: requestedBusinessCategory,
       websiteUrl: lead.websiteUrl ?? "",
     },
     geo: {
-      primaryLocation: requestedPrimaryLocation,
+      primaryLocation: defaultPrimaryLocation,
       serviceAreas: defaultServiceAreas,
     },
     branding: {
@@ -312,8 +456,8 @@ export async function buildTemplateConfig(lead: Lead, overrides: unknown): Promi
     },
     content: {
       hero: {
-        headline: `${lead.businessName} in ${lead.city}`,
-        subheadline: `Trusted ${lead.businessType.toLowerCase()} specialists serving ${lead.city} and nearby areas.`,
+        headline: `${requestedBusinessName} in ${defaultBusinessCity}`,
+        subheadline: `Trusted ${requestedBusinessCategory.toLowerCase()} specialists serving ${defaultBusinessCity} and nearby areas.`,
         ctaLabel: "Get Your Free Estimate",
       },
       contact: {
@@ -337,10 +481,9 @@ export async function buildTemplateConfig(lead: Lead, overrides: unknown): Promi
 
   const heroOverrides = toPartialObject(safeOverrides.content).hero;
   const contactOverrides = toPartialObject(safeOverrides.content).contact;
-  const businessOverrides = toPartialObject(safeOverrides.business);
   const brandingOverrides = toPartialObject(safeOverrides.branding);
   const linksOverrides = toPartialObject(safeOverrides.links);
-  const primaryLocation = asString(geoOverrides.primaryLocation) || defaultConfig.business.city;
+  const primaryLocation = asString(geoOverrides.primaryLocation) || defaultConfig.geo.primaryLocation;
 
   return {
     ...defaultConfig,

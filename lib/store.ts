@@ -654,6 +654,12 @@ function isMissingTableError(error: unknown) {
   return code === "42P01" || code === "PGRST205" || (message.includes("Could not find the table") && message.includes("schema cache"));
 }
 
+function isLeadStatusConstraintError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as SupabaseError).code) : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return code === "23514" && message.includes("leads_status_check");
+}
+
 function isSchemaCacheColumnError(error: unknown) {
   const code = typeof error === "object" && error && "code" in error ? String((error as SupabaseError).code) : "";
   const message = error instanceof Error ? error.message : String(error);
@@ -1570,36 +1576,43 @@ export async function setLeadDemoBooking(
     bookedAt: booking.bookedAt ?? new Date().toISOString(),
   };
   const updatedAt = new Date().toISOString();
+  const patchLead = async (includeStatus: boolean) =>
+    withLeadTableFallback((table) =>
+      supabaseRequest(
+        table,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(
+            isSnakeLeadsTable(table)
+              ? {
+                  ...(includeStatus ? { status: "DEMO_BOOKED" } : {}),
+                  updated_at: updatedAt,
+                  source_payload: {
+                    ...payload,
+                    demoBooking: nextDemoBooking,
+                  },
+                }
+              : {
+                  ...(includeStatus ? { status: "DEMO_BOOKED" } : {}),
+                  updatedAt,
+                  sourcePayload: {
+                    ...payload,
+                    demoBooking: nextDemoBooking,
+                  },
+                },
+          ),
+        },
+        { id: `eq.${leadId}` },
+      ),
+    );
 
-  await withLeadTableFallback((table) =>
-    supabaseRequest(
-      table,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(
-          isSnakeLeadsTable(table)
-            ? {
-                status: "DEMO_BOOKED",
-                updated_at: updatedAt,
-                source_payload: {
-                  ...payload,
-                  demoBooking: nextDemoBooking,
-                },
-              }
-            : {
-                status: "DEMO_BOOKED",
-                updatedAt,
-                sourcePayload: {
-                  ...payload,
-                  demoBooking: nextDemoBooking,
-                },
-              },
-        ),
-      },
-      { id: `eq.${leadId}` },
-    ),
-  );
+  try {
+    await patchLead(true);
+  } catch (error) {
+    if (!isLeadStatusConstraintError(error)) throw error;
+    await patchLead(false);
+  }
 }
 
 export async function setLeadStatus(
