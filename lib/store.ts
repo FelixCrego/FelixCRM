@@ -1247,7 +1247,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
             normalized_domain: domain.toLowerCase(),
             dedupe_key: computedDedupeKey,
-            status: null,
+            status: "",
             site_status: "UNBUILT",
             owner_id: ownerId,
             source_payload: {
@@ -1267,7 +1267,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
             normalizedDomain: domain.toLowerCase(),
             dedupeKey: computedDedupeKey,
-            status: null,
+            status: "",
             siteStatus: "UNBUILT",
             ownerId,
             sourcePayload: {
@@ -1640,13 +1640,13 @@ export async function setLeadStatus(
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify(
         isSnakeLeadsTable(table)
-          ? { status: nextStatus || null, updated_at: updatedAt }
-          : { status: nextStatus || null, updatedAt },
+          ? { status: nextStatus || "", updated_at: updatedAt }
+          : { status: nextStatus || "", updatedAt },
       ),
     }, filters);
   });
 
-  return { status: nextStatus || null, updatedAt };
+  return { status: nextStatus || "", updatedAt };
 }
 
 
