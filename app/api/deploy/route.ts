@@ -494,7 +494,7 @@ export async function POST(request: Request) {
     const researchOutput = typeof body.researchOutput === "string" ? body.researchOutput : undefined;
     const configOverrides = body.templateConfigOverrides;
 
-    const templateConfig = buildTemplateConfig(
+    const templateConfig = await buildTemplateConfig(
       {
         ...lead,
         aiResearchSummary: researchOutput || lead.aiResearchSummary,
