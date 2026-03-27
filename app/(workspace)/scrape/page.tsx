@@ -421,14 +421,15 @@ export default function ScrapePage() {
 
   const pageLeadIds = useMemo(() => paginatedLeads.map((lead) => lead.id), [paginatedLeads]);
   const pageClaimableLeadIds = useMemo(
-    () => paginatedLeads.filter((lead) => !lead.ownerId || lead.ownerId === currentUserId).map((lead) => lead.id),
-    [currentUserId, paginatedLeads],
+    () => paginatedLeads.filter((lead) => !lead.ownerId).map((lead) => lead.id),
+    [paginatedLeads],
   );
   const selectedOnPageCount = selectedLeadIds.filter((leadId) => pageLeadIds.includes(leadId)).length;
   const allPageClaimableSelected = pageClaimableLeadIds.length > 0 && pageClaimableLeadIds.every((leadId) => selectedLeadIds.includes(leadId));
 
   const selectedCount = selectedLeadIds.length;
   const claimableCount = pageClaimableLeadIds.length;
+  const selectedClaimableLeadIds = selectedLeadIds.filter((leadId) => pageClaimableLeadIds.includes(leadId));
 
   return (
     <div className="space-y-5 pb-24">
@@ -494,13 +495,15 @@ export default function ScrapePage() {
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">Scraped Leads ({leads.length})</h3>
-          <button
-            onClick={() => handleClaimLeads(pageClaimableLeadIds)}
-            disabled={isClaiming || claimableCount === 0}
-            className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
-          >
-            {isClaiming ? "Claiming..." : `Claim This Page (${claimableCount})`}
-          </button>
+          {claimableCount > 0 ? (
+            <button
+              onClick={() => handleClaimLeads(pageClaimableLeadIds)}
+              disabled={isClaiming}
+              className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
+            >
+              {isClaiming ? "Claiming..." : `Claim This Page (${claimableCount})`}
+            </button>
+          ) : null}
         </div>
         <div className="mb-3 flex items-center justify-between gap-3 text-xs text-zinc-400">
           <p>
@@ -605,13 +608,15 @@ export default function ScrapePage() {
                         </>
                       ) : (
                         <>
-                          <button
-                            onClick={() => handleClaimLeads([lead.id])}
-                            disabled={isClaiming || Boolean(lead.ownerId && currentUserId && lead.ownerId !== currentUserId)}
-                            className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
-                          >
-                            {isClaiming ? "Claiming..." : "Claim Lead"}
-                          </button>
+                          {!lead.ownerId ? (
+                            <button
+                              onClick={() => handleClaimLeads([lead.id])}
+                              disabled={isClaiming}
+                              className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-60"
+                            >
+                              {isClaiming ? "Claiming..." : "Claim Lead"}
+                            </button>
+                          ) : null}
                           <button
                             onClick={() => handleDeleteLeads([lead.id])}
                             disabled={isDeleting}
@@ -651,11 +656,11 @@ export default function ScrapePage() {
                 {isDeleting ? "Deleting..." : "Delete Selected Leads"}
               </button>
               <button
-                onClick={() => handleClaimLeads(selectedLeadIds)}
-                disabled={isClaiming}
+                onClick={() => handleClaimLeads(selectedClaimableLeadIds)}
+                disabled={isClaiming || selectedClaimableLeadIds.length === 0}
                 className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
               >
-                {isClaiming ? "Claiming..." : "Claim Selected Leads"}
+                {isClaiming ? "Claiming..." : `Claim Selected Leads${selectedClaimableLeadIds.length > 0 ? ` (${selectedClaimableLeadIds.length})` : ""}`}
               </button>
             </div>
           </div>
