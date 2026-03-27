@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
+import {
+  SALES_DASHBOARD_DERIVED_TARGETS,
+  SALES_DASHBOARD_TARGETS,
+  SALES_DASHBOARD_WORKDAY_HOURS,
+} from "@/lib/dashboard-targets";
 import { canUserViewAllLeads, getEffectiveUserRole, getReviewedDashboardNotificationIds, listLeads } from "@/lib/store";
 import type { Lead } from "@/lib/types";
 
@@ -39,14 +44,24 @@ type DashboardLeaderboardRow = {
   userName: string;
   claimedLeads: number;
   dialsToday: number;
+  callsPerHourToday: number;
   conversationsToday: number;
+  contactRateToday: number;
+  demosToday: number;
+  demoConversionRateToday: number;
+  expectedDialsByNow: number;
+  dialGapToday: number;
   talkMinutesToday: number;
   demosThisWeek: number;
   closesThisMonth: number;
   revenueThisMonth: number;
   scoreToday: number;
   streakDays: number;
+  overallStatus: DashboardPerformanceStatus;
+  needsAttentionReason: string;
 };
+
+type DashboardPerformanceStatus = "on_track" | "at_risk" | "off_track";
 
 type DemoRow = {
   id: string;
@@ -260,6 +275,21 @@ function getZonedParts(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
   };
 }
 
+function getZonedClockParts(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "0";
+  return {
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+  };
+}
+
 function toDayStamp(year: number, month: number, day: number) {
   return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
 }
@@ -323,6 +353,10 @@ function parseDemoRowDate(demo: DemoRow) {
 
 function sum(values: number[]) {
   return values.reduce((total, value) => total + value, 0);
+}
+
+function average(values: number[]) {
+  return values.length > 0 ? sum(values) / values.length : 0;
 }
 
 function currency(value: number) {
@@ -467,6 +501,118 @@ function formatPercent(value: number) {
   return `${Math.round(value)}%`;
 }
 
+function formatDecimal(value: number) {
+  return `${Math.round(value * 10) / 10}`;
+}
+
+function formatSignedNumber(value: number) {
+  if (value > 0) return `+${value}`;
+  return `${value}`;
+}
+
+function computeRate(numerator: number, denominator: number) {
+  return denominator > 0 ? (numerator / denominator) * 100 : 0;
+}
+
+function getPerformanceStatus(actual: number, target: number): DashboardPerformanceStatus {
+  if (target <= 0) {
+    return actual > 0 ? "on_track" : "at_risk";
+  }
+  if (actual >= target) return "on_track";
+  if (actual >= target * 0.8) return "at_risk";
+  return "off_track";
+}
+
+function combineStatuses(statuses: DashboardPerformanceStatus[]) {
+  if (statuses.includes("off_track")) return "off_track";
+  if (statuses.includes("at_risk")) return "at_risk";
+  return "on_track";
+}
+
+function getStatusRank(status: DashboardPerformanceStatus) {
+  if (status === "off_track") return 2;
+  if (status === "at_risk") return 1;
+  return 0;
+}
+
+function getWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const { hour, minute } = getZonedClockParts(date, timeZone);
+  const workdayStartMinutes = SALES_DASHBOARD_TARGETS.workdayStartHour * 60;
+  const totalMinutes = SALES_DASHBOARD_WORKDAY_HOURS * 60;
+  const currentMinutes = hour * 60 + minute;
+  const elapsedMinutes = Math.max(0, Math.min(currentMinutes - workdayStartMinutes, totalMinutes));
+  const elapsedHours = elapsedMinutes / 60;
+  const expectedDialsByNow = Math.min(
+    SALES_DASHBOARD_TARGETS.dialsPerDay,
+    Math.round(elapsedHours * SALES_DASHBOARD_TARGETS.dialsPerHour),
+  );
+
+  return {
+    elapsedHours,
+    expectedDialsByNow,
+    workdayLabel: `${formatDecimal(elapsedHours)} / ${SALES_DASHBOARD_WORKDAY_HOURS}h`,
+  };
+}
+
+function isLeadDemoBookedThisWeek(lead: Lead, now: Date) {
+  const bookedAt = parseDate(lead.demoBooking?.bookedAt);
+  if (bookedAt) return isOnOrAfterWeekStartInTimeZone(bookedAt, now);
+  const demoAt = parseDemoDate(lead);
+  return demoAt ? isOnOrAfterWeekStartInTimeZone(demoAt, now) : false;
+}
+
+function isLeadDemoBookedToday(lead: Lead, now: Date) {
+  const bookedAt = parseDate(lead.demoBooking?.bookedAt);
+  return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
+}
+
+function buildNeedsAttentionReason(row: Pick<DashboardLeaderboardRow, "dialGapToday" | "dialsToday" | "contactRateToday" | "demosToday">) {
+  const issues: string[] = [];
+
+  if (row.dialGapToday < 0) {
+    issues.push(`${Math.abs(row.dialGapToday)} behind dial pace`);
+  } else if (row.dialsToday === 0) {
+    issues.push("no dials yet");
+  }
+
+  if (row.dialsToday > 0 && row.contactRateToday < SALES_DASHBOARD_TARGETS.contactRatePct) {
+    issues.push(`${formatPercent(row.contactRateToday)} contact rate`);
+  }
+
+  if (row.demosToday < SALES_DASHBOARD_TARGETS.demosPerDay) {
+    issues.push(`${row.demosToday}/${SALES_DASHBOARD_TARGETS.demosPerDay} demos`);
+  }
+
+  return issues.slice(0, 2).join("; ");
+}
+
+function buildRepHeadline(params: {
+  dialsStatus: DashboardPerformanceStatus;
+  contactStatus: DashboardPerformanceStatus;
+  demosStatus: DashboardPerformanceStatus;
+  callsPerHourToday: number;
+  contactRateToday: number;
+  demosToday: number;
+}) {
+  if (params.dialsStatus === "on_track" && params.contactStatus === "on_track" && params.demosStatus === "on_track") {
+    return "On pace for 80 dials, 20% contact rate, and 4 booked demos.";
+  }
+
+  if (params.dialsStatus === "off_track") {
+    return `Dial pace is behind. Recover the block and get back above ${SALES_DASHBOARD_TARGETS.dialsPerHour} calls per hour.`;
+  }
+
+  if (params.contactStatus === "off_track") {
+    return `The dial volume is moving, but contact rate is only ${formatPercent(params.contactRateToday)}. Tighten the opener and the first 20 seconds.`;
+  }
+
+  if (params.demosStatus !== "on_track") {
+    return `${params.demosToday} demo${params.demosToday === 1 ? "" : "s"} booked so far. Push harder on the close once the conversation lands.`;
+  }
+
+  return `Current pace is ${formatDecimal(params.callsPerHourToday)} calls per hour. Keep stacking quality connects.`;
+}
+
 export async function GET() {
   try {
     const user = await getAuthenticatedUser();
@@ -475,6 +621,7 @@ export async function GET() {
     }
 
     const now = new Date();
+    const workdayProgress = getWorkdayProgress(now);
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
 
@@ -556,16 +703,8 @@ export async function GET() {
     });
     const repConversationsToday = repCallsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
     const repTalkSecondsToday = sum(repCallsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0)));
-    const repDemosThisWeek = repLeads.filter((lead) => {
-      const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-      if (bookedAt) return isOnOrAfterWeekStartInTimeZone(bookedAt, now);
-      const demoAt = parseDemoDate(lead);
-      return demoAt ? isOnOrAfterWeekStartInTimeZone(demoAt, now) : false;
-    });
-    const repDemosToday = repLeads.filter((lead) => {
-      const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-      return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
-    });
+    const repDemosThisWeek = repLeads.filter((lead) => isLeadDemoBookedThisWeek(lead, now));
+    const repDemosToday = repLeads.filter((lead) => isLeadDemoBookedToday(lead, now));
     const repClosedThisMonth = visibleLeads.filter((lead) => {
       if (getLeadCloseAttributionUserId(lead) !== user.id) return false;
       const closedAt = parseDate(lead.closedAt);
@@ -584,6 +723,19 @@ export async function GET() {
       closes: repClosedToday.length,
     });
     const repStreak = computeStreak(calls, visibleLeads, now, user.id, repLeadIds);
+    const repCallsPerHourToday = workdayProgress.elapsedHours > 0 ? repCallsToday.length / workdayProgress.elapsedHours : 0;
+    const repContactRateToday = computeRate(repConversationsToday.length, repCallsToday.length);
+    const repDemoConversionRateToday = computeRate(repDemosToday.length, repConversationsToday.length);
+    const repDialPaceStatus = getPerformanceStatus(repCallsToday.length, workdayProgress.expectedDialsByNow);
+    const repCallsPerHourStatus = getPerformanceStatus(repCallsPerHourToday, SALES_DASHBOARD_TARGETS.dialsPerHour);
+    const repContactStatus = getPerformanceStatus(repContactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct);
+    const repDemosStatus = getPerformanceStatus(repDemosToday.length, SALES_DASHBOARD_TARGETS.demosPerDay);
+    const repDemoConversionStatus = getPerformanceStatus(
+      repDemoConversionRateToday,
+      SALES_DASHBOARD_DERIVED_TARGETS.demoConversionRatePct,
+    );
+    const repOverallStatus = combineStatuses([repDialPaceStatus, repContactStatus, repDemosStatus]);
+    const repDialGapToday = repCallsToday.length - workdayProgress.expectedDialsByNow;
 
     const focusLeads = repLeads
       .map((lead) => ({
@@ -663,13 +815,21 @@ export async function GET() {
         userName: usersById.get(userId) ?? userId,
         claimedLeads,
         dialsToday: 0,
+        callsPerHourToday: 0,
         conversationsToday: 0,
+        contactRateToday: 0,
+        demosToday: 0,
+        demoConversionRateToday: 0,
+        expectedDialsByNow: workdayProgress.expectedDialsByNow,
+        dialGapToday: 0,
         talkMinutesToday: 0,
         demosThisWeek: 0,
         closesThisMonth: 0,
         revenueThisMonth: 0,
         scoreToday: 0,
         streakDays: 0,
+        overallStatus: "at_risk",
+        needsAttentionReason: "",
       });
     }
 
@@ -680,13 +840,21 @@ export async function GET() {
           userName: usersById.get(userId) ?? userId,
           claimedLeads: 0,
           dialsToday: 0,
+          callsPerHourToday: 0,
           conversationsToday: 0,
+          contactRateToday: 0,
+          demosToday: 0,
+          demoConversionRateToday: 0,
+          expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          dialGapToday: 0,
           talkMinutesToday: 0,
           demosThisWeek: 0,
           closesThisMonth: 0,
           revenueThisMonth: 0,
           scoreToday: 0,
           streakDays: 0,
+          overallStatus: "at_risk",
+          needsAttentionReason: "",
         });
       }
     }
@@ -702,12 +870,8 @@ export async function GET() {
       });
       const conversationsToday = callsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
       const talkMinutesToday = Math.round(sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60);
-      const demosThisWeek = ownedLeads.filter((lead) => {
-        const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-        if (bookedAt) return isOnOrAfterWeekStartInTimeZone(bookedAt, now);
-        const demoAt = parseDemoDate(lead);
-        return demoAt ? isOnOrAfterWeekStartInTimeZone(demoAt, now) : false;
-      });
+      const demosThisWeek = ownedLeads.filter((lead) => isLeadDemoBookedThisWeek(lead, now));
+      const demosToday = ownedLeads.filter((lead) => isLeadDemoBookedToday(lead, now));
       const closedThisMonth = soldLeads.filter((lead) => {
         const closedAt = parseDate(lead.closedAt);
         return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
@@ -719,7 +883,13 @@ export async function GET() {
 
       row.userName = usersById.get(row.userId) ?? row.userName;
       row.dialsToday = callsToday.length;
+      row.callsPerHourToday = workdayProgress.elapsedHours > 0 ? callsToday.length / workdayProgress.elapsedHours : 0;
       row.conversationsToday = conversationsToday.length;
+      row.contactRateToday = computeRate(conversationsToday.length, callsToday.length);
+      row.demosToday = demosToday.length;
+      row.demoConversionRateToday = computeRate(demosToday.length, conversationsToday.length);
+      row.expectedDialsByNow = workdayProgress.expectedDialsByNow;
+      row.dialGapToday = row.dialsToday - row.expectedDialsByNow;
       row.talkMinutesToday = talkMinutesToday;
       row.demosThisWeek = demosThisWeek.length;
       row.closesThisMonth = closedThisMonth.length;
@@ -727,18 +897,24 @@ export async function GET() {
       row.scoreToday = computeScore({
         dials: callsToday.length,
         conversations: conversationsToday.length,
-        demos: ownedLeads.filter((lead) => {
-          const bookedAt = parseDate(lead.demoBooking?.bookedAt);
-          return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
-        }).length,
+        demos: demosToday.length,
         closes: closesToday.length,
       });
       row.streakDays = computeStreak(calls, visibleLeads, now, row.userId, ownedLeadIds);
+      row.overallStatus = combineStatuses([
+        getPerformanceStatus(row.dialsToday, row.expectedDialsByNow),
+        getPerformanceStatus(row.contactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct),
+        getPerformanceStatus(row.demosToday, SALES_DASHBOARD_TARGETS.demosPerDay),
+      ]);
+      row.needsAttentionReason = buildNeedsAttentionReason(row);
     }
 
     const leaderboard = [...leaderboardSeed.values()]
       .filter((row) => row.claimedLeads > 0 || row.dialsToday > 0 || row.demosThisWeek > 0 || row.closesThisMonth > 0 || row.revenueThisMonth > 0)
       .sort((a, b) =>
+        getStatusRank(a.overallStatus) - getStatusRank(b.overallStatus) ||
+        b.demosToday - a.demosToday ||
+        b.contactRateToday - a.contactRateToday ||
         b.scoreToday - a.scoreToday ||
         b.revenueThisMonth - a.revenueThisMonth ||
         b.demosThisWeek - a.demosThisWeek ||
@@ -752,6 +928,13 @@ export async function GET() {
       return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
     const liveSitesAll = visibleLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
+    const trackedReps = [...leaderboardSeed.values()].filter((row) => row.claimedLeads > 0);
+    const teamDialsToday = sum(trackedReps.map((row) => row.dialsToday));
+    const teamConversationsToday = sum(trackedReps.map((row) => row.conversationsToday));
+    const teamDemosToday = sum(trackedReps.map((row) => row.demosToday));
+    const avgContactRateToday = computeRate(teamConversationsToday, teamDialsToday);
+    const repsOnTrack = trackedReps.filter((row) => row.overallStatus === "on_track").length;
+    const repsOffTrack = trackedReps.filter((row) => row.overallStatus !== "on_track").length;
     const scorecards = [...leaderboard]
       .map((row) => {
         const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
@@ -764,11 +947,18 @@ export async function GET() {
           userId: row.userId,
           userName: row.userName,
           pipelineLeads: row.claimedLeads,
+          dialsToday: row.dialsToday,
+          callsPerHourLabel: `${formatDecimal(row.callsPerHourToday)} / ${SALES_DASHBOARD_TARGETS.dialsPerHour}`,
+          contactRateLabel: `${formatPercent(row.contactRateToday)} / ${SALES_DASHBOARD_TARGETS.contactRatePct}%`,
+          demosToday: row.demosToday,
+          demoConversionLabel: `${formatPercent(row.demoConversionRateToday)} / ${Math.round(SALES_DASHBOARD_DERIVED_TARGETS.demoConversionRatePct)}%`,
           talkMinutesToday: row.talkMinutesToday,
           workingRateLabel: formatPercent(workingRate),
           demoToCloseLabel: demosBookedTotal > 0 ? formatPercent(demoToCloseRate) : "No demo history",
           revenueThisMonth: row.revenueThisMonth,
           streakDays: row.streakDays,
+          overallStatus: row.overallStatus,
+          paceGapLabel: `${formatSignedNumber(row.dialGapToday)} vs pace`,
         };
       })
       .slice(0, 6);
@@ -787,6 +977,8 @@ export async function GET() {
         talkMinutesToday: row.talkMinutesToday,
         dialsToday: row.dialsToday,
         conversationsToday: row.conversationsToday,
+        callsPerHourLabel: `${formatDecimal(row.callsPerHourToday)} / ${SALES_DASHBOARD_TARGETS.dialsPerHour} hr`,
+        contactRateLabel: formatPercent(row.contactRateToday),
         avgTalkPerCallLabel: row.dialsToday > 0 ? `${Math.round((row.talkMinutesToday / row.dialsToday) * 10) / 10} min` : "0 min",
       }));
 
@@ -889,13 +1081,24 @@ export async function GET() {
       generatedAt: now.toISOString(),
       viewerRole,
       rep: {
-        headline: repScoreToday >= 40 ? "Strong day. Keep stacking real conversations." : repScoreToday >= 20 ? "Momentum is building. Push for the next booked demo." : "Early board. The next call matters.",
+        headline: buildRepHeadline({
+          dialsStatus: repDialPaceStatus,
+          contactStatus: repContactStatus,
+          demosStatus: repDemosStatus,
+          callsPerHourToday: repCallsPerHourToday,
+          contactRateToday: repContactRateToday,
+          demosToday: repDemosToday.length,
+        }),
         scoreToday: repScoreToday,
         streakDays: repStreak,
         kpis: {
           claimedLeads: repLeads.length,
           dialsToday: repCallsToday.length,
+          callsPerHourToday: repCallsPerHourToday,
           conversationsToday: repConversationsToday.length,
+          contactRateToday: repContactRateToday,
+          demosToday: repDemosToday.length,
+          demoConversionRateToday: repDemoConversionRateToday,
           talkMinutesToday: Math.round(repTalkSecondsToday / 60),
           demosThisWeek: repDemosThisWeek.length,
           revenueThisMonth: repRevenueThisMonth,
@@ -903,14 +1106,60 @@ export async function GET() {
           liveSites: repLiveSites,
         },
         targets: [
-          { label: "Dials", completed: repCallsToday.length, target: 40, tone: "indigo" },
-          { label: "Conversations", completed: repConversationsToday.length, target: 8, tone: "amber" },
-          { label: "Demos Booked", completed: repDemosThisWeek.length, target: 2, tone: "emerald" },
+          {
+            label: "Dials Today",
+            completed: repCallsToday.length,
+            target: SALES_DASHBOARD_TARGETS.dialsPerDay,
+            valueLabel: String(repCallsToday.length),
+            targetLabel: String(SALES_DASHBOARD_TARGETS.dialsPerDay),
+            detail: `${formatSignedNumber(repDialGapToday)} vs pace by now`,
+            tone: "indigo",
+            status: repDialPaceStatus,
+          },
+          {
+            label: "Calls / Hour",
+            completed: repCallsPerHourToday,
+            target: SALES_DASHBOARD_TARGETS.dialsPerHour,
+            valueLabel: formatDecimal(repCallsPerHourToday),
+            targetLabel: String(SALES_DASHBOARD_TARGETS.dialsPerHour),
+            detail: `${workdayProgress.workdayLabel} worked today`,
+            tone: "indigo",
+            status: repCallsPerHourStatus,
+          },
+          {
+            label: "Contact Rate",
+            completed: repContactRateToday,
+            target: SALES_DASHBOARD_TARGETS.contactRatePct,
+            valueLabel: formatPercent(repContactRateToday),
+            targetLabel: `${SALES_DASHBOARD_TARGETS.contactRatePct}%`,
+            detail: `${repConversationsToday.length} connects from ${repCallsToday.length} dials`,
+            tone: "amber",
+            status: repContactStatus,
+          },
+          {
+            label: "Booked Demos",
+            completed: repDemosToday.length,
+            target: SALES_DASHBOARD_TARGETS.demosPerDay,
+            valueLabel: String(repDemosToday.length),
+            targetLabel: String(SALES_DASHBOARD_TARGETS.demosPerDay),
+            detail: `${formatPercent(repDemoConversionRateToday)} demo conversion from connects`,
+            tone: "emerald",
+            status: repDemosStatus,
+          },
         ],
         progress: {
           scoreLabel: compactNumber(repScoreToday),
           revenueLabel: currency(repRevenueThisMonth),
           talkLabel: minutesLabel(repTalkSecondsToday),
+        },
+        accountability: {
+          expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          workdayLabel: workdayProgress.workdayLabel,
+          dialsStatus: repDialPaceStatus,
+          contactRateStatus: repContactStatus,
+          demosStatus: repDemosStatus,
+          demoConversionStatus: repDemoConversionStatus,
+          overallStatus: repOverallStatus,
         },
         focusLeads,
         recentActivity,
@@ -924,6 +1173,11 @@ export async function GET() {
           closedRevenueThisMonth: sum(closedThisMonthAll.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0))),
           liveSites: liveSitesAll,
           alerts: visibleNotifications.length,
+          teamDialsToday,
+          teamDemosToday,
+          avgContactRateToday,
+          repsOnTrack,
+          repsOffTrack,
         },
         leaderboard,
         scorecards,
@@ -932,9 +1186,13 @@ export async function GET() {
         notifications: visibleNotifications.slice(0, 8),
         topPerformer: leaderboard[0] ?? null,
         needsAttention: leaderboard
-          .filter((row) => row.dialsToday === 0 && row.claimedLeads > 0)
-          .sort((a, b) => b.claimedLeads - a.claimedLeads)
-          .slice(0, 3),
+          .filter((row) => row.claimedLeads > 0 && row.overallStatus !== "on_track")
+          .sort((a, b) =>
+            getStatusRank(b.overallStatus) - getStatusRank(a.overallStatus) ||
+            a.dialGapToday - b.dialGapToday ||
+            a.contactRateToday - b.contactRateToday ||
+            a.demosToday - b.demosToday)
+          .slice(0, 5),
       },
     });
   } catch (error) {

@@ -3,7 +3,10 @@
 import {
   CalendarClock,
   Check,
+  CircleAlert,
   RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
   Phone,
   Rocket,
   Target,
@@ -25,7 +28,11 @@ type DashboardMetrics = {
     kpis: {
       claimedLeads: number;
       dialsToday: number;
+      callsPerHourToday: number;
       conversationsToday: number;
+      contactRateToday: number;
+      demosToday: number;
+      demoConversionRateToday: number;
       talkMinutesToday: number;
       demosThisWeek: number;
       revenueThisMonth: number;
@@ -36,12 +43,25 @@ type DashboardMetrics = {
       label: string;
       completed: number;
       target: number;
+      valueLabel: string;
+      targetLabel: string;
+      detail: string;
       tone: "indigo" | "amber" | "emerald";
+      status: "on_track" | "at_risk" | "off_track";
     }>;
     progress: {
       scoreLabel: string;
       revenueLabel: string;
       talkLabel: string;
+    };
+    accountability: {
+      expectedDialsByNow: number;
+      workdayLabel: string;
+      dialsStatus: "on_track" | "at_risk" | "off_track";
+      contactRateStatus: "on_track" | "at_risk" | "off_track";
+      demosStatus: "on_track" | "at_risk" | "off_track";
+      demoConversionStatus: "on_track" | "at_risk" | "off_track";
+      overallStatus: "on_track" | "at_risk" | "off_track";
     };
     focusLeads: Array<{
       id: string;
@@ -73,29 +93,49 @@ type DashboardMetrics = {
       closedRevenueThisMonth: number;
       liveSites: number;
       alerts: number;
+      teamDialsToday: number;
+      teamDemosToday: number;
+      avgContactRateToday: number;
+      repsOnTrack: number;
+      repsOffTrack: number;
     };
     leaderboard: Array<{
       userId: string;
       userName: string;
       claimedLeads: number;
       dialsToday: number;
+      callsPerHourToday: number;
       conversationsToday: number;
+      contactRateToday: number;
+      demosToday: number;
+      demoConversionRateToday: number;
+      expectedDialsByNow: number;
+      dialGapToday: number;
       talkMinutesToday: number;
       demosThisWeek: number;
       closesThisMonth: number;
       revenueThisMonth: number;
       scoreToday: number;
       streakDays: number;
+      overallStatus: "on_track" | "at_risk" | "off_track";
+      needsAttentionReason: string;
     }>;
     scorecards: Array<{
       userId: string;
       userName: string;
       pipelineLeads: number;
+      dialsToday: number;
+      callsPerHourLabel: string;
+      contactRateLabel: string;
+      demosToday: number;
+      demoConversionLabel: string;
       talkMinutesToday: number;
       workingRateLabel: string;
       demoToCloseLabel: string;
       revenueThisMonth: number;
       streakDays: number;
+      overallStatus: "on_track" | "at_risk" | "off_track";
+      paceGapLabel: string;
     }>;
     callLeaderboard: Array<{
       userId: string;
@@ -103,6 +143,8 @@ type DashboardMetrics = {
       talkMinutesToday: number;
       dialsToday: number;
       conversationsToday: number;
+      callsPerHourLabel: string;
+      contactRateLabel: string;
       avgTalkPerCallLabel: string;
     }>;
     funnel: Array<{
@@ -125,7 +167,9 @@ type DashboardMetrics = {
       userId: string;
       userName: string;
       scoreToday: number;
-      demosThisWeek: number;
+      dialsToday: number;
+      contactRateToday: number;
+      demosToday: number;
       revenueThisMonth: number;
     } | null;
     needsAttention: Array<{
@@ -133,6 +177,10 @@ type DashboardMetrics = {
       userName: string;
       claimedLeads: number;
       dialsToday: number;
+      contactRateToday: number;
+      demosToday: number;
+      overallStatus: "on_track" | "at_risk" | "off_track";
+      needsAttentionReason: string;
     }>;
   };
 };
@@ -153,6 +201,46 @@ function formatCurrency(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(value)}%`;
+}
+
+function getStatusMeta(status: "on_track" | "at_risk" | "off_track") {
+  if (status === "on_track") {
+    return {
+      label: "On Track",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+      icon: ShieldCheck,
+    };
+  }
+
+  if (status === "at_risk") {
+    return {
+      label: "At Risk",
+      className: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+      icon: CircleAlert,
+    };
+  }
+
+  return {
+    label: "Off Track",
+    className: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+    icon: ShieldAlert,
+  };
+}
+
+function StatusBadge({ status }: { status: "on_track" | "at_risk" | "off_track" }) {
+  const meta = getStatusMeta(status);
+  const Icon = meta.icon;
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${meta.className}`}>
+      <Icon className="h-3.5 w-3.5" />
+      {meta.label}
+    </span>
+  );
 }
 
 function KpiCard({
@@ -185,7 +273,7 @@ function DailyTargets({ targets }: { targets: DashboardMetrics["rep"]["targets"]
       <div className="space-y-3">
         {targets.map((kpi) => {
           const percentage = Math.min((kpi.completed / kpi.target) * 100, 100);
-          const isHit = kpi.completed >= kpi.target;
+          const isHit = kpi.status === "on_track";
           const toneStyles = {
             indigo: "bg-indigo-500",
             amber: "bg-amber-500",
@@ -198,7 +286,7 @@ function DailyTargets({ targets }: { targets: DashboardMetrics["rep"]["targets"]
                 <p className={isHit ? "text-emerald-300" : "text-zinc-300"}>{kpi.label}</p>
                 <span className={`inline-flex items-center gap-1 ${isHit ? "text-emerald-300" : "text-zinc-400"}`}>
                   {isHit && <Check className="h-3.5 w-3.5" />}
-                  [{kpi.completed} / {kpi.target}]
+                  [{kpi.valueLabel} / {kpi.targetLabel}]
                 </span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
@@ -207,6 +295,7 @@ function DailyTargets({ targets }: { targets: DashboardMetrics["rep"]["targets"]
                   style={{ width: `${percentage}%` }}
                 />
               </div>
+              <p className="mt-2 text-[11px] text-zinc-500">{kpi.detail}</p>
             </div>
           );
         })}
@@ -232,15 +321,20 @@ function RepDashboard({ metrics, loading }: { metrics: DashboardMetrics | null; 
                 Real activity only. Calls, demos, closes, and live site movement update this board.
               </p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Score Today</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{rep?.progress.scoreLabel ?? "--"}</p>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Calls / Hour</p>
+                <p className="mt-1 text-2xl font-semibold text-white">
+                  {rep ? rep.kpis.callsPerHourToday.toFixed(1) : "--"}
+                </p>
               </div>
               <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Streak</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{rep?.streakDays ?? 0} days</p>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Contact Rate</p>
+                <p className="mt-1 text-2xl font-semibold text-white">
+                  {rep ? formatPercent(rep.kpis.contactRateToday) : "--"}
+                </p>
               </div>
+              {rep ? <StatusBadge status={rep.accountability.overallStatus} /> : null}
             </div>
           </div>
         </section>
@@ -249,25 +343,25 @@ function RepDashboard({ metrics, loading }: { metrics: DashboardMetrics | null; 
           <KpiCard
             label="Dials Today"
             value={rep ? String(rep.kpis.dialsToday) : "--"}
-            detail={rep ? `${rep.kpis.conversationsToday} connected conversations` : "Loading"}
+            detail={rep ? `${rep.accountability.expectedDialsByNow} expected by now` : "Loading"}
             icon={Phone}
           />
           <KpiCard
-            label="Talk Time"
-            value={rep ? `${rep.kpis.talkMinutesToday}m` : "--"}
-            detail={rep ? `${rep.kpis.claimedLeads} claimed leads in rotation` : "Loading"}
+            label="Calls / Hour"
+            value={rep ? rep.kpis.callsPerHourToday.toFixed(1) : "--"}
+            detail="Target is 10 every hour"
             icon={CalendarClock}
           />
           <KpiCard
-            label="Demos This Week"
-            value={rep ? String(rep.kpis.demosThisWeek) : "--"}
-            detail={rep ? `${rep.kpis.liveSites} live sites ready for follow-up` : "Loading"}
+            label="Contact Rate"
+            value={rep ? formatPercent(rep.kpis.contactRateToday) : "--"}
+            detail={rep ? `${rep.kpis.conversationsToday} connected conversations` : "Loading"}
             icon={Rocket}
           />
           <KpiCard
-            label="Revenue This Month"
-            value={rep ? formatCurrency(rep.kpis.revenueThisMonth) : "--"}
-            detail={rep ? `${rep.kpis.closesThisMonth} closed deals` : "Loading"}
+            label="Booked Demos Today"
+            value={rep ? String(rep.kpis.demosToday) : "--"}
+            detail={rep ? `${formatPercent(rep.kpis.demoConversionRateToday)} conversion from connects` : "Loading"}
             icon={Wallet}
           />
         </section>
@@ -384,12 +478,14 @@ function RepDashboard({ metrics, loading }: { metrics: DashboardMetrics | null; 
         </div>
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Game Layer</p>
-          <h4 className="mt-2 text-lg font-semibold text-white">Momentum Targets</h4>
+          <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Standards Board</p>
+          <h4 className="mt-2 text-lg font-semibold text-white">Daily Accountability</h4>
           <div className="mt-3 space-y-2 text-sm text-zinc-300">
-            <p className="flex items-center justify-between"><span>Hit 20 points</span><span>{rep && rep.scoreToday >= 20 ? "Done" : "In play"}</span></p>
-            <p className="flex items-center justify-between"><span>Book 2 demos this week</span><span>{rep ? `${rep.kpis.demosThisWeek} / 2` : "--"}</span></p>
-            <p className="flex items-center justify-between"><span>Extend streak</span><span>{rep?.streakDays ?? 0} days</span></p>
+            <p className="flex items-center justify-between"><span>Workday Progress</span><span>{rep?.accountability.workdayLabel ?? "--"}</span></p>
+            <p className="flex items-center justify-between"><span>Demo Conversion</span><span>{rep ? formatPercent(rep.kpis.demoConversionRateToday) : "--"}</span></p>
+            <p className="flex items-center justify-between"><span>Talk Time</span><span>{rep ? `${rep.kpis.talkMinutesToday}m` : "--"}</span></p>
+            <p className="flex items-center justify-between"><span>Revenue This Month</span><span>{rep ? formatCurrency(rep.kpis.revenueThisMonth) : "--"}</span></p>
+            <p className="flex items-center justify-between"><span>Streak</span><span>{rep?.streakDays ?? 0} days</span></p>
           </div>
         </div>
       </aside>
@@ -452,33 +548,33 @@ function ManagerDashboard({
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <KpiCard
-          label="Closed Revenue"
-          value={metrics ? formatCurrency(metrics.team.summary.closedRevenueThisMonth) : "--"}
-          detail="Month to date"
+          label="Team Dials Today"
+          value={metrics ? String(metrics.team.summary.teamDialsToday) : "--"}
+          detail="Against the live 80-per-rep standard"
           icon={Wallet}
         />
         <KpiCard
-          label="Active Reps"
-          value={metrics ? String(metrics.team.summary.activeReps) : "--"}
-          detail="Owners with claimed leads"
+          label="Avg Contact Rate"
+          value={metrics ? formatPercent(metrics.team.summary.avgContactRateToday) : "--"}
+          detail="Team-wide connect quality today"
           icon={Users}
         />
         <KpiCard
-          label="Claimed Leads"
-          value={metrics ? String(metrics.team.summary.claimedLeads) : "--"}
-          detail="Current team pipeline"
+          label="Demos Booked Today"
+          value={metrics ? String(metrics.team.summary.teamDemosToday) : "--"}
+          detail="Daily booking output"
           icon={Target}
         />
         <KpiCard
-          label="Upcoming Demos"
-          value={metrics ? String(metrics.team.summary.upcomingDemos) : "--"}
-          detail="Scheduled from live leads"
+          label="Reps On Track"
+          value={metrics ? String(metrics.team.summary.repsOnTrack) : "--"}
+          detail={metrics ? `${metrics.team.summary.repsOffTrack} needing intervention` : "Loading"}
           icon={CalendarClock}
         />
         <KpiCard
-          label="Live Sites"
-          value={metrics ? String(metrics.team.summary.liveSites) : "--"}
-          detail="Ready for proof-driven follow-up"
+          label="Closed Revenue"
+          value={metrics ? formatCurrency(metrics.team.summary.closedRevenueThisMonth) : "--"}
+          detail="Month to date"
           icon={Rocket}
         />
       </section>
@@ -488,7 +584,7 @@ function ManagerDashboard({
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Scorecards</h3>
-              <p className="mt-1 text-sm text-zinc-400">Pipeline load, working rate, talk minutes, and demo-to-close efficiency.</p>
+              <p className="mt-1 text-sm text-zinc-400">Daily pace, contact quality, demo output, and the exact reps that need coaching.</p>
             </div>
             <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
               {metrics?.team.scorecards.length ?? 0} tracked
@@ -507,26 +603,32 @@ function ManagerDashboard({
                       <h4 className="text-sm font-semibold text-white">{rep.userName}</h4>
                       <p className="mt-1 text-xs text-zinc-500">{rep.pipelineLeads} leads in active rotation</p>
                     </div>
-                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-200">
-                      {rep.streakDays}d streak
-                    </span>
+                    <StatusBadge status={rep.overallStatus} />
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-zinc-300">
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Talk today</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.talkMinutesToday} min</p>
+                      <p className="text-zinc-500">Dials today</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.dialsToday}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Working rate</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.workingRateLabel}</p>
+                      <p className="text-zinc-500">Calls / hour</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.callsPerHourLabel}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Demo to close</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.demoToCloseLabel}</p>
+                      <p className="text-zinc-500">Contact rate</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.contactRateLabel}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Closed revenue</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{formatCurrency(rep.revenueThisMonth)}</p>
+                      <p className="text-zinc-500">Booked demos</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.demosToday}</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+                      <p className="text-zinc-500">Demo conversion</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.demoConversionLabel}</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
+                      <p className="text-zinc-500">Pace gap</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.paceGapLabel}</p>
                     </div>
                   </div>
                 </article>
@@ -603,11 +705,11 @@ function ManagerDashboard({
               <thead className="bg-zinc-950 text-zinc-400">
                 <tr>
                   <th className="px-4 py-3">Rep</th>
-                  <th className="px-4 py-3">Score</th>
                   <th className="px-4 py-3">Dials</th>
+                  <th className="px-4 py-3">/ Hr</th>
+                  <th className="px-4 py-3">Contact</th>
                   <th className="px-4 py-3">Demos</th>
-                  <th className="px-4 py-3">Revenue</th>
-                  <th className="px-4 py-3">Streak</th>
+                  <th className="px-4 py-3">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -628,11 +730,11 @@ function ManagerDashboard({
                           {rep.userName}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-emerald-300">{rep.scoreToday}</td>
                       <td className="px-4 py-3">{rep.dialsToday}</td>
-                      <td className="px-4 py-3">{rep.demosThisWeek}</td>
-                      <td className="px-4 py-3">{formatCurrency(rep.revenueThisMonth)}</td>
-                      <td className="px-4 py-3">{rep.streakDays}d</td>
+                      <td className="px-4 py-3">{rep.callsPerHourToday.toFixed(1)}</td>
+                      <td className="px-4 py-3">{formatPercent(rep.contactRateToday)}</td>
+                      <td className="px-4 py-3">{rep.demosToday}</td>
+                      <td className="px-4 py-3"><StatusBadge status={rep.overallStatus} /></td>
                     </tr>
                   ))
                 )}
@@ -648,8 +750,9 @@ function ManagerDashboard({
               <>
                 <h3 className="mt-1 text-lg font-semibold text-white">{topPerformer.userName}</h3>
                 <div className="mt-3 space-y-2 text-sm text-zinc-200">
-                  <p className="flex items-center justify-between"><span>Score Today</span><span className="text-emerald-300">{topPerformer.scoreToday}</span></p>
-                  <p className="flex items-center justify-between"><span>Demos This Week</span><span className="text-blue-300">{topPerformer.demosThisWeek}</span></p>
+                  <p className="flex items-center justify-between"><span>Dials Today</span><span className="text-emerald-300">{topPerformer.dialsToday}</span></p>
+                  <p className="flex items-center justify-between"><span>Contact Rate</span><span className="text-blue-300">{formatPercent(topPerformer.contactRateToday)}</span></p>
+                  <p className="flex items-center justify-between"><span>Demos Today</span><span className="text-blue-300">{topPerformer.demosToday}</span></p>
                   <p className="flex items-center justify-between"><span>Revenue This Month</span><span className="text-blue-300">{formatCurrency(topPerformer.revenueThisMonth)}</span></p>
                 </div>
               </>
@@ -664,12 +767,12 @@ function ManagerDashboard({
             <div className="mt-3 space-y-2 text-sm text-zinc-200">
               {(metrics?.team.needsAttention.length ?? 0) === 0 ? (
                 <p className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 text-zinc-400">
-                  No zero-dial reps right now.
+                  Every tracked rep is on target right now.
                 </p>
               ) : (
                 metrics?.team.needsAttention.map((rep) => (
                   <p key={rep.userId} className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2">
-                    {rep.userName} - {rep.claimedLeads} claimed leads, {rep.dialsToday} dials today
+                    {rep.userName} - {rep.needsAttentionReason || `${rep.dialsToday} dials, ${formatPercent(rep.contactRateToday)} contact rate, ${rep.demosToday} demos`}
                   </p>
                 ))
               )}
@@ -693,7 +796,7 @@ function ManagerDashboard({
                     <div>
                       <p className="text-sm font-semibold text-white">#{index + 1} {rep.userName}</p>
                       <p className="mt-1 text-xs text-zinc-400">
-                        {rep.dialsToday} dials, {rep.conversationsToday} connected, avg {rep.avgTalkPerCallLabel}
+                        {rep.dialsToday} dials, {rep.conversationsToday} connected, {rep.callsPerHourLabel}, contact {rep.contactRateLabel}
                       </p>
                     </div>
                     <div className="text-right">
