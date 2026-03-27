@@ -6,7 +6,7 @@ function normalizeEmail(value: string | null | undefined) {
 }
 
 const SHARED_RECRUITING_VIEWER_EMAILS = new Set(
-  (process.env.FELIXCRM_SHARED_RECRUITING_VIEWER_EMAILS ?? "eliot30523@gmail.com")
+  (process.env.FELIXCRM_SHARED_RECRUITING_VIEWER_EMAILS ?? "eliot30523@gmail.com,mikanikago@gmail.com")
     .split(",")
     .map((value) => normalizeEmail(value))
     .filter(Boolean),
@@ -54,9 +54,12 @@ export type RecruitingAccessScope = {
   managerIds: string[];
 };
 
+export function canEmailAccessSharedRecruiting(email: string | null | undefined) {
+  return SHARED_RECRUITING_VIEWER_EMAILS.has(normalizeEmail(email));
+}
+
 export async function getRecruitingAccessScope(userId: string, email: string | null | undefined, includeSharedRequested: boolean) {
-  const normalizedEmail = normalizeEmail(email);
-  const canViewShared = SHARED_RECRUITING_VIEWER_EMAILS.has(normalizedEmail);
+  const canViewShared = canEmailAccessSharedRecruiting(email);
 
   if (!includeSharedRequested || !canViewShared) {
     return {

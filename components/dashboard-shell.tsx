@@ -143,6 +143,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, setActiveRole } = useRole();
+  const [canAccessRecruiting, setCanAccessRecruiting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [magicBarValue, setMagicBarValue] = useState("");
@@ -181,6 +182,44 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     const allNavItems = Object.values(navByRole).flat();
     const dedupedByHref = new Map(allNavItems.map((item) => [item.href, item]));
     return Array.from(dedupedByHref.values());
+  }, []);
+
+  const navItems = useMemo(() => {
+    const baseItems = navByRole[activeRole];
+    if (!canAccessRecruiting || baseItems.some((item) => item.href === "/recruiting")) {
+      return baseItems;
+    }
+
+    const recruitingItem = { href: "/recruiting", label: "Recruiting", icon: Users };
+    const trainingIndex = baseItems.findIndex((item) => item.href === "/training");
+    if (trainingIndex === -1) {
+      return [...baseItems, recruitingItem];
+    }
+
+    return [...baseItems.slice(0, trainingIndex), recruitingItem, ...baseItems.slice(trainingIndex)];
+  }, [activeRole, canAccessRecruiting]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadRecruitingAccess() {
+      try {
+        const response = await fetch("/api/profile", { cache: "no-store", credentials: "include" });
+        if (!response.ok) return;
+
+        const payload = (await response.json().catch(() => null)) as { canAccessRecruiting?: boolean } | null;
+        if (!isActive) return;
+        setCanAccessRecruiting(Boolean(payload?.canAccessRecruiting));
+      } catch {
+        if (!isActive) return;
+        setCanAccessRecruiting(false);
+      }
+    }
+
+    void loadRecruitingAccess();
+    return () => {
+      isActive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -350,7 +389,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <div className="mb-6">
             <p className="mb-2 px-3 text-xs uppercase tracking-[0.2em] text-zinc-500">Workspace</p>
             <div className="space-y-1">
-              {navByRole[activeRole].map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
@@ -494,7 +533,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
         <div className="space-y-1">
-          {navByRole[activeRole].map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
