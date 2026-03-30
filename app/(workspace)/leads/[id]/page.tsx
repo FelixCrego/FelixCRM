@@ -943,6 +943,7 @@ export default function LeadExecutionPage() {
   const [closeDealError, setCloseDealError] = useState("");
   const [currentUserRole, setCurrentUserRole] = useState<UserRole>("REP");
   const [currentUserId, setCurrentUserId] = useState("");
+  const [currentUserName, setCurrentUserName] = useState("someone from Felix");
   const [soldByUserId, setSoldByUserId] = useState("");
   const [salesRepOptions, setSalesRepOptions] = useState<SalesRepOption[]>([]);
   const [playbookLoading, setPlaybookLoading] = useState(false);
@@ -1007,8 +1008,9 @@ export default function LeadExecutionPage() {
       if (!alive) return;
 
       if (profileResponse?.ok) {
-        const payload = (await profileResponse.json().catch(() => null)) as { role?: UserRole; userId?: string } | null;
+        const payload = (await profileResponse.json().catch(() => null)) as { role?: UserRole; userId?: string; name?: string } | null;
         setCurrentUserId(typeof payload?.userId === "string" ? payload.userId : "");
+        setCurrentUserName(typeof payload?.name === "string" && payload.name.trim() ? payload.name.trim() : "someone from Felix");
         if (payload?.role) {
           setCurrentUserRole(payload.role);
         }
@@ -1637,12 +1639,13 @@ export default function LeadExecutionPage() {
     () =>
       buildFallbackPlaybook({
         leadName,
+        repName: currentUserName,
         city: leadCity,
         previewUrl: deployedUrl,
         researchContext: researchInsight,
         hasSocialPresence: hasSocialPresenceForPlaybook,
       }),
-    [deployedUrl, hasSocialPresenceForPlaybook, leadCity, leadName, researchInsight],
+    [currentUserName, deployedUrl, hasSocialPresenceForPlaybook, leadCity, leadName, researchInsight],
   );
 
   const [aiPlaybook, setAiPlaybook] = useState<AIDynamicPlaybook>(fallbackPlaybook);

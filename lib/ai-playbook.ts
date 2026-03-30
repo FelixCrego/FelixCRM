@@ -31,6 +31,7 @@ export type AIDynamicPlaybook = {
 
 type BuildFallbackPlaybookParams = {
   leadName: string;
+  repName?: string;
   city?: string;
   previewUrl?: string;
   researchContext?: string;
@@ -59,6 +60,7 @@ function dedupeLines(values: Array<string | undefined | null>, limit = 6) {
 
 export function buildFallbackPlaybook(params: BuildFallbackPlaybookParams): AIDynamicPlaybook {
   const leadName = normalizeLine(params.leadName || "this business");
+  const repName = normalizeLine(params.repName || "someone from Felix");
   const city = normalizeLine(params.city || "");
   const researchBullets = extractResearchBullets(params.researchContext);
   const transcriptSignals = dedupeLines(params.transcriptSignals ?? [], 4);
@@ -89,12 +91,12 @@ export function buildFallbackPlaybook(params: BuildFallbackPlaybookParams): AIDy
         goal: "Open with something that is unexpected, low pressure, and specific to their online presence.",
         lines: params.hasSocialPresence
           ? [
-              "Hey, this is Eliot. This is probably the weirdest call you will get all day, but I was looking at Google listings that did not have websites attached.",
+              `Hey, this is ${repName}. This is probably the weirdest call you will get all day, but I was looking at Google listings that did not have websites attached.`,
               presenceLine,
               "We already built a website draft for you so you can showcase your work properly. If you have 15 minutes later today or tomorrow, I would love to show you. If not, no pressure.",
             ]
           : [
-              "Hey, this is Eliot. This is probably the weirdest call you will get all day, but I noticed your Google Business Profile does not have a website attached to it.",
+              `Hey, this is ${repName}. This is probably the weirdest call you will get all day, but I noticed your Google Business Profile does not have a website attached to it.`,
               presenceLine,
               "We already built a website draft for you. If you have 15 minutes later today or tomorrow, I would love to show you what we made. No pressure either way.",
             ],

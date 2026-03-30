@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { buildSalesLearningSnapshot } from "@/lib/sales-learning";
-import { canUserManageAllLeads, getLeadById } from "@/lib/store";
+import { canUserManageAllLeads, getLeadById, listAssignableUsers, prettyNameFromEmail } from "@/lib/store";
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const openAiApiKey = process.env.OPENAI_API_KEY;
@@ -63,6 +63,16 @@ function dedupeLines(values: Array<string | undefined | null>, limit = 6) {
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
+}
+
+async function resolveRepName(userId: string, email?: string | null) {
+  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  const fallbackName = normalizedEmail ? prettyNameFromEmail(normalizedEmail) : "someone from Felix";
+  const assignableUsers = await listAssignableUsers().catch(() => []);
+  const matchedUser =
+    assignableUsers.find((candidate) => candidate.id === userId) ??
+    assignableUsers.find((candidate) => (candidate.email ?? "").trim().toLowerCase() === normalizedEmail);
+  return matchedUser?.name || fallbackName;
 }
 
 function normalizePlaybookPayload(raw: unknown): AIDynamicPlaybook | null {
@@ -217,6 +227,7 @@ async function generateWithOpenAI(prompt: string) {
 }
 
 function buildPlaybookPrompt(params: {
+  repName: string;
   leadName: string;
   researchContext: string;
   learnedContext: string;
@@ -226,8 +237,9 @@ function buildPlaybookPrompt(params: {
   geminiDraft?: string;
 }) {
   const sharedRules = [
-    "You are building a real-time phone script generator for Eliot, who sells pre-built website demos to local service businesses.",
+    `You are building a real-time phone script generator for ${params.repName}, who sells pre-built website demos to local service businesses.`,
     `Target lead: ${params.leadName}`,
+    `Caller name to use when introducing the rep: ${params.repName}`,
     `Deep research context:\n${params.researchContext || "No specific deep research provided."}`,
     `Recent booked-demo learning and transcript context:\n${params.learnedContext}`,
     `Current lead live call context:\n${params.currentLeadCallContext}`,
@@ -235,6 +247,7 @@ function buildPlaybookPrompt(params: {
     "Keep the fallback strategy intact: pattern interrupt, website already built, two time-frame close, live walkthrough, and grounded objection handling.",
     "Use transcript-backed language from recent booked demos only when it is clearly supported by the CRM context.",
     "Write in natural spoken language, not polished marketing copy.",
+    `If the caller says their name, it must be ${params.repName}. Do not use Eliot unless the rep name is actually Eliot.`,
     "No placeholders like [Your Name]. No markdown. Return valid JSON only.",
     "Every section should be easy for a rep to read live on a call.",
     "Give two time-frame prompts in timingWindows.",
@@ -301,6 +314,7 @@ export async function POST(req: Request) {
   let activeTab = "";
   let researchContext = "";
   let rawBody = "";
+  let repName = "someone from Felix";
 
   try {
     rawBody = await req.text();
@@ -316,6 +330,7 @@ export async function POST(req: Request) {
     if (!user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    repName = await resolveRepName(user.id, user.email);
 
     leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : "";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
@@ -349,6 +364,7 @@ export async function POST(req: Request) {
 
     const baseFallbackPlaybook = buildFallbackPlaybook({
       leadName,
+      repName,
       city: lead?.city,
       previewUrl: lead?.deployedUrl ?? "",
       researchContext,
@@ -380,6 +396,7 @@ export async function POST(req: Request) {
           const geminiGeneration = await generateWithGeminiModelFallback(
             genAI,
             buildPlaybookPrompt({
+              repName,
               leadName,
               researchContext,
               learnedContext,
@@ -404,6 +421,7 @@ export async function POST(req: Request) {
         try {
           const openAiGeneration = await generateWithOpenAI(
             buildPlaybookPrompt({
+              repName,
               leadName,
               researchContext,
               learnedContext,
@@ -480,6 +498,7 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       return NextResponse.json({
         playbook: buildFallbackPlaybook({
           leadName,
+          repName,
           researchContext,
           refreshSummary: "Fallback playbook loaded because the AI refresh failed.",
         }),
