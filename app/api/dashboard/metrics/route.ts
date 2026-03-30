@@ -34,6 +34,10 @@ type CallAnalyticsRow = {
   lead_id?: string | null;
   duration_seconds?: number | null;
   overall_sentiment?: string | null;
+  recording_url?: string | null;
+  recording_s3_uri?: string | null;
+  analysis_s3_uri?: string | null;
+  transcript_text?: string | null;
   agent_talk_time_pct?: number | null;
   customer_talk_time_pct?: number | null;
   interruptions?: number | null;
@@ -81,6 +85,28 @@ type DashboardNotification = {
   tone: "blue" | "emerald" | "amber" | "rose";
   href: string;
   createdAt: string;
+};
+
+type DashboardRepCallDrilldown = {
+  userId: string;
+  userName: string;
+  totalCalls: number;
+  callsToday: number;
+  connectedToday: number;
+  recordedCalls: number;
+  recordedCallsToday: number;
+  talkMinutesToday: number;
+  recentCalls: Array<{
+    contactId: string;
+    leadId: string;
+    leadName: string;
+    leadStatus: string;
+    callAt: string;
+    durationSeconds: number;
+    sentimentLabel: string;
+    hasRecording: boolean;
+    hasAnalysis: boolean;
+  }>;
 };
 
 function getHeaders() {
@@ -215,7 +241,7 @@ async function listAuthUsersById() {
 
 async function listRecentCalls(limit = 1500) {
   const rows = await requestFirstWorkingTable<CallAnalyticsRow[]>(CALLS_TABLE_CANDIDATES, {
-    select: "contact_id,lead_id,duration_seconds,overall_sentiment,agent_talk_time_pct,customer_talk_time_pct,interruptions,created_at",
+    select: "contact_id,lead_id,duration_seconds,overall_sentiment,recording_url,recording_s3_uri,analysis_s3_uri,transcript_text,agent_talk_time_pct,customer_talk_time_pct,interruptions,created_at",
     order: "created_at.desc",
     limit: String(limit),
   });
@@ -972,6 +998,55 @@ export async function GET() {
       })
       .slice(0, 6);
 
+    const repCallDrilldowns: DashboardRepCallDrilldown[] = scorecards.map((scorecard) => {
+      const ownedLeadIds = new Set(
+        visibleLeads
+          .filter((lead) => lead.ownerId === scorecard.userId)
+          .map((lead) => lead.id),
+      );
+      const repCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
+      const callsToday = repCalls.filter((call) => {
+        const at = parseDate(call.created_at);
+        return at ? isSameDayInTimeZone(at, now) : false;
+      });
+      const connectedToday = callsToday.filter(
+        (call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45,
+      );
+      const recordedCalls = repCalls.filter((call) => Boolean(call.recording_s3_uri || call.recording_url));
+      const recordedCallsToday = callsToday.filter((call) => Boolean(call.recording_s3_uri || call.recording_url));
+      const talkMinutesToday = Math.round(
+        sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60,
+      );
+
+      return {
+        userId: scorecard.userId,
+        userName: scorecard.userName,
+        totalCalls: repCalls.length,
+        callsToday: callsToday.length,
+        connectedToday: connectedToday.length,
+        recordedCalls: recordedCalls.length,
+        recordedCallsToday: recordedCallsToday.length,
+        talkMinutesToday,
+        recentCalls: repCalls.slice(0, 40).map((call) => {
+          const leadId = typeof call.lead_id === "string" ? call.lead_id : "";
+          const lead = leadId ? leadsById.get(leadId) : null;
+          const hasRecording = Boolean(call.recording_s3_uri || call.recording_url);
+          const hasAnalysis = Boolean(call.analysis_s3_uri || call.transcript_text || call.overall_sentiment);
+          return {
+            contactId: typeof call.contact_id === "string" ? call.contact_id : "",
+            leadId,
+            leadName: lead?.businessName ?? "Unknown Lead",
+            leadStatus: lead ? getLeadStatusLabel(lead, now) : "Lead status unavailable",
+            callAt: call.created_at ?? now.toISOString(),
+            durationSeconds: typeof call.duration_seconds === "number" ? call.duration_seconds : 0,
+            sentimentLabel: normalizeSentiment(call.overall_sentiment),
+            hasRecording,
+            hasAnalysis,
+          };
+        }),
+      };
+    });
+
     const callLeaderboard = [...leaderboard]
       .filter((row) => row.dialsToday > 0 || row.talkMinutesToday > 0)
       .sort((a, b) =>
@@ -1190,6 +1265,7 @@ export async function GET() {
         },
         leaderboard,
         scorecards,
+        repCallDrilldowns,
         callLeaderboard,
         funnel,
         notifications: visibleNotifications.slice(0, 8),

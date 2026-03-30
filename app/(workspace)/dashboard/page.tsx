@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  X,
   CalendarClock,
   Check,
   CircleAlert,
@@ -137,6 +138,27 @@ type DashboardMetrics = {
       overallStatus: "on_track" | "at_risk" | "off_track";
       paceGapLabel: string;
     }>;
+    repCallDrilldowns: Array<{
+      userId: string;
+      userName: string;
+      totalCalls: number;
+      callsToday: number;
+      connectedToday: number;
+      recordedCalls: number;
+      recordedCallsToday: number;
+      talkMinutesToday: number;
+      recentCalls: Array<{
+        contactId: string;
+        leadId: string;
+        leadName: string;
+        leadStatus: string;
+        callAt: string;
+        durationSeconds: number;
+        sentimentLabel: string;
+        hasRecording: boolean;
+        hasAnalysis: boolean;
+      }>;
+    }>;
     callLeaderboard: Array<{
       userId: string;
       userName: string;
@@ -207,6 +229,24 @@ function formatPercent(value: number) {
   return `${Math.round(value)}%`;
 }
 
+function formatDateTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unknown time";
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDurationSeconds(value: number) {
+  if (!value || value <= 0) return "No duration";
+  const minutes = Math.floor(value / 60);
+  const seconds = value % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function getStatusMeta(status: "on_track" | "at_risk" | "off_track") {
   if (status === "on_track") {
     return {
@@ -263,6 +303,140 @@ function KpiCard({
       </div>
       <p className="mt-2 text-xs font-medium text-zinc-300">{detail}</p>
     </article>
+  );
+}
+
+function RepCallDrawer({
+  drilldown,
+  onClose,
+}: {
+  drilldown: DashboardMetrics["team"]["repCallDrilldowns"][number];
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-zinc-800 bg-zinc-950 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.16em] text-blue-300">Rep Call Board</p>
+            <h3 className="mt-1 text-2xl font-semibold text-white">{drilldown.userName}</h3>
+            <p className="mt-1 text-sm text-zinc-400">
+              Every captured call and recording in one place, with direct lead access.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-zinc-300 transition hover:border-zinc-600 hover:text-white"
+            aria-label="Close rep call board"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-3 border-b border-zinc-800 px-5 py-4 sm:grid-cols-4">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Calls Today</p>
+            <p className="mt-1 text-xl font-semibold text-white">{drilldown.callsToday}</p>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Connected</p>
+            <p className="mt-1 text-xl font-semibold text-white">{drilldown.connectedToday}</p>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Recorded</p>
+            <p className="mt-1 text-xl font-semibold text-white">{drilldown.recordedCallsToday} today</p>
+            <p className="mt-1 text-xs text-zinc-500">{drilldown.recordedCalls} total in view</p>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Talk Time</p>
+            <p className="mt-1 text-xl font-semibold text-white">{drilldown.talkMinutesToday} min</p>
+            <p className="mt-1 text-xs text-zinc-500">{drilldown.totalCalls} calls in feed</p>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {drilldown.recentCalls.length === 0 ? (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-sm text-zinc-400">
+              No calls are attached to this rep yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {drilldown.recentCalls.map((call) => {
+                const recordingUrl =
+                  call.leadId && call.contactId
+                    ? `/api/call-recordings/stream?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}`
+                    : null;
+
+                return (
+                  <article key={`${call.contactId}-${call.callAt}`} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h4 className="text-base font-semibold text-white">{call.leadName}</h4>
+                        <p className="mt-1 text-xs text-zinc-400">{call.leadStatus}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{formatDateTime(call.callAt)}</p>
+                        <p className="mt-1 text-sm font-medium text-zinc-300">{formatDurationSeconds(call.durationSeconds)}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.14em]">
+                      <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-300">
+                        {call.sentimentLabel}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2 py-1 ${
+                          call.hasRecording
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                            : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                        }`}
+                      >
+                        {call.hasRecording ? "Recording Ready" : "Recording Missing"}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2 py-1 ${
+                          call.hasAnalysis
+                            ? "border-blue-500/30 bg-blue-500/10 text-blue-200"
+                            : "border-zinc-700 bg-zinc-950 text-zinc-400"
+                        }`}
+                      >
+                        {call.hasAnalysis ? "Analysis Ready" : "Analysis Pending"}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link
+                        href={`/leads/${call.leadId}`}
+                        className="inline-flex rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-600"
+                      >
+                        Open Lead
+                      </Link>
+                    </div>
+
+                    {call.hasRecording && recordingUrl ? (
+                      <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
+                        <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">Call Recording</p>
+                        <audio controls preload="none" className="w-full" src={recordingUrl}>
+                          Your browser does not support audio playback.
+                        </audio>
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                        Recording is not attached to this call yet.
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -505,6 +679,7 @@ function ManagerDashboard({
   onReviewNotification: (notificationId: string) => void;
 }) {
   const [lockedPlan, setLockedPlan] = useState<ManagerLockedPlan | null>(null);
+  const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -535,6 +710,8 @@ function ManagerDashboard({
 
   const leaderboard = metrics?.team.leaderboard ?? [];
   const topPerformer = metrics?.team.topPerformer ?? null;
+  const repCallDrilldowns = metrics?.team.repCallDrilldowns ?? [];
+  const selectedRepDrilldown = repCallDrilldowns.find((rep) => rep.userId === selectedRepId) ?? null;
 
   return (
     <div className="space-y-5">
@@ -597,7 +774,12 @@ function ManagerDashboard({
               </div>
             ) : (
               metrics?.team.scorecards.map((rep) => (
-                <article key={rep.userId} className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                <button
+                  key={rep.userId}
+                  type="button"
+                  onClick={() => setSelectedRepId(rep.userId)}
+                  className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:border-blue-500/40 hover:bg-zinc-900"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h4 className="text-sm font-semibold text-white">{rep.userName}</h4>
@@ -631,7 +813,10 @@ function ManagerDashboard({
                       <p className="mt-1 text-sm font-semibold text-white">{rep.paceGapLabel}</p>
                     </div>
                   </div>
-                </article>
+                  <p className="mt-3 text-xs font-medium uppercase tracking-[0.14em] text-blue-300">
+                    Open calls and recordings
+                  </p>
+                </button>
               ))
             )}
           </div>
@@ -879,6 +1064,8 @@ function ManagerDashboard({
           <RepDashboard metrics={metrics} loading={loading} />
         </section>
       ) : null}
+
+      {selectedRepDrilldown ? <RepCallDrawer drilldown={selectedRepDrilldown} onClose={() => setSelectedRepId(null)} /> : null}
     </div>
   );
 }

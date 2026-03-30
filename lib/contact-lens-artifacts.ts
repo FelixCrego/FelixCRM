@@ -20,6 +20,11 @@ type TranscriptHydration = Partial<
 
 type RecordingHydration = Pick<ContactLensWebhookPayload, "recordingS3Uri" | "eventSource" | "sourceEventTime">;
 
+type S3ObjectCandidate = {
+  key: string;
+  lastModified: number;
+};
+
 function getAwsRegion() {
   return process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
 }
@@ -100,6 +105,62 @@ function buildRecentDatePrefixes(root: string, daysBack: number): string[] {
   return prefixes;
 }
 
+function trimS3PrefixSegment(value: string) {
+  return value.replace(/^\/+|\/+$/g, "");
+}
+
+function buildRecentDatePrefixesWithVariants(root: string, daysBack: number, variants: string[] = [""]): string[] {
+  const cleanRoot = trimS3PrefixSegment(root);
+  if (!cleanRoot) return [];
+
+  const prefixes: string[] = [];
+  for (const variant of variants) {
+    const cleanVariant = trimS3PrefixSegment(variant);
+    const base = cleanVariant ? `${cleanRoot}/${cleanVariant}` : cleanRoot;
+    prefixes.push(...buildRecentDatePrefixes(`${base}/`, daysBack));
+  }
+
+  return Array.from(new Set(prefixes));
+}
+
+async function listObjectsForPrefix(
+  bucket: string,
+  prefix: string,
+  maxPages = 10,
+  maxKeys = 1000,
+): Promise<S3ObjectCandidate[]> {
+  const candidates: S3ObjectCandidate[] = [];
+  let continuationToken: string | undefined;
+  let pageCount = 0;
+
+  do {
+    const response = await sendWithBucketRegionRetry((s3) =>
+      s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          MaxKeys: maxKeys,
+          ContinuationToken: continuationToken,
+        }),
+      ),
+    );
+
+    for (const item of response.Contents ?? []) {
+      const key = item.Key ?? "";
+      if (!key) continue;
+      candidates.push({
+        key,
+        lastModified: item.LastModified ? item.LastModified.getTime() : 0,
+      });
+    }
+
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    pageCount += 1;
+  } while (continuationToken && pageCount < maxPages);
+
+  return candidates;
+}
+
 async function bodyToString(body: unknown): Promise<string> {
   if (!body) return "";
   if (typeof (body as { transformToString?: () => Promise<string> }).transformToString === "function") {
@@ -118,25 +179,17 @@ async function findAnalysisArtifactKey(bucket: string, recordingKey: string, con
   const candidates: Array<{ key: string; lastModified: number }> = [];
 
   for (const prefix of prefixes) {
-    const response = await sendWithBucketRegionRetry((s3) =>
-      s3.send(
-        new ListObjectsV2Command({
-          Bucket: bucket,
-          Prefix: prefix,
-          MaxKeys: 200,
-        }),
-      ),
-    );
+    const response = await listObjectsForPrefix(bucket, prefix, 10, 1000);
 
-    for (const item of response.Contents ?? []) {
-      const key = item.Key ?? "";
+    for (const item of response) {
+      const key = item.key;
       if (!key || !key.endsWith(".json")) continue;
       if (!key.includes(contactId)) continue;
       if (!/_analysis/i.test(key)) continue;
       if (/redacted/i.test(key)) continue;
       candidates.push({
         key,
-        lastModified: item.LastModified ? item.LastModified.getTime() : 0,
+        lastModified: item.lastModified,
       });
     }
   }
@@ -199,10 +252,14 @@ export async function hydrateRecordingPayloadFromS3(contactId: string, daysBack 
   const cleanContactId = contactId.trim();
   if (!cleanContactId) return {};
 
+  const configuredPrefix =
+    process.env.AMAZON_CONNECT_RECORDINGS_PREFIX?.trim() ||
+    process.env.CONNECT_RECORDINGS_PREFIX?.trim() ||
+    "connect/felix-outbound/CallRecordings";
   const prefixes = Array.from(
     new Set([
-      ...buildRecentDatePrefixes("connect/felix-outbound/CallRecordings/", daysBack),
-      ...buildRecentDatePrefixes("CallRecordings/", daysBack),
+      ...buildRecentDatePrefixesWithVariants(configuredPrefix, daysBack, ["", "ivr"]),
+      ...buildRecentDatePrefixesWithVariants("CallRecordings", daysBack, ["", "ivr"]),
     ]),
   );
 
@@ -210,24 +267,16 @@ export async function hydrateRecordingPayloadFromS3(contactId: string, daysBack 
   const candidates: Array<{ key: string; lastModified: number }> = [];
 
   for (const prefix of prefixes) {
-    const response = await sendWithBucketRegionRetry((s3) =>
-      s3.send(
-        new ListObjectsV2Command({
-          Bucket: bucket,
-          Prefix: prefix,
-          MaxKeys: 200,
-        }),
-      ),
-    ).catch(() => null);
+    const response = await listObjectsForPrefix(bucket, prefix, 10, 1000).catch(() => null);
     if (!response) continue;
 
-    for (const item of response.Contents ?? []) {
-      const key = item.Key ?? "";
+    for (const item of response) {
+      const key = item.key;
       if (!key || !/\.(wav|mp3)$/i.test(key)) continue;
       if (!key.includes(cleanContactId)) continue;
       candidates.push({
         key,
-        lastModified: item.LastModified ? item.LastModified.getTime() : 0,
+        lastModified: item.lastModified,
       });
     }
   }
