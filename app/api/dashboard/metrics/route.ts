@@ -78,6 +78,7 @@ type DemoRow = {
   selected_time?: string | null;
   rep_id?: string | null;
   rep_email?: string | null;
+  created_at?: string | null;
 };
 
 type DashboardNotification = {
@@ -93,6 +94,18 @@ type UpcomingDemoScheduleEntry = {
   leadId?: string | null;
   leadName: string;
   scheduledAt: Date;
+  repId?: string | null;
+  repEmail?: string | null;
+};
+
+type AttributedDemoRecord = {
+  key: string;
+  leadId?: string | null;
+  leadName: string;
+  date?: string | null;
+  time?: string | null;
+  scheduledAt: Date | null;
+  bookedAt: Date | null;
   repId?: string | null;
   repEmail?: string | null;
 };
@@ -223,7 +236,12 @@ function prettyNameFromEmail(email: string) {
 }
 
 async function listAuthUsersById() {
-  if (!supabaseUrl || !supabaseServiceRoleKey) return new Map<string, string>();
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return {
+      namesById: new Map<string, string>(),
+      emailsById: new Map<string, string>(),
+    };
+  }
 
   const response = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=200`, {
     headers: getHeaders(),
@@ -237,6 +255,7 @@ async function listAuthUsersById() {
 
   const payload = (await response.json()) as { users?: AuthAdminUser[] };
   const users = new Map<string, string>();
+  const emails = new Map<string, string>();
   for (const user of payload.users ?? []) {
     if (typeof user.id !== "string" || !user.id) continue;
     const metadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
@@ -248,8 +267,18 @@ async function listAuthUsersById() {
           ? prettyNameFromEmail(user.email)
           : user.id;
     users.set(user.id, nameCandidate);
+    if (typeof user.email === "string" && user.email.trim()) {
+      emails.set(user.id, user.email.trim().toLowerCase());
+    }
   }
-  return users;
+  return {
+    namesById: users,
+    emailsById: emails,
+  };
+}
+
+function normalizeEmail(value?: string | null) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
 async function listRecentCalls(limit = 1500) {
@@ -389,6 +418,37 @@ function parseDemoRowDate(demo: DemoRow) {
   const parsed = new Date(`${demo.selected_date}T00:00:00`);
   parsed.setHours(hours24, minutes, 0, 0);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getDemoBookedAt(demo: { bookedAt: Date | null; scheduledAt: Date | null }) {
+  return demo.bookedAt ?? demo.scheduledAt;
+}
+
+function isDemoBookedOnOrAfterWeekStart(demo: { bookedAt: Date | null; scheduledAt: Date | null }, now: Date) {
+  const bookedAt = getDemoBookedAt(demo);
+  return bookedAt ? isOnOrAfterWeekStartInTimeZone(bookedAt, now) : false;
+}
+
+function isDemoBookedSameDay(demo: { bookedAt: Date | null; scheduledAt: Date | null }, now: Date) {
+  const bookedAt = getDemoBookedAt(demo);
+  return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
+}
+
+function getAttributedDemoKey(parts: {
+  leadId?: string | null;
+  leadName?: string | null;
+  date?: string | null;
+  time?: string | null;
+  repId?: string | null;
+  repEmail?: string | null;
+}) {
+  const attributionKey = parts.repId || normalizeEmail(parts.repEmail) || "unassigned";
+  return `${attributionKey}::${getDemoDedupeKey(parts)}`;
+}
+
+function matchesDemoToUser(demo: AttributedDemoRecord, userId: string, userEmail?: string | null) {
+  const normalizedUserEmail = normalizeEmail(userEmail);
+  return demo.repId === userId || (normalizedUserEmail ? normalizeEmail(demo.repEmail) === normalizedUserEmail : false);
 }
 
 function sum(values: number[]) {
@@ -674,7 +734,7 @@ export async function GET() {
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
     const includeAllUpcomingDemos = includeAll || viewerRole === "TEAM_LEAD";
 
-    const [visibleLeads, tableUsersById, authUsersById, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds] = await Promise.all([
+    const [visibleLeads, tableUsersById, authUserDirectory, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
       listAuthUsersById(),
@@ -684,7 +744,8 @@ export async function GET() {
       getReviewedDashboardNotificationIds(user.id),
     ]);
 
-    const usersById = new Map<string, string>(authUsersById);
+    const usersById = new Map<string, string>(authUserDirectory.namesById);
+    const userEmailsById = new Map<string, string>(authUserDirectory.emailsById);
     for (const [id, name] of tableUsersById.entries()) {
       usersById.set(id, name);
     }
@@ -707,6 +768,7 @@ export async function GET() {
         date: lead.demoBooking.date,
         time: lead.demoBooking.time,
         scheduledAt: parseDemoDate(lead),
+        bookedAt: parseDate(lead.demoBooking.bookedAt),
         repId: typeof lead.ownerId === "string" && lead.ownerId ? lead.ownerId : null,
         repEmail: null as string | null,
       }];
@@ -749,11 +811,89 @@ export async function GET() {
       });
     }
 
+    const attributedDemoMap = new Map<string, AttributedDemoRecord>();
+    const coveredDemoKeys = new Set<string>();
+
+    for (const demo of visibleDemoRows) {
+      const coverageKey = getDemoDedupeKey({
+        leadId: demo.lead_id ?? null,
+        leadName: demo.lead_name ?? null,
+        date: demo.selected_date ?? null,
+        time: demo.selected_time ?? null,
+      });
+      coveredDemoKeys.add(coverageKey);
+
+      const attributionKey = getAttributedDemoKey({
+        leadId: demo.lead_id ?? null,
+        leadName: demo.lead_name ?? null,
+        date: demo.selected_date ?? null,
+        time: demo.selected_time ?? null,
+        repId: demo.rep_id ?? null,
+        repEmail: demo.rep_email ?? null,
+      });
+      const candidate: AttributedDemoRecord = {
+        key: attributionKey,
+        leadId: demo.lead_id ?? null,
+        leadName: demo.lead_name ?? "Unknown Lead",
+        date: demo.selected_date ?? null,
+        time: demo.selected_time ?? null,
+        scheduledAt: parseDemoRowDate(demo),
+        bookedAt: parseDate(demo.created_at),
+        repId: demo.rep_id ?? null,
+        repEmail: normalizeEmail(demo.rep_email),
+      };
+      const existing = attributedDemoMap.get(attributionKey);
+      const candidateTime = getDemoBookedAt(candidate)?.getTime() ?? 0;
+      const existingTime = existing ? (getDemoBookedAt(existing)?.getTime() ?? 0) : 0;
+      if (!existing || candidateTime >= existingTime) {
+        attributedDemoMap.set(attributionKey, candidate);
+      }
+    }
+
+    for (const demo of persistedLeadDemos) {
+      const coverageKey = getDemoDedupeKey({
+        leadId: demo.leadId,
+        leadName: demo.leadName,
+        date: demo.date,
+        time: demo.time,
+      });
+      if (coveredDemoKeys.has(coverageKey)) continue;
+
+      const attributionKey = getAttributedDemoKey({
+        leadId: demo.leadId,
+        leadName: demo.leadName,
+        date: demo.date,
+        time: demo.time,
+        repId: demo.repId ?? null,
+        repEmail: demo.repEmail ?? null,
+      });
+      attributedDemoMap.set(attributionKey, {
+        key: attributionKey,
+        leadId: demo.leadId,
+        leadName: demo.leadName,
+        date: demo.date,
+        time: demo.time,
+        scheduledAt: demo.scheduledAt,
+        bookedAt: demo.bookedAt,
+        repId: demo.repId ?? null,
+        repEmail: normalizeEmail(demo.repEmail),
+      });
+    }
+
+    const attributedDemos = [...attributedDemoMap.values()];
+
     const calls = recentCalls.filter((call) => typeof call.lead_id === "string" && visibleLeads.some((lead) => lead.id === call.lead_id));
     const leadsById = new Map(visibleLeads.map((lead) => [lead.id, lead]));
     const repLeads = visibleLeads.filter((lead) => lead.ownerId === user.id);
     const repLeadIds = new Set(repLeads.map((lead) => lead.id));
-    const repCalls = calls.filter((call) => typeof call.lead_id === "string" && repLeadIds.has(call.lead_id));
+    const repAttributedDemos = attributedDemos.filter((demo) => matchesDemoToUser(demo, user.id, user.email));
+    const repAttributedLeadIds = new Set(
+      repAttributedDemos
+        .map((demo) => (typeof demo.leadId === "string" ? demo.leadId : ""))
+        .filter(Boolean),
+    );
+    const repCallLeadIds = new Set([...repLeadIds, ...repAttributedLeadIds]);
+    const repCalls = calls.filter((call) => typeof call.lead_id === "string" && repCallLeadIds.has(call.lead_id));
 
     const repCallsToday = repCalls.filter((call) => {
       const at = parseDate(call.created_at);
@@ -761,8 +901,8 @@ export async function GET() {
     });
     const repConversationsToday = repCallsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
     const repTalkSecondsToday = sum(repCallsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0)));
-    const repDemosThisWeek = repLeads.filter((lead) => isLeadDemoBookedThisWeek(lead, now));
-    const repDemosToday = repLeads.filter((lead) => isLeadDemoBookedToday(lead, now));
+    const repDemosThisWeek = repAttributedDemos.filter((demo) => isDemoBookedOnOrAfterWeekStart(demo, now));
+    const repDemosToday = repAttributedDemos.filter((demo) => isDemoBookedSameDay(demo, now));
     const repClosedThisMonth = visibleLeads.filter((lead) => {
       if (getLeadCloseAttributionUserId(lead) !== user.id) return false;
       const closedAt = parseDate(lead.closedAt);
@@ -982,14 +1122,15 @@ export async function GET() {
       const ownedLeadIds = new Set(ownedLeads.map((lead) => lead.id));
       const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
       const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
+      const rowAttributedDemos = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId)));
       const callsToday = ownedCalls.filter((call) => {
         const at = parseDate(call.created_at);
         return at ? isSameDayInTimeZone(at, now) : false;
       });
       const conversationsToday = callsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
       const talkMinutesToday = Math.round(sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60);
-      const demosThisWeek = ownedLeads.filter((lead) => isLeadDemoBookedThisWeek(lead, now));
-      const demosToday = ownedLeads.filter((lead) => isLeadDemoBookedToday(lead, now));
+      const demosThisWeek = rowAttributedDemos.filter((demo) => isDemoBookedOnOrAfterWeekStart(demo, now));
+      const demosToday = rowAttributedDemos.filter((demo) => isDemoBookedSameDay(demo, now));
       const closedThisMonth = soldLeads.filter((lead) => {
         const closedAt = parseDate(lead.closedAt);
         return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
@@ -1057,7 +1198,7 @@ export async function GET() {
       .map((row) => {
         const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
         const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
-        const demosBookedTotal = ownedLeads.filter((lead) => Boolean(lead.demoBooking?.date)).length;
+        const demosBookedTotal = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId))).length;
         const closesTotal = soldLeads.length;
         const demoToCloseRate = demosBookedTotal > 0 ? (closesTotal / demosBookedTotal) * 100 : 0;
         const workingRate = row.dialsToday > 0 ? (row.conversationsToday / row.dialsToday) * 100 : 0;
@@ -1087,7 +1228,14 @@ export async function GET() {
           .filter((lead) => lead.ownerId === scorecard.userId)
           .map((lead) => lead.id),
       );
-      const repCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
+      const repDemoLeadIds = new Set(
+        attributedDemos
+          .filter((demo) => matchesDemoToUser(demo, scorecard.userId, userEmailsById.get(scorecard.userId)))
+          .map((demo) => (typeof demo.leadId === "string" ? demo.leadId : ""))
+          .filter(Boolean),
+      );
+      const repCallLeadIds = new Set([...ownedLeadIds, ...repDemoLeadIds]);
+      const repCalls = calls.filter((call) => typeof call.lead_id === "string" && repCallLeadIds.has(call.lead_id));
       const callsToday = repCalls.filter((call) => {
         const at = parseDate(call.created_at);
         return at ? isSameDayInTimeZone(at, now) : false;
@@ -1161,9 +1309,8 @@ export async function GET() {
 
     const funnel = [...leaderboardSeed.values()]
       .map((row) => {
-        const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
         const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
-        const demosBooked = ownedLeads.filter((lead) => Boolean(lead.demoBooking?.date)).length;
+        const demosBooked = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId))).length;
         const closesWon = soldLeads.length;
         const closeRate = demosBooked > 0 ? (closesWon / demosBooked) * 100 : 0;
         return {
