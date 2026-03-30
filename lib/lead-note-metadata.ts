@@ -114,6 +114,21 @@ async function requestLeadTable<T>(query?: Record<string, string>) {
   throw lastError ?? new Error("Unable to resolve lead table.");
 }
 
+function shouldTryNextLeadTable(status: number, text: string) {
+  return status === 404 || text.includes("schema cache") || text.includes("Could not find the table");
+}
+
+function shouldTryAlternatePayloadColumn(text: string, payloadColumn: "source_payload" | "sourcePayload") {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("42703") ||
+    normalized.includes(`column leads.${payloadColumn}`.toLowerCase()) ||
+    normalized.includes(`column ${payloadColumn}`.toLowerCase()) ||
+    normalized.includes(`"${payloadColumn.toLowerCase()}"`) ||
+    normalized.includes("does not exist")
+  );
+}
+
 async function patchLeadPayload(
   table: string,
   leadId: string,
@@ -137,25 +152,46 @@ async function patchLeadPayload(
 }
 
 async function loadLeadPayloadNotes(leadId: string) {
-  const { table, rows } = await requestLeadTable<any[]>({
-    select: "id,source_payload,sourcePayload",
-    id: `eq.${leadId}`,
-    limit: "1",
-  });
+  let lastError: unknown = null;
 
-  const lead = rows[0];
-  if (!lead) {
-    throw new Error("Lead not found.");
+  for (const table of LEADS_TABLE_CANDIDATES) {
+    for (const payloadColumn of ["source_payload", "sourcePayload"] as const) {
+      const response = await fetch(buildLeadUrl(table, {
+        select: `id,${payloadColumn}`,
+        id: `eq.${leadId}`,
+        limit: "1",
+      }), {
+        headers: getHeaders(),
+        cache: "no-store",
+      });
+
+      if (response.ok) {
+        const rows = (await response.json()) as any[];
+        const lead = rows[0];
+        if (!lead) {
+          throw new Error("Lead not found.");
+        }
+
+        const payload = (lead[payloadColumn] ?? {}) as Record<string, unknown>;
+        const rawNotes = Array.isArray(payload.notes) ? payload.notes : [];
+        const normalizedNotes = rawNotes
+          .filter((item) => item && typeof item === "object")
+          .map((item) => normalizePayloadNote(item));
+
+        return { table, payloadColumn, payload, normalizedNotes };
+      }
+
+      const text = await response.text();
+      if (shouldTryNextLeadTable(response.status, text) || shouldTryAlternatePayloadColumn(text, payloadColumn)) {
+        lastError = new Error(text || `Unable to read ${payloadColumn} from ${table}.`);
+        continue;
+      }
+
+      throw new Error(text || "Unable to load lead note metadata.");
+    }
   }
 
-  const payloadColumn: "source_payload" | "sourcePayload" = lead.source_payload !== undefined ? "source_payload" : "sourcePayload";
-  const payload = (lead.source_payload ?? lead.sourcePayload ?? {}) as Record<string, unknown>;
-  const rawNotes = Array.isArray(payload.notes) ? payload.notes : [];
-  const normalizedNotes = rawNotes
-    .filter((item) => item && typeof item === "object")
-    .map((item) => normalizePayloadNote(item));
-
-  return { table, payloadColumn, payload, normalizedNotes };
+  throw lastError ?? new Error("Unable to resolve lead payload metadata.");
 }
 
 function mergeLeadNotes(baseNotes: LeadNote[], payloadNotes: LeadNoteWithMetadata[]) {
