@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { getEffectiveUserRole, listLeads } from "@/lib/store";
+import { getEffectiveUserRole, listLeads, saveManagedUserSettings } from "@/lib/store";
 import { buildPayrollSummaries, type UserPayrollSummary } from "@/lib/payroll-utils";
 import {
   clockInWorkforceUser,
@@ -85,6 +85,13 @@ function parsePayType(value: unknown): PayType {
   if (value === "HOURLY") return "HOURLY";
   if (value === "HOURLY_PLUS_COMMISSION") return "HOURLY_PLUS_COMMISSION";
   return "COMMISSION";
+}
+
+function parseUserRole(value: unknown): UserRole | null {
+  if (value === "SUPER_ADMIN" || value === "MANAGER" || value === "TEAM_LEAD" || value === "REP") {
+    return value;
+  }
+  return null;
 }
 
 async function buildSnapshot(userId: string, role: UserRole): Promise<Snapshot> {
@@ -245,6 +252,7 @@ export async function PATCH(request: Request) {
           payType?: unknown;
           hourlyRate?: unknown;
           commissionRate?: unknown;
+          role?: unknown;
           maxWeeklyHours?: unknown;
           requireOvertimeApproval?: unknown;
           managerUserId?: unknown;
@@ -269,10 +277,22 @@ export async function PATCH(request: Request) {
       }
 
       const payType = parsePayType(body.payType);
+      const commissionRate = parseNullableNumber(body.commissionRate);
+      const requestedRole = parseUserRole(body.role);
+      const targetUser = await getWorkforceUser(body.userId.trim());
+
+      if (canEditAssignments(viewer.viewerRole) && requestedRole && requestedRole !== targetUser.role) {
+        await saveManagedUserSettings(body.userId.trim(), {
+          name: targetUser.name,
+          role: requestedRole,
+          commissionRate,
+        });
+      }
+
       await saveWorkforceSettings(body.userId.trim(), {
         payType,
         hourlyRate: payType === "COMMISSION" ? null : parseNullableNumber(body.hourlyRate),
-        commissionRate: parseNullableNumber(body.commissionRate),
+        commissionRate,
         maxWeeklyHours: payType === "COMMISSION" ? null : parseNullableNumber(body.maxWeeklyHours),
         requireOvertimeApproval: typeof body.requireOvertimeApproval === "boolean" ? body.requireOvertimeApproval : true,
         managerUserId: canEditAssignments(viewer.viewerRole) ? parseNullableString(body.managerUserId) : undefined,

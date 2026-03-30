@@ -124,6 +124,7 @@ type UserPayrollSummary = {
   history: WeeklyPayrollSummary[];
 };
 type Draft = {
+  role: string;
   payType: PayType;
   hourlyRate: string;
   commissionRate: string;
@@ -185,6 +186,7 @@ function localInputToIso(value: string) {
 
 function buildDraft(user: WorkforceUser): Draft {
   return {
+    role: user.role,
     payType: user.settings.payType,
     hourlyRate: user.settings.hourlyRate !== null ? String(user.settings.hourlyRate) : "",
     commissionRate: String(Math.round(getEffectiveCommissionRate(user.email, user.settings.commissionRate) * 100)),
@@ -957,6 +959,20 @@ export default function TimeClockPage() {
 
                         <div className="grid gap-3 md:grid-cols-2">
                           <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Role</span>
+                            <select
+                              value={draft.role}
+                              onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, role: event.target.value } }))}
+                              disabled={!snapshot.canEditAssignments}
+                              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
+                            >
+                              <option value="REP">Rep</option>
+                              <option value="TEAM_LEAD">Team Lead</option>
+                              <option value="MANAGER">Manager</option>
+                              <option value="SUPER_ADMIN">Super Admin</option>
+                            </select>
+                          </label>
+                          <label className="space-y-2">
                             <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Pay Type</span>
                             <select
                               value={draft.payType}
@@ -1089,6 +1105,7 @@ export default function TimeClockPage() {
                                 {
                                   action: "SAVE_SETTINGS",
                                   userId: employee.id,
+                                  role: draft.role,
                                   payType: draft.payType,
                                   hourlyRate: supportsHourlyTracking(draft.payType) ? parseDraftNumber(draft.hourlyRate) : null,
                                   commissionRate: supportsCommission(draft.payType) && draftCommissionRate !== null ? draftCommissionRate / 100 : null,
