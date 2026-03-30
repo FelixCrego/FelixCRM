@@ -313,6 +313,12 @@ function RepCallDrawer({
   drilldown: DashboardMetrics["team"]["repCallDrilldowns"][number];
   onClose: () => void;
 }) {
+  const [resolvedDurations, setResolvedDurations] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setResolvedDurations({});
+  }, [drilldown.userId]);
+
   return (
     <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -370,6 +376,7 @@ function RepCallDrawer({
                   call.leadId && call.contactId
                     ? `/api/call-recordings?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}&mode=redirect`
                     : null;
+                const effectiveDuration = resolvedDurations[call.contactId] ?? call.durationSeconds;
 
                 return (
                   <article key={`${call.contactId}-${call.callAt}`} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
@@ -380,7 +387,7 @@ function RepCallDrawer({
                       </div>
                       <div className="text-right">
                         <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{formatDateTime(call.callAt)}</p>
-                        <p className="mt-1 text-sm font-medium text-zinc-300">{formatDurationSeconds(call.durationSeconds)}</p>
+                        <p className="mt-1 text-sm font-medium text-zinc-300">{formatDurationSeconds(effectiveDuration)}</p>
                       </div>
                     </div>
 
@@ -420,7 +427,24 @@ function RepCallDrawer({
                     {call.hasRecording && recordingUrl ? (
                       <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
                         <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">Call Recording</p>
-                        <audio controls preload="metadata" className="w-full" src={recordingUrl}>
+                        <audio
+                          controls
+                          preload="metadata"
+                          className="w-full"
+                          src={recordingUrl}
+                          onLoadedMetadata={(event) => {
+                            const nextDuration = Math.round(event.currentTarget.duration || 0);
+                            if (!nextDuration) return;
+                            setResolvedDurations((current) =>
+                              current[call.contactId] === nextDuration
+                                ? current
+                                : {
+                                    ...current,
+                                    [call.contactId]: nextDuration,
+                                  },
+                            );
+                          }}
+                        >
                           Your browser does not support audio playback.
                         </audio>
                       </div>
