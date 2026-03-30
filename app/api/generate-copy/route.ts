@@ -4,7 +4,9 @@ import { NextResponse } from "next/server";
 import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { buildSalesLearningSnapshot } from "@/lib/sales-learning";
-import { canUserManageAllLeads, getLeadById, listAssignableUsers, prettyNameFromEmail } from "@/lib/store";
+import { canUserManageAllLeads, getLeadById, prettyNameFromEmail } from "@/lib/store";
+
+export const maxDuration = 60;
 
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const openAiApiKey = process.env.OPENAI_API_KEY;
@@ -65,14 +67,9 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
 
-async function resolveRepName(userId: string, email?: string | null) {
+function resolveRepName(email?: string | null) {
   const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
-  const fallbackName = normalizedEmail ? prettyNameFromEmail(normalizedEmail) : "someone from Felix";
-  const assignableUsers = await listAssignableUsers().catch(() => []);
-  const matchedUser =
-    assignableUsers.find((candidate) => candidate.id === userId) ??
-    assignableUsers.find((candidate) => (candidate.email ?? "").trim().toLowerCase() === normalizedEmail);
-  return matchedUser?.name || fallbackName;
+  return normalizedEmail ? prettyNameFromEmail(normalizedEmail) : "someone from Felix";
 }
 
 function normalizePlaybookPayload(raw: unknown): AIDynamicPlaybook | null {
@@ -304,6 +301,7 @@ function mergePlaybook(
 type GenerateCopyPayload = {
   leadId?: string;
   leadName?: string;
+  repName?: string;
   activeTab?: string;
   researchContext?: string;
 };
@@ -330,7 +328,10 @@ export async function POST(req: Request) {
     if (!user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    repName = await resolveRepName(user.id, user.email);
+    repName =
+      typeof payload.repName === "string" && payload.repName.trim()
+        ? payload.repName.trim()
+        : resolveRepName(user.email);
 
     leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : "";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
@@ -417,7 +418,7 @@ export async function POST(req: Request) {
         }
       }
 
-      if (openAiApiKey) {
+      if (!finalPlaybook && openAiApiKey) {
         try {
           const openAiGeneration = await generateWithOpenAI(
             buildPlaybookPrompt({

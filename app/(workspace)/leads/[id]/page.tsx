@@ -2475,6 +2475,7 @@ export default function LeadExecutionPage() {
         body: JSON.stringify({
           leadId,
           leadName,
+          repName: currentUserName,
           activeTab: "PLAYBOOK",
           researchContext: [
             playbookResearchContext || "No AI research summary available.",
@@ -2489,7 +2490,7 @@ export default function LeadExecutionPage() {
 
       if (!data) {
         setAiPlaybook(fallbackPlaybook);
-        setPlaybookError("AI refresh is temporarily unavailable. Showing the fallback script.");
+        setPlaybookError(response.ok ? "AI refresh is temporarily unavailable. Showing the fallback script." : `Script refresh failed (${response.status}). Showing the fallback script.`);
         return;
       }
 
@@ -2525,7 +2526,11 @@ export default function LeadExecutionPage() {
       setPlaybookError("");
     } catch (error) {
       console.error("Playbook generation failed", error);
-      setPlaybookError("AI refresh is temporarily unavailable. Showing the fallback script.");
+      setPlaybookError(
+        error instanceof Error && error.message
+          ? `${error.message} Showing the fallback script.`
+          : "AI refresh is temporarily unavailable. Showing the fallback script.",
+      );
       setAiPlaybook(fallbackPlaybook);
     } finally {
       setPlaybookLoading(false);
