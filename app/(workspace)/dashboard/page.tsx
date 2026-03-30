@@ -17,6 +17,13 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRole } from "@/components/role-context";
+import {
+  MANAGER_CALL_REVIEW_CHANNEL,
+  TRAINING_HALL_OF_FAME_CHANNEL,
+  TRAINING_HALL_OF_SHAME_CHANNEL,
+  getTrainingBucketFromChannel,
+  isLeadershipRole,
+} from "@/lib/lead-note-channels";
 import { buildManagerActionPlan, type PredictorInputs } from "@/lib/manager-action-engine";
 
 type DashboardMetrics = {
@@ -85,6 +92,14 @@ type DashboardMetrics = {
       startsAt: number;
       label: string;
     }>;
+    managerAlerts: Array<{
+      id: string;
+      noteId: string;
+      leadId: string;
+      title: string;
+      detail: string;
+      createdAt: string;
+    }>;
   };
   team: {
     summary: {
@@ -100,6 +115,13 @@ type DashboardMetrics = {
       repsOnTrack: number;
       repsOffTrack: number;
     };
+    upcomingSchedule: Array<{
+      id: string;
+      leadId?: string | null;
+      startsAt: number;
+      label: string;
+      repName: string;
+    }>;
     leaderboard: Array<{
       userId: string;
       userName: string;
@@ -146,6 +168,8 @@ type DashboardMetrics = {
       connectedToday: number;
       recordedCalls: number;
       recordedCallsToday: number;
+      bookedDemoCalls: number;
+      bookedDemoCallsToday: number;
       talkMinutesToday: number;
       recentCalls: Array<{
         contactId: string;
@@ -157,6 +181,7 @@ type DashboardMetrics = {
         sentimentLabel: string;
         hasRecording: boolean;
         hasAnalysis: boolean;
+        hasBookedDemo: boolean;
       }>;
     }>;
     callLeaderboard: Array<{
@@ -225,10 +250,18 @@ type LeadNoteRecord = {
   channel: string;
   createdAt?: string;
   created_at?: string;
+  targetUserId?: string | null;
+  targetUserName?: string | null;
+  requiresAcknowledgement?: boolean;
+  acknowledgedAt?: string | null;
+  acknowledgedByUserId?: string | null;
+  acknowledgedByName?: string | null;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
+  trainingBucket?: "HALL_OF_FAME" | "HALL_OF_SHAME" | null;
+  taggedUserId?: string | null;
+  taggedUserName?: string | null;
 };
-
-const MANAGER_CALL_REVIEW_CHANNEL = "manager_call_review";
-const MANAGER_CALL_REVIEW_ROLES = new Set(["MANAGER", "TEAM_LEAD", "SUPER_ADMIN"]);
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -265,7 +298,7 @@ function getNewYorkDayKey(value: string | Date) {
 }
 
 function canWriteManagerCallReview(viewerRole: string | null | undefined) {
-  return typeof viewerRole === "string" && MANAGER_CALL_REVIEW_ROLES.has(viewerRole);
+  return isLeadershipRole(viewerRole);
 }
 
 function getLeadNoteCreatedAt(note: LeadNoteRecord) {
@@ -354,6 +387,10 @@ function RepCallDrawer({
   const [reviewNotesLoading, setReviewNotesLoading] = useState(false);
   const [reviewNotesError, setReviewNotesError] = useState("");
   const [savingReviewContactId, setSavingReviewContactId] = useState<string | null>(null);
+  const [trainingTagsByContact, setTrainingTagsByContact] = useState<Record<string, { hallOfFame?: LeadNoteRecord; hallOfShame?: LeadNoteRecord }>>({});
+  const [trainingActionStatusByContact, setTrainingActionStatusByContact] = useState<Record<string, string>>({});
+  const [savingTrainingActionKey, setSavingTrainingActionKey] = useState<string | null>(null);
+  const [callFilter, setCallFilter] = useState<"all" | "connected" | "booked_demos">("all");
   const canWriteReviewNotes = canWriteManagerCallReview(viewerRole);
   const scopedReviewCalls = useMemo(
     () => drilldown.recentCalls.filter((call) => call.leadId && call.contactId),
@@ -374,6 +411,7 @@ function RepCallDrawer({
 
   useEffect(() => {
     setResolvedDurations({});
+    setCallFilter("all");
   }, [drilldown.userId]);
 
   useEffect(() => {
@@ -383,6 +421,8 @@ function RepCallDrawer({
     setReviewDrafts({});
     setReviewErrors({});
     setReviewNotesError("");
+    setTrainingTagsByContact({});
+    setTrainingActionStatusByContact({});
 
     if (reviewLeadIds.length === 0) {
       return () => {
@@ -411,12 +451,30 @@ function RepCallDrawer({
         if (!isActive) return;
 
         const nextNotesByContact: Record<string, LeadNoteRecord[]> = {};
+        const nextTrainingTagsByContact: Record<string, { hallOfFame?: LeadNoteRecord; hallOfShame?: LeadNoteRecord }> = {};
         for (const notes of responses) {
           for (const note of notes) {
-            if ((note.channel || "").trim().toLowerCase() !== MANAGER_CALL_REVIEW_CHANNEL) continue;
             const contactId = typeof note.contactId === "string" ? note.contactId.trim() : "";
             if (!contactId || !reviewContactIds.has(contactId)) continue;
-            nextNotesByContact[contactId] = [...(nextNotesByContact[contactId] ?? []), note];
+
+            const normalizedChannel = (note.channel || "").trim().toLowerCase();
+            if (normalizedChannel === MANAGER_CALL_REVIEW_CHANNEL) {
+              nextNotesByContact[contactId] = [...(nextNotesByContact[contactId] ?? []), note];
+            }
+
+            const trainingBucket = note.trainingBucket ?? getTrainingBucketFromChannel(normalizedChannel);
+            if (trainingBucket === "HALL_OF_FAME") {
+              nextTrainingTagsByContact[contactId] = {
+                ...(nextTrainingTagsByContact[contactId] ?? {}),
+                hallOfFame: note,
+              };
+            }
+            if (trainingBucket === "HALL_OF_SHAME") {
+              nextTrainingTagsByContact[contactId] = {
+                ...(nextTrainingTagsByContact[contactId] ?? {}),
+                hallOfShame: note,
+              };
+            }
           }
         }
 
@@ -427,6 +485,7 @@ function RepCallDrawer({
         }
 
         setReviewNotesByContact(nextNotesByContact);
+        setTrainingTagsByContact(nextTrainingTagsByContact);
       } catch (error) {
         if (!isActive) return;
         setReviewNotesError(error instanceof Error ? error.message : "Unable to load manager review notes.");
@@ -455,6 +514,11 @@ function RepCallDrawer({
     const duration = resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0;
     return total + (duration >= 45 ? 1 : 0);
   }, 0);
+  const filteredCalls = callFilter === "connected"
+    ? drilldown.recentCalls.filter((call) => (resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0) >= 45)
+    : callFilter === "booked_demos"
+      ? drilldown.recentCalls.filter((call) => call.hasBookedDemo)
+      : drilldown.recentCalls;
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm" onClick={onClose}>
@@ -485,15 +549,34 @@ function RepCallDrawer({
             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Calls Today</p>
             <p className="mt-1 text-xl font-semibold text-white">{drilldown.callsToday}</p>
           </div>
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+          <button
+            type="button"
+            onClick={() => setCallFilter((current) => (current === "connected" ? "all" : "connected"))}
+            className={`rounded-xl border px-3 py-3 text-left transition ${
+              callFilter === "connected"
+                ? "border-emerald-500/40 bg-emerald-500/10"
+                : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+            }`}
+          >
             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Connected</p>
             <p className="mt-1 text-xl font-semibold text-white">{displayedConnectedToday}</p>
-          </div>
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Recorded</p>
-            <p className="mt-1 text-xl font-semibold text-white">{drilldown.recordedCallsToday} today</p>
-            <p className="mt-1 text-xs text-zinc-500">{drilldown.recordedCalls} total in view</p>
-          </div>
+            <p className="mt-1 text-[11px] text-zinc-500">{callFilter === "connected" ? "Showing connected only" : "Click to filter"}</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCallFilter((current) => (current === "booked_demos" ? "all" : "booked_demos"))}
+            className={`rounded-xl border px-3 py-3 text-left transition ${
+              callFilter === "booked_demos"
+                ? "border-blue-500/40 bg-blue-500/10"
+                : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+            }`}
+          >
+            <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Booked Demos</p>
+            <p className="mt-1 text-xl font-semibold text-white">{drilldown.bookedDemoCallsToday} today</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {callFilter === "booked_demos" ? "Showing booked demo calls" : `${drilldown.bookedDemoCalls} in call feed`}
+            </p>
+          </button>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Talk Time</p>
             <p className="mt-1 text-xl font-semibold text-white">{displayedTalkMinutesToday} min</p>
@@ -507,13 +590,17 @@ function RepCallDrawer({
               {reviewNotesError}
             </div>
           ) : null}
-          {drilldown.recentCalls.length === 0 ? (
+          {filteredCalls.length === 0 ? (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-sm text-zinc-400">
-              No calls are attached to this rep yet.
+              {callFilter === "connected"
+                ? "No connected calls are attached to this rep yet."
+                : callFilter === "booked_demos"
+                  ? "No calls tied to booked demos are attached to this rep yet."
+                  : "No calls are attached to this rep yet."}
             </div>
           ) : (
             <div className="space-y-3">
-              {drilldown.recentCalls.map((call) => {
+              {filteredCalls.map((call) => {
                 const recordingUrl =
                   call.leadId && call.contactId
                     ? `/api/call-recordings?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}&mode=redirect`
@@ -523,6 +610,10 @@ function RepCallDrawer({
                 const reviewDraft = reviewDrafts[call.contactId] ?? "";
                 const reviewError = reviewErrors[call.contactId] ?? "";
                 const isSavingReview = savingReviewContactId === call.contactId;
+                const trainingTags = trainingTagsByContact[call.contactId] ?? {};
+                const trainingActionStatus = trainingActionStatusByContact[call.contactId] ?? "";
+                const hallOfFameNote = trainingTags.hallOfFame;
+                const hallOfShameNote = trainingTags.hallOfShame;
 
                 return (
                   <article key={`${call.contactId}-${call.callAt}`} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
@@ -559,6 +650,11 @@ function RepCallDrawer({
                       >
                         {call.hasAnalysis ? "Analysis Ready" : "Analysis Pending"}
                       </span>
+                      {call.hasBookedDemo ? (
+                        <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-blue-200">
+                          Booked Demo
+                        </span>
+                      ) : null}
                     </div>
 
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -568,7 +664,120 @@ function RepCallDrawer({
                       >
                         Open Lead
                       </Link>
+                      {canWriteReviewNotes ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={savingTrainingActionKey === `${call.contactId}:fame`}
+                            onClick={async () => {
+                              setSavingTrainingActionKey(`${call.contactId}:fame`);
+                              setTrainingActionStatusByContact((current) => ({ ...current, [call.contactId]: "" }));
+
+                              try {
+                                const response = await fetch("/api/lead-notes", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  cache: "no-store",
+                                  credentials: "include",
+                                  body: JSON.stringify({
+                                    leadId: call.leadId,
+                                    contactId: call.contactId,
+                                    channel: TRAINING_HALL_OF_FAME_CHANNEL,
+                                    content:
+                                      reviewDraft.trim() ||
+                                      `Flagged for Hall of Fame review from ${drilldown.userName}'s call board. Use this call as a winning example for future training.`,
+                                    taggedUserId: drilldown.userId,
+                                    taggedUserName: drilldown.userName,
+                                  }),
+                                });
+                                const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+
+                                if (!response.ok || !payload?.note) {
+                                  throw new Error(payload?.error || "Unable to send call to Hall of Fame.");
+                                }
+
+                                setTrainingTagsByContact((current) => ({
+                                  ...current,
+                                  [call.contactId]: {
+                                    ...(current[call.contactId] ?? {}),
+                                    hallOfFame: payload.note as LeadNoteRecord,
+                                  },
+                                }));
+                                setTrainingActionStatusByContact((current) => ({
+                                  ...current,
+                                  [call.contactId]: "Sent to Hall of Fame.",
+                                }));
+                              } catch (error) {
+                                setTrainingActionStatusByContact((current) => ({
+                                  ...current,
+                                  [call.contactId]: error instanceof Error ? error.message : "Unable to send call to Hall of Fame.",
+                                }));
+                              } finally {
+                                setSavingTrainingActionKey((current) => (current === `${call.contactId}:fame` ? null : current));
+                              }
+                            }}
+                            className="inline-flex rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-100 transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-500"
+                          >
+                            {hallOfFameNote ? "🏆 Hall of Fame Sent" : "🏆 Hall of Fame"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingTrainingActionKey === `${call.contactId}:shame`}
+                            onClick={async () => {
+                              setSavingTrainingActionKey(`${call.contactId}:shame`);
+                              setTrainingActionStatusByContact((current) => ({ ...current, [call.contactId]: "" }));
+
+                              try {
+                                const response = await fetch("/api/lead-notes", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  cache: "no-store",
+                                  credentials: "include",
+                                  body: JSON.stringify({
+                                    leadId: call.leadId,
+                                    contactId: call.contactId,
+                                    channel: TRAINING_HALL_OF_SHAME_CHANNEL,
+                                    content:
+                                      reviewDraft.trim() ||
+                                      `Flagged for Hall of Shame review from ${drilldown.userName}'s call board. Use this call to coach what needs to change.`,
+                                    taggedUserId: drilldown.userId,
+                                    taggedUserName: drilldown.userName,
+                                  }),
+                                });
+                                const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+
+                                if (!response.ok || !payload?.note) {
+                                  throw new Error(payload?.error || "Unable to send call to Hall of Shame.");
+                                }
+
+                                setTrainingTagsByContact((current) => ({
+                                  ...current,
+                                  [call.contactId]: {
+                                    ...(current[call.contactId] ?? {}),
+                                    hallOfShame: payload.note as LeadNoteRecord,
+                                  },
+                                }));
+                                setTrainingActionStatusByContact((current) => ({
+                                  ...current,
+                                  [call.contactId]: "Sent to Hall of Shame.",
+                                }));
+                              } catch (error) {
+                                setTrainingActionStatusByContact((current) => ({
+                                  ...current,
+                                  [call.contactId]: error instanceof Error ? error.message : "Unable to send call to Hall of Shame.",
+                                }));
+                              } finally {
+                                setSavingTrainingActionKey((current) => (current === `${call.contactId}:shame` ? null : current));
+                              }
+                            }}
+                            className="inline-flex rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-100 transition hover:border-rose-400 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-500"
+                          >
+                            {hallOfShameNote ? "🚫 Hall of Shame Sent" : "🚫 Hall of Shame"}
+                          </button>
+                        </>
+                      ) : null}
                     </div>
+                    {trainingActionStatus ? <p className="mt-2 text-xs text-zinc-400">{trainingActionStatus}</p> : null}
 
                     {call.hasRecording && recordingUrl ? (
                       <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
@@ -619,6 +828,24 @@ function RepCallDrawer({
                         ) : (
                           reviewNotes.map((note) => (
                             <article key={note.id} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">
+                                  {note.acknowledgedAt
+                                    ? `Acknowledged${note.acknowledgedByName ? ` by ${note.acknowledgedByName}` : ""}`
+                                    : note.targetUserName
+                                      ? `Waiting on ${note.targetUserName}`
+                                      : "Pending acknowledgement"}
+                                </span>
+                                <span
+                                  className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                                    note.acknowledgedAt
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                      : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                                  }`}
+                                >
+                                  {note.acknowledgedAt ? "Acknowledged" : "Pending Rep Ack"}
+                                </span>
+                              </div>
                               <p className="whitespace-pre-wrap text-sm text-zinc-100">{note.content}</p>
                               <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">
                                 {formatDateTime(getLeadNoteCreatedAt(note))}
@@ -666,6 +893,8 @@ function RepCallDrawer({
                                       contactId: call.contactId,
                                       channel: MANAGER_CALL_REVIEW_CHANNEL,
                                       content,
+                                      targetUserId: drilldown.userId,
+                                      targetUserName: drilldown.userName,
                                     }),
                                   });
                                   const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
@@ -745,8 +974,17 @@ function DailyTargets({ targets }: { targets: DashboardMetrics["rep"]["targets"]
   );
 }
 
-function RepDashboard({ metrics, loading }: { metrics: DashboardMetrics | null; loading: boolean }) {
+function RepDashboard({
+  metrics,
+  loading,
+  onAcknowledgeManagerNote,
+}: {
+  metrics: DashboardMetrics | null;
+  loading: boolean;
+  onAcknowledgeManagerNote?: (leadId: string, noteId: string) => Promise<void>;
+}) {
   const rep = metrics?.rep;
+  const [acknowledgingNoteId, setAcknowledgingNoteId] = useState<string | null>(null);
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_350px]">
@@ -889,6 +1127,60 @@ function RepDashboard({ metrics, loading }: { metrics: DashboardMetrics | null; 
 
       <aside className="space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700">
         <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Manager Alerts</h3>
+            <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
+              {rep?.managerAlerts.length ?? 0} pending
+            </span>
+          </div>
+          <div className="space-y-2">
+            {(rep?.managerAlerts.length ?? 0) === 0 ? (
+              <article className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                No pending manager review notes to acknowledge.
+              </article>
+            ) : (
+              rep?.managerAlerts.map((alert) => (
+                <article key={alert.id} className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-white">{alert.title}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-300">{alert.detail}</p>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                      {new Date(alert.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <Link
+                      href={`/leads/${alert.leadId}`}
+                      className="inline-flex rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-zinc-600"
+                    >
+                      Open Lead
+                    </Link>
+                    <button
+                      type="button"
+                      disabled={!onAcknowledgeManagerNote || acknowledgingNoteId === alert.noteId}
+                      onClick={async () => {
+                        if (!onAcknowledgeManagerNote) return;
+                        setAcknowledgingNoteId(alert.noteId);
+                        try {
+                          await onAcknowledgeManagerNote(alert.leadId, alert.noteId);
+                        } finally {
+                          setAcknowledgingNoteId((current) => (current === alert.noteId ? null : current));
+                        }
+                      }}
+                      className="inline-flex rounded-md border border-amber-500/40 px-2.5 py-1.5 text-xs font-medium text-amber-100 transition hover:border-amber-400 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:text-zinc-500"
+                    >
+                      {acknowledgingNoteId === alert.noteId ? "Acknowledging..." : "Acknowledge"}
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Recent Movement</h3>
           <div className="space-y-2">
             {(rep?.recentActivity.length ?? 0) === 0 ? (
@@ -940,12 +1232,14 @@ function ManagerDashboard({
   showRepWorkspace = true,
   onReviewNotification,
   viewerRole,
+  onAcknowledgeManagerNote,
 }: {
   metrics: DashboardMetrics | null;
   loading: boolean;
   showRepWorkspace?: boolean;
   onReviewNotification: (notificationId: string) => void;
   viewerRole: string;
+  onAcknowledgeManagerNote?: (leadId: string, noteId: string) => Promise<void>;
 }) {
   const [lockedPlan, setLockedPlan] = useState<ManagerLockedPlan | null>(null);
   const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
@@ -980,6 +1274,7 @@ function ManagerDashboard({
   const leaderboard = metrics?.team.leaderboard ?? [];
   const topPerformer = metrics?.team.topPerformer ?? null;
   const repCallDrilldowns = metrics?.team.repCallDrilldowns ?? [];
+  const teamUpcomingSchedule = metrics?.team.upcomingSchedule ?? [];
   const selectedRepDrilldown = repCallDrilldowns.find((rep) => rep.userId === selectedRepId) ?? null;
 
   return (
@@ -1216,6 +1511,43 @@ function ManagerDashboard({
           </article>
 
           <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">Upcoming Demos</p>
+                <h3 className="mt-1 text-lg font-semibold text-white">Shared demo calendar</h3>
+              </div>
+              <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
+                {metrics?.team.summary.upcomingDemos ?? 0} upcoming
+              </span>
+            </div>
+            <div className="mt-3 space-y-2 text-sm text-zinc-200">
+              {teamUpcomingSchedule.length === 0 ? (
+                <p className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 text-zinc-400">
+                  No upcoming demos are on the team calendar yet.
+                </p>
+              ) : (
+                teamUpcomingSchedule.map((demo) => (
+                  demo.leadId ? (
+                    <Link
+                      key={`${demo.id}-${demo.startsAt}`}
+                      href={`/leads/${demo.leadId}`}
+                      className="block rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 transition hover:border-zinc-700"
+                    >
+                      <p className="font-medium text-white">{demo.label}</p>
+                      <p className="mt-1 text-xs text-zinc-400">Rep: {demo.repName}</p>
+                    </Link>
+                  ) : (
+                    <div key={`${demo.id}-${demo.startsAt}`} className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2">
+                      <p className="font-medium text-white">{demo.label}</p>
+                      <p className="mt-1 text-xs text-zinc-400">Rep: {demo.repName}</p>
+                    </div>
+                  )
+                ))
+              )}
+            </div>
+          </article>
+
+          <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
             <p className="text-xs uppercase tracking-[0.15em] text-zinc-400">Coach Queue</p>
             <h3 className="mt-1 text-lg font-semibold text-white">Reps needing a push</h3>
             <div className="mt-3 space-y-2 text-sm text-zinc-200">
@@ -1330,7 +1662,7 @@ function ManagerDashboard({
           <p className="mb-4 text-sm text-zinc-400">
             Managers still see the same real rep board below, based on their own assigned leads.
           </p>
-          <RepDashboard metrics={metrics} loading={loading} />
+          <RepDashboard metrics={metrics} loading={loading} onAcknowledgeManagerNote={onAcknowledgeManagerNote} />
         </section>
       ) : null}
 
@@ -1442,6 +1774,27 @@ export default function DashboardPage() {
     });
   };
 
+  const acknowledgeManagerNote = async (leadId: string, noteId: string) => {
+    const response = await fetch("/api/lead-notes", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      credentials: "include",
+      body: JSON.stringify({
+        leadId,
+        noteId,
+        action: "acknowledge",
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      throw new Error(payload?.error || "Unable to acknowledge manager note.");
+    }
+
+    refreshBoard();
+  };
+
   if (shouldShowTeamBoard) {
     return (
       <div className="space-y-3">
@@ -1463,6 +1816,7 @@ export default function DashboardPage() {
           showRepWorkspace={!shouldShowBothBoards}
           onReviewNotification={reviewNotification}
           viewerRole={effectiveRole}
+          onAcknowledgeManagerNote={acknowledgeManagerNote}
         />
         {shouldShowBothBoards ? (
           <section className="space-y-3">
@@ -1473,7 +1827,7 @@ export default function DashboardPage() {
                 This section shows only leads and activity directly owned by your user, while the board above stays team-wide.
               </p>
             </div>
-            <RepDashboard metrics={metrics} loading={loading} />
+            <RepDashboard metrics={metrics} loading={loading} onAcknowledgeManagerNote={acknowledgeManagerNote} />
           </section>
         ) : null}
       </div>
@@ -1494,7 +1848,7 @@ export default function DashboardPage() {
           Refresh Board
         </button>
       </div>
-      <RepDashboard metrics={metrics} loading={loading} />
+      <RepDashboard metrics={metrics} loading={loading} onAcknowledgeManagerNote={acknowledgeManagerNote} />
     </div>
   );
 }

@@ -5,6 +5,8 @@ import {
   SALES_DASHBOARD_TARGETS,
   SALES_DASHBOARD_WORKDAY_HOURS,
 } from "@/lib/dashboard-targets";
+import { MANAGER_CALL_REVIEW_CHANNEL } from "@/lib/lead-note-channels";
+import { listLeadNotesWithMetadata } from "@/lib/lead-note-metadata";
 import { resolveLeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import { canUserViewAllLeads, getEffectiveUserRole, getReviewedDashboardNotificationIds, listLeads } from "@/lib/store";
 import type { Lead } from "@/lib/types";
@@ -87,6 +89,14 @@ type DashboardNotification = {
   createdAt: string;
 };
 
+type UpcomingDemoScheduleEntry = {
+  leadId?: string | null;
+  leadName: string;
+  scheduledAt: Date;
+  repId?: string | null;
+  repEmail?: string | null;
+};
+
 type DashboardRepCallDrilldown = {
   userId: string;
   userName: string;
@@ -95,6 +105,8 @@ type DashboardRepCallDrilldown = {
   connectedToday: number;
   recordedCalls: number;
   recordedCallsToday: number;
+  bookedDemoCalls: number;
+  bookedDemoCallsToday: number;
   talkMinutesToday: number;
   recentCalls: Array<{
     contactId: string;
@@ -106,6 +118,7 @@ type DashboardRepCallDrilldown = {
     sentimentLabel: string;
     hasRecording: boolean;
     hasAnalysis: boolean;
+    hasBookedDemo: boolean;
   }>;
 };
 
@@ -659,13 +672,15 @@ export async function GET() {
     const workdayProgress = getWorkdayProgress(now);
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
+    const includeAllUpcomingDemos = includeAll || viewerRole === "TEAM_LEAD";
 
-    const [visibleLeads, tableUsersById, authUsersById, recentCalls, visibleDemoRows, reviewedNotificationIds] = await Promise.all([
+    const [visibleLeads, tableUsersById, authUsersById, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
       listAuthUsersById(),
       listRecentCalls(),
-      listDemoRows({ includeAll, userId: user.id, userEmail: user.email }),
+      listDemoRows({ includeAll: includeAllUpcomingDemos, userId: user.id, userEmail: user.email }),
+      viewerRole === "TEAM_LEAD" ? listLeads(user.id, { includeAll: true }) : Promise.resolve([] as Lead[]),
       getReviewedDashboardNotificationIds(user.id),
     ]);
 
@@ -680,20 +695,24 @@ export async function GET() {
       claimedLeadCountsMap.set(lead.ownerId, (claimedLeadCountsMap.get(lead.ownerId) ?? 0) + 1);
     }
 
-    const persistedLeadDemos = visibleLeads
-      .map((lead) => {
-        if (!lead.demoBooking?.date || !lead.demoBooking?.time) return null;
-        return {
-          leadId: lead.id,
-          leadName: lead.businessName,
-          date: lead.demoBooking.date,
-          time: lead.demoBooking.time,
-          scheduledAt: parseDemoDate(lead),
-        };
-      })
-      .filter((demo): demo is { leadId: string; leadName: string; date: string; time: string; scheduledAt: Date | null } => Boolean(demo));
+    const demoScheduleLeads = includeAllUpcomingDemos && viewerRole === "TEAM_LEAD"
+      ? allDemoSourceLeads
+      : visibleLeads;
 
-    const allUpcomingDemoMap = new Map<string, { leadId?: string | null; leadName: string; scheduledAt: Date }>();
+    const persistedLeadDemos = demoScheduleLeads.flatMap((lead) => {
+      if (!lead.demoBooking?.date || !lead.demoBooking?.time) return [];
+      return [{
+        leadId: lead.id,
+        leadName: lead.businessName,
+        date: lead.demoBooking.date,
+        time: lead.demoBooking.time,
+        scheduledAt: parseDemoDate(lead),
+        repId: typeof lead.ownerId === "string" && lead.ownerId ? lead.ownerId : null,
+        repEmail: null as string | null,
+      }];
+    });
+
+    const allUpcomingDemoMap = new Map<string, UpcomingDemoScheduleEntry>();
 
     for (const demo of visibleDemoRows) {
       const scheduledAt = parseDemoRowDate(demo);
@@ -708,6 +727,8 @@ export async function GET() {
         leadId: demo.lead_id ?? null,
         leadName: demo.lead_name ?? "Unknown Lead",
         scheduledAt,
+        repId: demo.rep_id ?? null,
+        repEmail: demo.rep_email ?? null,
       });
     }
 
@@ -723,6 +744,8 @@ export async function GET() {
         leadId: demo.leadId,
         leadName: demo.leadName,
         scheduledAt: demo.scheduledAt,
+        repId: demo.repId ?? null,
+        repEmail: demo.repEmail ?? null,
       });
     }
 
@@ -820,6 +843,17 @@ export async function GET() {
     ].slice(0, 4);
 
     const repLeadIdSet = new Set(repLeads.map((lead) => lead.id));
+    const bookedDemoLeadIds = new Set<string>();
+    for (const lead of demoScheduleLeads) {
+      if (lead.demoBooking?.date) {
+        bookedDemoLeadIds.add(lead.id);
+      }
+    }
+    for (const demo of visibleDemoRows) {
+      if (typeof demo.lead_id === "string" && demo.lead_id) {
+        bookedDemoLeadIds.add(demo.lead_id);
+      }
+    }
     const upcomingSchedule = [...allUpcomingDemoMap.values()]
       .filter((demo) => demo.leadId && repLeadIdSet.has(demo.leadId))
       .map((demo) => ({
@@ -829,6 +863,55 @@ export async function GET() {
       }))
       .sort((a, b) => a.startsAt - b.startsAt)
       .slice(0, 4);
+
+    const teamUpcomingSchedule = [...allUpcomingDemoMap.values()]
+      .map((demo, index) => ({
+        id: demo.leadId ?? `upcoming-demo-${index}-${demo.scheduledAt.getTime()}`,
+        leadId: demo.leadId ?? null,
+        startsAt: demo.scheduledAt.getTime(),
+        label: `${demo.scheduledAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${demo.scheduledAt.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        })} - ${demo.leadName}`,
+        repName:
+          (demo.repId ? usersById.get(demo.repId) : null) ??
+          (demo.repEmail ? prettyNameFromEmail(demo.repEmail) : null) ??
+          "Unassigned",
+      }))
+      .sort((a, b) => a.startsAt - b.startsAt)
+      .slice(0, 10);
+
+    const repManagerAlertGroups = await Promise.all(
+      repLeads.map(async (lead) => ({
+        lead,
+        notes: await listLeadNotesWithMetadata(lead.id).catch(() => []),
+      })),
+    );
+
+    const repManagerAlerts = repManagerAlertGroups
+      .flatMap(({ lead, notes }) =>
+        notes
+          .filter((note) =>
+            (note.channel || "").trim().toLowerCase() === MANAGER_CALL_REVIEW_CHANNEL &&
+            note.targetUserId === user.id &&
+            note.requiresAcknowledgement &&
+            !note.acknowledgedAt,
+          )
+          .map((note) => ({
+            id: `manager-review-${lead.id}-${note.id}`,
+            noteId: note.id,
+            leadId: lead.id,
+            title: `Manager review note: ${lead.businessName}`,
+            detail: `${note.createdByName ? `${note.createdByName}: ` : ""}${note.content}`,
+            createdAt: note.createdAt,
+          })),
+      )
+      .sort((left, right) => {
+        const leftTime = parseDate(left.createdAt)?.getTime() ?? 0;
+        const rightTime = parseDate(right.createdAt)?.getTime() ?? 0;
+        return rightTime - leftTime;
+      })
+      .slice(0, 6);
 
     const teamLeadIds = new Set<string>();
     const leaderboardSeed = new Map<string, DashboardLeaderboardRow>();
@@ -1014,6 +1097,12 @@ export async function GET() {
       );
       const recordedCalls = repCalls.filter((call) => Boolean(call.recording_s3_uri || call.recording_url));
       const recordedCallsToday = callsToday.filter((call) => Boolean(call.recording_s3_uri || call.recording_url));
+      const bookedDemoCalls = repCalls.filter(
+        (call) => typeof call.lead_id === "string" && bookedDemoLeadIds.has(call.lead_id),
+      );
+      const bookedDemoCallsToday = callsToday.filter(
+        (call) => typeof call.lead_id === "string" && bookedDemoLeadIds.has(call.lead_id),
+      );
       const talkMinutesToday = Math.round(
         sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60,
       );
@@ -1026,12 +1115,15 @@ export async function GET() {
         connectedToday: connectedToday.length,
         recordedCalls: recordedCalls.length,
         recordedCallsToday: recordedCallsToday.length,
+        bookedDemoCalls: bookedDemoCalls.length,
+        bookedDemoCallsToday: bookedDemoCallsToday.length,
         talkMinutesToday,
         recentCalls: repCalls.slice(0, 40).map((call) => {
           const leadId = typeof call.lead_id === "string" ? call.lead_id : "";
           const lead = leadId ? leadsById.get(leadId) : null;
           const hasRecording = Boolean(call.recording_s3_uri || call.recording_url);
           const hasAnalysis = Boolean(call.analysis_s3_uri || call.transcript_text || call.overall_sentiment);
+          const hasBookedDemo = Boolean(lead?.demoBooking?.date) || bookedDemoLeadIds.has(leadId);
           return {
             contactId: typeof call.contact_id === "string" ? call.contact_id : "",
             leadId,
@@ -1042,6 +1134,7 @@ export async function GET() {
             sentimentLabel: normalizeSentiment(call.overall_sentiment),
             hasRecording,
             hasAnalysis,
+            hasBookedDemo,
           };
         }),
       };
@@ -1248,6 +1341,7 @@ export async function GET() {
         focusLeads,
         recentActivity,
         upcomingSchedule,
+        managerAlerts: repManagerAlerts,
       },
       team: {
         summary: {
@@ -1263,6 +1357,7 @@ export async function GET() {
           repsOnTrack,
           repsOffTrack,
         },
+        upcomingSchedule: teamUpcomingSchedule,
         leaderboard,
         scorecards,
         repCallDrilldowns,
