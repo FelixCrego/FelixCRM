@@ -22,6 +22,7 @@ export type OvertimeStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
 export type TimeClockSettings = {
   payType: PayType;
   hourlyRate: number | null;
+  commissionRate: number | null;
   maxWeeklyHours: number | null;
   requireOvertimeApproval: boolean;
 };
@@ -130,6 +131,7 @@ function parseTimeClockSettings(metadata: Record<string, unknown>): TimeClockSet
   const container = asObjectRecord(metadata.timeClock) ?? {};
   const settings = asObjectRecord(container.settings) ?? {};
   const hourlyRate = parseNumber(settings.hourlyRate);
+  const commissionRate = parseNumber(metadata.commissionRate);
   const maxWeeklyHours = parseNumber(settings.maxWeeklyHours);
   const payType =
     settings.payType === "HOURLY" || settings.payType === "HOURLY_PLUS_COMMISSION"
@@ -138,6 +140,7 @@ function parseTimeClockSettings(metadata: Record<string, unknown>): TimeClockSet
   return {
     payType,
     hourlyRate: hourlyRate !== null && hourlyRate >= 0 ? hourlyRate : null,
+    commissionRate: commissionRate !== null && commissionRate >= 0 ? commissionRate : null,
     maxWeeklyHours: maxWeeklyHours !== null && maxWeeklyHours >= 0 ? maxWeeklyHours : null,
     requireOvertimeApproval: parseBoolean(settings.requireOvertimeApproval, true),
   };
@@ -174,7 +177,12 @@ function parseTimeClockEntries(metadata: Record<string, unknown>) {
 
 function buildTimeClockMetadata(settings: TimeClockSettings, entries: TimeClockEntry[]) {
   return {
-    settings,
+    settings: {
+      payType: settings.payType,
+      hourlyRate: settings.hourlyRate,
+      maxWeeklyHours: settings.maxWeeklyHours,
+      requireOvertimeApproval: settings.requireOvertimeApproval,
+    },
     entries: trimEntries(entries),
   };
 }
@@ -289,6 +297,11 @@ async function updateWorkforceUser(
   const nextSettings = next.settings ?? current.settings;
   const nextEntries = next.entries ?? current.entries;
   metadata.timeClock = buildTimeClockMetadata(nextSettings, nextEntries);
+  if (nextSettings.commissionRate === null) {
+    delete metadata.commissionRate;
+  } else {
+    metadata.commissionRate = nextSettings.commissionRate;
+  }
   await saveAuthUserMetadata(userId, metadata);
   return buildWorkforceUser({ ...user, user_metadata: metadata });
 }
@@ -318,6 +331,7 @@ export async function saveWorkforceSettings(
   settings: {
     payType: PayType;
     hourlyRate: number | null;
+    commissionRate: number | null;
     maxWeeklyHours: number | null;
     requireOvertimeApproval: boolean;
   },
@@ -326,6 +340,7 @@ export async function saveWorkforceSettings(
     settings: {
       payType: settings.payType,
       hourlyRate: settings.hourlyRate !== null && settings.hourlyRate >= 0 ? settings.hourlyRate : null,
+      commissionRate: settings.commissionRate !== null && settings.commissionRate >= 0 ? settings.commissionRate : null,
       maxWeeklyHours: settings.maxWeeklyHours !== null && settings.maxWeeklyHours >= 0 ? settings.maxWeeklyHours : null,
       requireOvertimeApproval: settings.requireOvertimeApproval,
     },

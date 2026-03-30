@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { getEffectiveUserRole } from "@/lib/store";
+import { getEffectiveUserRole, listLeads } from "@/lib/store";
+import { buildPayrollSummaries, type UserPayrollSummary } from "@/lib/payroll-utils";
 import {
   clockInWorkforceUser,
   clockOutWorkforceUser,
@@ -21,6 +22,10 @@ type Snapshot = {
   canManageWorkforce: boolean;
   self: WorkforceUser;
   team: WorkforceUser[];
+  payroll: {
+    self: UserPayrollSummary;
+    team: UserPayrollSummary[];
+  };
   pendingApprovals: Array<{
     employeeUserId: string;
     employeeName: string;
@@ -56,10 +61,14 @@ function parsePayType(value: unknown): PayType {
 
 async function buildSnapshot(userId: string, role: UserRole): Promise<Snapshot> {
   const canManageWorkforce = isManagerRole(role);
-  const [self, team] = await Promise.all([
+  const [self, team, leads] = await Promise.all([
     getWorkforceUser(userId),
     canManageWorkforce ? listWorkforceUsers() : Promise.resolve([] as WorkforceUser[]),
+    listLeads(userId, { includeAll: canManageWorkforce }).catch(() => []),
   ]);
+  const payrollUsers = canManageWorkforce ? team : [self];
+  const payrollSummaries = buildPayrollSummaries(payrollUsers, leads);
+  const payrollSelf = payrollSummaries.find((summary) => summary.userId === userId) ?? buildPayrollSummaries([self], leads)[0];
 
   const pendingApprovals = canManageWorkforce
     ? team
@@ -86,6 +95,10 @@ async function buildSnapshot(userId: string, role: UserRole): Promise<Snapshot> 
     canManageWorkforce,
     self,
     team,
+    payroll: {
+      self: payrollSelf,
+      team: canManageWorkforce ? payrollSummaries : [],
+    },
     pendingApprovals,
   };
 }
@@ -155,6 +168,7 @@ export async function PATCH(request: Request) {
           userId?: string;
           payType?: unknown;
           hourlyRate?: unknown;
+          commissionRate?: unknown;
           maxWeeklyHours?: unknown;
           requireOvertimeApproval?: unknown;
           entryId?: string;
@@ -175,6 +189,7 @@ export async function PATCH(request: Request) {
       await saveWorkforceSettings(body.userId.trim(), {
         payType,
         hourlyRate: payType === "COMMISSION" ? null : parseNullableNumber(body.hourlyRate),
+        commissionRate: parseNullableNumber(body.commissionRate),
         maxWeeklyHours: payType === "COMMISSION" ? null : parseNullableNumber(body.maxWeeklyHours),
         requireOvertimeApproval: typeof body.requireOvertimeApproval === "boolean" ? body.requireOvertimeApproval : true,
       });

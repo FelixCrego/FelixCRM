@@ -1,11 +1,9 @@
 import { getAuthenticatedUser } from "@/lib/auth";
 import CommissionRateEditor from "./commission-rate-editor";
 import CommissionPayoutLedger from "./commission-payout-ledger";
+import { COMMISSION_FEE_HOLDBACK_RATE, getEffectiveCommissionRate } from "@/lib/commission-utils";
 import { canUserManageAllLeads, canUserViewAllLeads, listAssignableUsers, listLeads, prettyNameFromEmail } from "@/lib/store";
 import type { Lead } from "@/lib/types";
-
-const FEE_HOLDBACK_RATE = 0.06;
-const DEFAULT_COMMISSION_RATE = 0.1;
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -36,17 +34,6 @@ function getAttributedRepEmail(lead: Lead, repEmailById: Map<string, string | nu
   if (lead.soldByEmail) return lead.soldByEmail;
   if (attributedRepId && repEmailById.has(attributedRepId)) return repEmailById.get(attributedRepId) ?? null;
   return null;
-}
-
-function getCommissionRate(email: string | null | undefined, explicitRate: number | null | undefined) {
-  if (typeof explicitRate === "number" && Number.isFinite(explicitRate) && explicitRate >= 0) {
-    return explicitRate;
-  }
-  const normalized = typeof email === "string" ? email.trim().toLowerCase() : "";
-  if (normalized === "eliot30523@gmail.com") {
-    return 0.5;
-  }
-  return DEFAULT_COMMISSION_RATE;
 }
 
 function getClosedTimestamp(lead: Lead) {
@@ -81,12 +68,12 @@ function buildLedger(
     .filter((lead) => lead.status === "CLOSED" && typeof lead.closedDealValue === "number" && lead.closedDealValue > 0 && lead.closedAt)
     .map((lead) => {
       const grossRevenue = lead.closedDealValue ?? 0;
-      const feeHoldback = grossRevenue * FEE_HOLDBACK_RATE;
+      const feeHoldback = grossRevenue * COMMISSION_FEE_HOLDBACK_RATE;
       const netRevenue = grossRevenue - feeHoldback;
       const soldByEmail = getAttributedRepEmail(lead, repEmailById);
       const attributedRepId = getAttributedRepId(lead);
       const explicitRate = attributedRepId ? repCommissionRateById.get(attributedRepId) ?? null : null;
-      const commissionRate = getCommissionRate(soldByEmail, explicitRate);
+      const commissionRate = getEffectiveCommissionRate(soldByEmail, explicitRate);
 
       return {
         leadId: lead.id,
@@ -154,7 +141,7 @@ export default async function CommissionsPage() {
   const paidOut = visibleLedger.reduce((sum, row) => sum + (row.payoutStatus === "PAID" ? row.payoutPaidAmount ?? row.commissionEarned : 0), 0);
   const unpaidCommission = visibleLedger.reduce((sum, row) => sum + (row.payoutStatus === "UNPAID" ? row.commissionEarned : 0), 0);
   const averageCommissionRate =
-    visibleLedger.length > 0 ? visibleLedger.reduce((sum, row) => sum + row.commissionRate, 0) / visibleLedger.length : getCommissionRate(user.email, null);
+    visibleLedger.length > 0 ? visibleLedger.reduce((sum, row) => sum + row.commissionRate, 0) / visibleLedger.length : getEffectiveCommissionRate(user.email, null);
 
   const groupedRepSummaries = includeAll
     ? Object.values(
@@ -191,7 +178,7 @@ export default async function CommissionsPage() {
           {formatCurrency(commissionEarned)}
         </h1>
         <p className="mt-2 text-sm text-zinc-400">
-          Based only on real closed deals. Commission is calculated from net revenue after a {formatPercent(FEE_HOLDBACK_RATE)} Stripe and bank fee holdback.
+          Based only on real closed deals. Commission is calculated from net revenue after a {formatPercent(COMMISSION_FEE_HOLDBACK_RATE)} Stripe and bank fee holdback.
         </p>
       </header>
 
@@ -214,7 +201,7 @@ export default async function CommissionsPage() {
         <MetricCard
           label="Avg Commission Rate"
           value={formatPercent(averageCommissionRate)}
-          detail={includeAll ? "Weighted by current rep mappings." : `Your current rate is ${formatPercent(getCommissionRate(user.email, null))}.`}
+          detail={includeAll ? "Weighted by current rep mappings." : `Your current rate is ${formatPercent(getEffectiveCommissionRate(user.email, null))}.`}
         />
         <MetricCard
           label="Paid Out"
