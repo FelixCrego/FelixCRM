@@ -367,8 +367,8 @@ function RepCallDrawer({
             <div className="space-y-3">
               {drilldown.recentCalls.map((call) => {
                 const recordingUrl =
-                  call.leadId && call.contactId
-                    ? `/api/call-recordings/stream?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}`
+                  call.leadId && call.contactId && call.durationSeconds > 0
+                    ? `/api/call-recordings?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}&mode=redirect`
                     : null;
 
                 return (
@@ -420,9 +420,13 @@ function RepCallDrawer({
                     {call.hasRecording && recordingUrl ? (
                       <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
                         <p className="mb-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">Call Recording</p>
-                        <audio controls preload="none" className="w-full" src={recordingUrl}>
+                        <audio controls preload="metadata" className="w-full" src={recordingUrl}>
                           Your browser does not support audio playback.
                         </audio>
+                      </div>
+                    ) : call.hasRecording ? (
+                      <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                        This call has a recording artifact, but Amazon Connect did not store usable call duration for playback.
                       </div>
                     ) : (
                       <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">

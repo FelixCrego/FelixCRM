@@ -8,12 +8,22 @@ export async function GET(request: Request) {
     const auth = await requireAuthorizedCallAnalytics(request);
     if ("error" in auth) return auth.error;
 
+    const url = new URL(request.url);
+    const mode = url.searchParams.get("mode")?.trim().toLowerCase() ?? "";
+
     const playable = await getPlayableRecording(auth.record);
     if (!playable?.url) {
       return NextResponse.json(
         { error: "No playable recording URL is available for this call." },
         { status: 404 },
       );
+    }
+
+    if (mode === "redirect") {
+      const target = playable.url.startsWith("http")
+        ? playable.url
+        : new URL(playable.url, request.url).toString();
+      return NextResponse.redirect(target, { status: 307 });
     }
 
     return NextResponse.json({
