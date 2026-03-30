@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Mail, Phone, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { resolveLeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import type { Lead } from "@/lib/types";
 
 type Stage = "New" | "Pitched" | "Awaiting Approval" | "Payment Pending" | "Closed Won" | "No Show";
@@ -41,16 +42,13 @@ function getLeadWorkspaceHref(deal: Deal): string | null {
 }
 
 function toPipelineStage(lead: Lead): Stage {
-  const rawStatus = String(lead.status ?? "").trim().toUpperCase();
-  const hasDemoBooking = Boolean(lead.demoBooking?.date && lead.demoBooking?.time);
+  const workspaceStatus = resolveLeadWorkspaceStatus(lead);
 
-  if (rawStatus === "CLOSED" || rawStatus === "CLOSED WON") return "Closed Won";
-  if (rawStatus === "DISQUALIFIED" || rawStatus === "NO SHOW") return "No Show";
-  if (lead.stripeCheckoutLink || rawStatus === "PAYMENT PENDING") return "Payment Pending";
-  if (rawStatus === "AWAITING APPROVAL" || rawStatus === "AWAITING_APPROVAL") return "Awaiting Approval";
-  if (hasDemoBooking) return "Awaiting Approval";
-  if (rawStatus === "DEMO_BOOKED" || rawStatus === "DEMO BOOKED") return "Awaiting Approval";
-  if (rawStatus === "ATTEMPTED" || rawStatus === "CONTACTED" || rawStatus === "PITCHED") return "Pitched";
+  if (workspaceStatus === "CLOSED") return "Closed Won";
+  if (workspaceStatus === "DISQUALIFIED") return "No Show";
+  if (lead.stripeCheckoutLink || workspaceStatus === "PAYMENT_PENDING") return "Payment Pending";
+  if (workspaceStatus === "AWAITING_APPROVAL" || workspaceStatus === "DEMO_BOOKED") return "Awaiting Approval";
+  if (workspaceStatus === "ATTEMPTED" || workspaceStatus === "CONTACTED") return "Pitched";
   return "New";
 }
 

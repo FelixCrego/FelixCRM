@@ -913,6 +913,12 @@ function leadToMemory(lead: any): Lead {
     websiteUrl: lead.websiteUrl ?? lead.website_url,
     websiteStatus: lead.websiteStatus ?? lead.website_status,
     status: lead.status,
+    workspaceStatus:
+      typeof sourcePayload.workspaceStatus === "string"
+        ? sourcePayload.workspaceStatus
+        : typeof sourcePayload.workspace_status === "string"
+          ? sourcePayload.workspace_status
+          : null,
     deployedUrl: lead.deployedUrl ?? lead.deployed_url,
     siteStatus: (lead.siteStatus ?? lead.site_status ?? "UNBUILT") as Lead["siteStatus"],
     vercelDeploymentId: typeof (lead.vercelDeploymentId ?? lead.vercel_deployment_id) === "string" ? (lead.vercelDeploymentId ?? lead.vercel_deployment_id) : null,
@@ -1591,6 +1597,8 @@ export async function setLeadDemoBooking(
                   source_payload: {
                     ...payload,
                     demoBooking: nextDemoBooking,
+                    workspaceStatus: "DEMO_BOOKED",
+                    workspaceStatusUpdatedAt: updatedAt,
                   },
                 }
               : {
@@ -1599,6 +1607,8 @@ export async function setLeadDemoBooking(
                   sourcePayload: {
                     ...payload,
                     demoBooking: nextDemoBooking,
+                    workspaceStatus: "DEMO_BOOKED",
+                    workspaceStatusUpdatedAt: updatedAt,
                   },
                 },
           ),
@@ -1660,6 +1670,89 @@ export async function setLeadStatus(
   });
 
   return { status: nextStatus || "NEW", updatedAt };
+}
+
+export async function setLeadWorkspaceStatus(
+  leadId: string,
+  ownerId: string,
+  workspaceStatus: string | null,
+  options?: { bypassOwnership?: boolean; canonicalStatus?: string | null },
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to update lead status.");
+
+  const nextWorkspaceStatus = typeof workspaceStatus === "string" ? workspaceStatus.trim().toUpperCase() : "";
+  const nextCanonicalStatus = typeof options?.canonicalStatus === "string" ? options.canonicalStatus.trim().toUpperCase() : "";
+
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: isSnakeLeadsTable(table) ? "id,owner_id,source_payload" : "id,ownerId,sourcePayload",
+    id: `eq.${leadId}`,
+    limit: "1",
+  }));
+
+  const lead = rows[0];
+  if (!lead) throw new Error("Lead not found.");
+
+  const leadOwnerId = lead.owner_id ?? lead.ownerId ?? null;
+  if (!options?.bypassOwnership && leadOwnerId && leadOwnerId !== ownerId) {
+    throw new Error("Forbidden");
+  }
+
+  const rawPayload = lead.source_payload ?? lead.sourcePayload ?? {};
+  const payload =
+    rawPayload && typeof rawPayload === "object"
+      ? { ...(rawPayload as Record<string, unknown>) }
+      : typeof rawPayload === "string"
+        ? { ...(parseJsonSafely<Record<string, unknown>>(rawPayload) ?? {}) }
+        : {};
+
+  const updatedAt = new Date().toISOString();
+  if (nextWorkspaceStatus) {
+    payload.workspaceStatus = nextWorkspaceStatus;
+    payload.workspaceStatusUpdatedAt = updatedAt;
+  } else {
+    delete payload.workspaceStatus;
+    delete payload.workspaceStatusUpdatedAt;
+  }
+
+  const patchLead = async (includeCanonicalStatus: boolean) =>
+    withLeadTableFallback((table) => {
+      const ownerColumn = isSnakeLeadsTable(table) ? "owner_id" : "ownerId";
+      const filters = {
+        id: `eq.${leadId}`,
+        ...(!options?.bypassOwnership && leadOwnerId ? { [ownerColumn]: `eq.${ownerId}` } : {}),
+      } as Record<string, string>;
+
+      return supabaseRequest(table, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(
+          isSnakeLeadsTable(table)
+            ? {
+                ...(includeCanonicalStatus && nextCanonicalStatus ? { status: nextCanonicalStatus } : {}),
+                updated_at: updatedAt,
+                source_payload: payload,
+              }
+            : {
+                ...(includeCanonicalStatus && nextCanonicalStatus ? { status: nextCanonicalStatus } : {}),
+                updatedAt,
+                sourcePayload: payload,
+              },
+        ),
+      }, filters);
+    });
+
+  try {
+    await patchLead(Boolean(nextCanonicalStatus));
+  } catch (error) {
+    if (!nextCanonicalStatus || !isLeadStatusConstraintError(error)) throw error;
+    await patchLead(false);
+  }
+
+  return {
+    workspaceStatus: nextWorkspaceStatus || null,
+    updatedAt,
+    status: nextCanonicalStatus || null,
+  };
 }
 
 

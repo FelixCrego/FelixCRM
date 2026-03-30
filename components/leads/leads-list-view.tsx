@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, Clock3, Search, SlidersHorizontal } from "lucide-react";
+import { type LeadWorkspaceStatus, resolveLeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import type { Lead } from "@/lib/types";
 import { AddLeadModal } from "@/components/leads/add-lead-modal";
 
@@ -14,18 +15,7 @@ type LeadsListViewProps = {
   openDescription?: string;
 };
 
-type WorkspaceLeadStatus =
-  | "UNSET"
-  | "NEW"
-  | "ATTEMPTED"
-  | "CONTACTED"
-  | "DEMO_BOOKED"
-  | "AWAITING_APPROVAL"
-  | "PAYMENT_PENDING"
-  | "CLOSED"
-  | "DISQUALIFIED";
-
-const workspaceStatusOptions: WorkspaceLeadStatus[] = [
+const workspaceStatusOptions: LeadWorkspaceStatus[] = [
   "UNSET",
   "ATTEMPTED",
   "CONTACTED",
@@ -35,7 +25,7 @@ const workspaceStatusOptions: WorkspaceLeadStatus[] = [
   "DISQUALIFIED",
 ];
 
-const statusLabelMap: Record<WorkspaceLeadStatus, string> = {
+const statusLabelMap: Record<LeadWorkspaceStatus, string> = {
   UNSET: "No Status",
   NEW: "Not Contacted",
   ATTEMPTED: "Attempted Contact",
@@ -56,7 +46,7 @@ const vercelStatusMap: Record<LeadSiteStatus, string> = {
   FAILED: "Failed",
 } as const;
 
-const leadStatusPillMap: Record<WorkspaceLeadStatus, string> = {
+const leadStatusPillMap: Record<LeadWorkspaceStatus, string> = {
   UNSET: "border-zinc-800 bg-transparent text-zinc-500",
   NEW: "border-zinc-700/90 bg-zinc-800/80 text-zinc-300",
   ATTEMPTED: "border-amber-500/40 bg-amber-500/15 text-amber-300",
@@ -115,6 +105,7 @@ function normalizeLead(raw: unknown): Lead | null {
           }
         : null,
     status,
+    workspaceStatus: typeof lead.workspaceStatus === "string" ? lead.workspaceStatus.trim() : null,
     deployedUrl: typeof lead.deployedUrl === "string" ? lead.deployedUrl : null,
     siteStatus,
     ownerId: typeof lead.ownerId === "string" ? lead.ownerId : null,
@@ -159,30 +150,8 @@ function formatCurrency(value?: number | null) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value ?? 0);
 }
 
-function leadHasBookedDemo(lead: Lead) {
-  return Boolean(lead.demoBooking?.meetLink && lead.demoBooking?.date && lead.demoBooking?.time);
-}
-
-function normalizeWorkspaceStatus(input?: string | null): WorkspaceLeadStatus {
-  const normalized = String(input ?? "").trim().toUpperCase().replace(/\s+/g, "_");
-
-  if (!normalized || normalized === "NEW" || normalized === "IN_PROGRESS") return "UNSET";
-  if (normalized === "ATTEMPTED") return "ATTEMPTED";
-  if (normalized === "CONTACTED" || normalized === "PITCHED") return "CONTACTED";
-  if (normalized === "DEMO_BOOKED") return "DEMO_BOOKED";
-  if (normalized === "AWAITING_APPROVAL") return "AWAITING_APPROVAL";
-  if (normalized === "PAYMENT_PENDING") return "PAYMENT_PENDING";
-  if (normalized === "CLOSED" || normalized === "CLOSED_WON") return "CLOSED";
-  if (normalized === "DISQUALIFIED" || normalized === "NO_SHOW") return "DISQUALIFIED";
-  return "UNSET";
-}
-
-function resolveWorkspaceStatus(lead: Lead): WorkspaceLeadStatus {
-  const normalizedStatus = normalizeWorkspaceStatus(lead.status);
-  if (normalizedStatus === "CLOSED") return "CLOSED";
-  if (normalizedStatus === "AWAITING_APPROVAL" || normalizedStatus === "PAYMENT_PENDING") return normalizedStatus;
-  if (leadHasBookedDemo(lead) || normalizedStatus === "DEMO_BOOKED") return "DEMO_BOOKED";
-  return normalizedStatus;
+function resolveWorkspaceStatus(lead: Lead): LeadWorkspaceStatus {
+  return resolveLeadWorkspaceStatus(lead);
 }
 
 function formatLastTouched(updatedAt?: string | null) {
@@ -199,7 +168,7 @@ function formatLastTouched(updatedAt?: string | null) {
   return `Touched ${parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 
-function getSuggestedNextStep(status: WorkspaceLeadStatus) {
+function getSuggestedNextStep(status: LeadWorkspaceStatus) {
   if (status === "UNSET") return "Make first outreach";
   if (status === "NEW") return "Make first outreach";
   if (status === "ATTEMPTED") return "Try a second touch";
@@ -229,7 +198,7 @@ export function LeadsListView({
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"ALL" | WorkspaceLeadStatus>("ALL");
+  const [status, setStatus] = useState<"ALL" | LeadWorkspaceStatus>("ALL");
   const [industry, setIndustry] = useState("ALL");
   const [lastContacted, setLastContacted] = useState<"ALL" | "24h" | "7d" | "30d+">("ALL");
   const [closedDateRange, setClosedDateRange] = useState<"ALL" | "7D" | "30D" | "90D" | "YTD">("ALL");
@@ -239,7 +208,6 @@ export function LeadsListView({
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
   const [remoteSearchLeads, setRemoteSearchLeads] = useState<Lead[]>([]);
   const [leadOverrides, setLeadOverrides] = useState<Record<string, Partial<Lead>>>({});
-  const [savingStatusLeadId, setSavingStatusLeadId] = useState<string | null>(null);
   const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
   const [calculatorCallToDemoRate, setCalculatorCallToDemoRate] = useState(20);
   const [calculatorShowRate, setCalculatorShowRate] = useState(70);
@@ -378,38 +346,6 @@ export function LeadsListView({
       setDeleteError(error instanceof Error ? error.message : "Unable to delete leads.");
     } finally {
       setIsDeleting(false);
-    }
-  }
-
-  async function handleStatusUpdate(leadId: string, nextStatus: WorkspaceLeadStatus) {
-    setDeleteError(null);
-    setSavingStatusLeadId(leadId);
-
-    try {
-      const response = await fetch("/api/leads", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId, status: nextStatus === "UNSET" ? null : nextStatus }),
-      });
-
-      const payload = (await response.json().catch(() => null)) as { status?: string | null; updatedAt?: string; error?: string } | null;
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Unable to update lead status.");
-      }
-
-      setLeadOverrides((previous) => ({
-        ...previous,
-        [leadId]: {
-          ...(previous[leadId] ?? {}),
-          status: nextStatus === "UNSET" ? "" : nextStatus,
-          updatedAt: payload?.updatedAt ?? new Date().toISOString(),
-        },
-      }));
-      router.refresh();
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : "Unable to update lead status.");
-    } finally {
-      setSavingStatusLeadId(null);
     }
   }
 
@@ -750,7 +686,7 @@ export function LeadsListView({
 
           <label className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-300">
             <SlidersHorizontal className="h-4 w-4 text-zinc-500" />
-            <select value={status} onChange={(event) => setStatus(event.target.value as "ALL" | WorkspaceLeadStatus)} className="w-full bg-transparent outline-none">
+            <select value={status} onChange={(event) => setStatus(event.target.value as "ALL" | LeadWorkspaceStatus)} className="w-full bg-transparent outline-none">
               <option value="ALL">Status: All</option>
               {workspaceStatusOptions.map((option) => (
                 <option key={option} value={option}>
@@ -947,18 +883,9 @@ export function LeadsListView({
                 <td className="px-4 py-3 text-right" onClick={(event) => event.stopPropagation()}>
                   <div className="inline-flex flex-col items-end gap-2">
                     {viewMode === "open" ? (
-                      <select
-                        value={workspaceStatus}
-                        onChange={(event) => void handleStatusUpdate(lead.id, event.target.value as WorkspaceLeadStatus)}
-                        disabled={savingStatusLeadId === lead.id}
-                        className="rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-200 outline-none disabled:opacity-60"
-                      >
-                        {workspaceStatusOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {statusLabelMap[option]}
-                          </option>
-                        ))}
-                      </select>
+                      <span className="rounded-md border border-zinc-700/70 bg-zinc-950/70 px-2.5 py-1.5 text-[11px] font-medium text-zinc-400">
+                        {workspaceStatus === "UNSET" ? "Updates after Connect disposition" : "Synced from Connect"}
+                      </span>
                     ) : null}
                     {viewMode === "open" ? (
                       <button

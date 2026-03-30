@@ -94,6 +94,7 @@ export type Lead = {
     bookedAt?: string;
   } | null;
   status: string;
+  workspaceStatus?: string | null;
   deployedUrl?: string | null;
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
   vercelDeploymentId?: string | null;

@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { canUserViewAllLeads, createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads, setLeadStatus } from "@/lib/store";
+import { canUserViewAllLeads, createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads, setLeadWorkspaceStatus } from "@/lib/store";
 import { getAuthenticatedUser, getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET(request: Request) {
@@ -93,7 +93,9 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Invalid lead status." }, { status: 400 });
     }
 
-    const result = await setLeadStatus(leadId, userId, nextStatus || null);
+    const result = await setLeadWorkspaceStatus(leadId, userId, nextStatus || null, {
+      canonicalStatus: nextStatus === "DISQUALIFIED" || nextStatus === "CLOSED" ? nextStatus : null,
+    });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to update lead." }, { status: 500 });

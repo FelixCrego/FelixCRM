@@ -1,22 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { canUserViewAllLeads, createLeadNote, listLeadNotes, sanitizeLeadNotesForLead, setLeadStatus } from "@/lib/store";
+import { canUserViewAllLeads, createLeadNote, listLeadNotes, sanitizeLeadNotesForLead, setLeadWorkspaceStatus } from "@/lib/store";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { upsertCallAnalytics } from "@/lib/call-analytics-store";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
-
-function statusFromDispositionChannel(channel: string): string | null {
-  const normalizedChannel = channel.trim().toLowerCase();
-  if (!normalizedChannel.startsWith("disposition:")) return null;
-
-  const disposition = normalizedChannel.slice("disposition:".length).replace(/\s+/g, "_");
-  if (disposition === "booked_demo") return "DEMO_BOOKED";
-  if (disposition === "wrong_number") return "DISQUALIFIED";
-  if (disposition === "no_answer" || disposition === "left_voicemail" || disposition === "voicemail") return "ATTEMPTED";
-  if (disposition === "interested" || disposition === "not_interested" || disposition === "call_back") return "CONTACTED";
-  return null;
-}
+import { leadWorkspaceStatusFromDispositionChannel } from "@/lib/lead-workspace-status";
 
 export async function GET(request: Request) {
   try {
@@ -55,11 +44,14 @@ export async function POST(request: Request) {
 
     const note = await createLeadNote(leadId, content, channel, body?.contactId?.trim() || null);
     const shouldBypassOwnership = await canUserViewAllLeads(user.id, user.email).catch(() => false);
-    const nextLeadStatus = statusFromDispositionChannel(channel);
+    const nextLeadStatus = leadWorkspaceStatusFromDispositionChannel(channel);
 
     if (nextLeadStatus) {
       try {
-        await setLeadStatus(leadId, user.id, nextLeadStatus, { bypassOwnership: shouldBypassOwnership });
+        await setLeadWorkspaceStatus(leadId, user.id, nextLeadStatus, {
+          bypassOwnership: shouldBypassOwnership,
+          canonicalStatus: nextLeadStatus === "DISQUALIFIED" ? "DISQUALIFIED" : null,
+        });
       } catch (error) {
         console.warn("Unable to update lead status from disposition:", error);
       }
