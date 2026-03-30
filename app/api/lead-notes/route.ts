@@ -1,11 +1,14 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { canUserViewAllLeads, createLeadNote, listLeadNotes, sanitizeLeadNotesForLead, setLeadWorkspaceStatus } from "@/lib/store";
+import { canUserViewAllLeads, createLeadNote, getEffectiveUserRole, listLeadNotes, sanitizeLeadNotesForLead, setLeadWorkspaceStatus } from "@/lib/store";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { upsertCallAnalytics } from "@/lib/call-analytics-store";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 import { leadWorkspaceStatusFromDispositionChannel } from "@/lib/lead-workspace-status";
+
+const MANAGER_CALL_REVIEW_CHANNEL = "manager_call_review";
+const MANAGER_CALL_REVIEW_ROLES = new Set(["MANAGER", "TEAM_LEAD", "SUPER_ADMIN"]);
 
 export async function GET(request: Request) {
   try {
@@ -38,9 +41,17 @@ export async function POST(request: Request) {
     const leadId = body?.leadId?.trim();
     const content = body?.content?.trim();
     const channel = body?.channel?.trim() || "notes";
+    const normalizedChannel = channel.toLowerCase();
 
     if (!leadId) return NextResponse.json({ error: "leadId is required" }, { status: 400 });
     if (!content) return NextResponse.json({ error: "content is required" }, { status: 400 });
+
+    if (normalizedChannel === MANAGER_CALL_REVIEW_CHANNEL) {
+      const role = await getEffectiveUserRole(user.id, user.email).catch(() => "REP");
+      if (!MANAGER_CALL_REVIEW_ROLES.has(role)) {
+        return NextResponse.json({ error: "Only managers, team leads, and super admins can add review notes." }, { status: 403 });
+      }
+    }
 
     const note = await createLeadNote(leadId, content, channel, body?.contactId?.trim() || null);
     const shouldBypassOwnership = await canUserViewAllLeads(user.id, user.email).catch(() => false);

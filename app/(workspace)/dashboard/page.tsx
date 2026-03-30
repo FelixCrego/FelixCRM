@@ -217,6 +217,19 @@ type ManagerLockedPlan = {
   };
 };
 
+type LeadNoteRecord = {
+  id: string;
+  leadId: string;
+  contactId?: string | null;
+  content: string;
+  channel: string;
+  createdAt?: string;
+  created_at?: string;
+};
+
+const MANAGER_CALL_REVIEW_CHANNEL = "manager_call_review";
+const MANAGER_CALL_REVIEW_ROLES = new Set(["MANAGER", "TEAM_LEAD", "SUPER_ADMIN"]);
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -249,6 +262,14 @@ function getNewYorkDayKey(value: string | Date) {
     month: "2-digit",
     day: "2-digit",
   }).format(parsed);
+}
+
+function canWriteManagerCallReview(viewerRole: string | null | undefined) {
+  return typeof viewerRole === "string" && MANAGER_CALL_REVIEW_ROLES.has(viewerRole);
+}
+
+function getLeadNoteCreatedAt(note: LeadNoteRecord) {
+  return note.createdAt || note.created_at || new Date().toISOString();
 }
 
 function formatDurationSeconds(value: number) {
@@ -320,15 +341,108 @@ function KpiCard({
 function RepCallDrawer({
   drilldown,
   onClose,
+  viewerRole,
 }: {
   drilldown: DashboardMetrics["team"]["repCallDrilldowns"][number];
   onClose: () => void;
+  viewerRole: string;
 }) {
   const [resolvedDurations, setResolvedDurations] = useState<Record<string, number>>({});
+  const [reviewNotesByContact, setReviewNotesByContact] = useState<Record<string, LeadNoteRecord[]>>({});
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({});
+  const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({});
+  const [reviewNotesLoading, setReviewNotesLoading] = useState(false);
+  const [reviewNotesError, setReviewNotesError] = useState("");
+  const [savingReviewContactId, setSavingReviewContactId] = useState<string | null>(null);
+  const canWriteReviewNotes = canWriteManagerCallReview(viewerRole);
+  const scopedReviewCalls = useMemo(
+    () => drilldown.recentCalls.filter((call) => call.leadId && call.contactId),
+    [drilldown.recentCalls],
+  );
+  const reviewScopeKey = useMemo(
+    () => scopedReviewCalls.map((call) => `${call.leadId}:${call.contactId}`).join("|"),
+    [scopedReviewCalls],
+  );
+  const reviewLeadIds = useMemo(
+    () => Array.from(new Set(scopedReviewCalls.map((call) => call.leadId))),
+    [scopedReviewCalls],
+  );
+  const reviewContactIds = useMemo(
+    () => new Set(scopedReviewCalls.map((call) => call.contactId)),
+    [scopedReviewCalls],
+  );
 
   useEffect(() => {
     setResolvedDurations({});
   }, [drilldown.userId]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    setReviewNotesByContact({});
+    setReviewDrafts({});
+    setReviewErrors({});
+    setReviewNotesError("");
+
+    if (reviewLeadIds.length === 0) {
+      return () => {
+        isActive = false;
+      };
+    }
+
+    setReviewNotesLoading(true);
+
+    async function loadReviewNotes() {
+      try {
+        const responses = await Promise.all(
+          reviewLeadIds.map(async (leadId) => {
+            const response = await fetch(`/api/lead-notes?leadId=${encodeURIComponent(leadId)}`, {
+              cache: "no-store",
+              credentials: "include",
+            });
+            const payload = (await response.json().catch(() => null)) as { notes?: LeadNoteRecord[]; error?: string } | null;
+            if (!response.ok) {
+              throw new Error(payload?.error || "Unable to load manager review notes.");
+            }
+            return Array.isArray(payload?.notes) ? payload.notes : [];
+          }),
+        );
+
+        if (!isActive) return;
+
+        const nextNotesByContact: Record<string, LeadNoteRecord[]> = {};
+        for (const notes of responses) {
+          for (const note of notes) {
+            if ((note.channel || "").trim().toLowerCase() !== MANAGER_CALL_REVIEW_CHANNEL) continue;
+            const contactId = typeof note.contactId === "string" ? note.contactId.trim() : "";
+            if (!contactId || !reviewContactIds.has(contactId)) continue;
+            nextNotesByContact[contactId] = [...(nextNotesByContact[contactId] ?? []), note];
+          }
+        }
+
+        for (const [contactId, notes] of Object.entries(nextNotesByContact)) {
+          nextNotesByContact[contactId] = [...notes].sort(
+            (left, right) => getLeadNoteCreatedAt(right).localeCompare(getLeadNoteCreatedAt(left)),
+          );
+        }
+
+        setReviewNotesByContact(nextNotesByContact);
+      } catch (error) {
+        if (!isActive) return;
+        setReviewNotesError(error instanceof Error ? error.message : "Unable to load manager review notes.");
+      } finally {
+        if (isActive) {
+          setReviewNotesLoading(false);
+        }
+      }
+    }
+
+    void loadReviewNotes();
+
+    return () => {
+      isActive = false;
+    };
+  }, [reviewContactIds, reviewLeadIds, reviewScopeKey]);
 
   const todayKey = getNewYorkDayKey(new Date());
   const talkSecondsToday = drilldown.recentCalls.reduce((total, call) => {
@@ -388,6 +502,11 @@ function RepCallDrawer({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
+          {reviewNotesError ? (
+            <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              {reviewNotesError}
+            </div>
+          ) : null}
           {drilldown.recentCalls.length === 0 ? (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-sm text-zinc-400">
               No calls are attached to this rep yet.
@@ -400,6 +519,10 @@ function RepCallDrawer({
                     ? `/api/call-recordings?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}&mode=redirect`
                     : null;
                 const effectiveDuration = resolvedDurations[call.contactId] ?? call.durationSeconds;
+                const reviewNotes = reviewNotesByContact[call.contactId] ?? [];
+                const reviewDraft = reviewDrafts[call.contactId] ?? "";
+                const reviewError = reviewErrors[call.contactId] ?? "";
+                const isSavingReview = savingReviewContactId === call.contactId;
 
                 return (
                   <article key={`${call.contactId}-${call.callAt}`} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
@@ -476,6 +599,103 @@ function RepCallDrawer({
                         Recording is not attached to this call yet.
                       </div>
                     )}
+
+                    <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Manager Review Notes</p>
+                          <p className="mt-1 text-xs text-zinc-400">Coaching notes tied to this specific call after review.</p>
+                        </div>
+                        <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-zinc-300">
+                          {canWriteReviewNotes ? "Leadership Only" : "Read Only"}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {reviewNotesLoading && reviewNotes.length === 0 ? (
+                          <p className="text-sm text-zinc-400">Loading review notes...</p>
+                        ) : reviewNotes.length === 0 ? (
+                          <p className="text-sm text-zinc-500">No manager review notes have been added for this call yet.</p>
+                        ) : (
+                          reviewNotes.map((note) => (
+                            <article key={note.id} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
+                              <p className="whitespace-pre-wrap text-sm text-zinc-100">{note.content}</p>
+                              <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-zinc-500">
+                                {formatDateTime(getLeadNoteCreatedAt(note))}
+                              </p>
+                            </article>
+                          ))
+                        )}
+                      </div>
+
+                      {canWriteReviewNotes ? (
+                        <div className="mt-3 space-y-2">
+                          <textarea
+                            value={reviewDraft}
+                            onChange={(event) => {
+                              const nextValue = event.target.value;
+                              setReviewDrafts((current) => ({ ...current, [call.contactId]: nextValue }));
+                              if (reviewErrors[call.contactId]) {
+                                setReviewErrors((current) => ({ ...current, [call.contactId]: "" }));
+                              }
+                            }}
+                            rows={3}
+                            placeholder="Add manager feedback, objection coaching, or follow-up direction for this call..."
+                            className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-blue-400"
+                          />
+                          {reviewError ? <p className="text-sm text-rose-300">{reviewError}</p> : null}
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              disabled={!reviewDraft.trim() || isSavingReview}
+                              onClick={async () => {
+                                const content = reviewDraft.trim();
+                                if (!content) return;
+
+                                setSavingReviewContactId(call.contactId);
+                                setReviewErrors((current) => ({ ...current, [call.contactId]: "" }));
+
+                                try {
+                                  const response = await fetch("/api/lead-notes", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    cache: "no-store",
+                                    credentials: "include",
+                                    body: JSON.stringify({
+                                      leadId: call.leadId,
+                                      contactId: call.contactId,
+                                      channel: MANAGER_CALL_REVIEW_CHANNEL,
+                                      content,
+                                    }),
+                                  });
+                                  const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+
+                                  if (!response.ok || !payload?.note) {
+                                    throw new Error(payload?.error || "Unable to save manager review note.");
+                                  }
+
+                                  setReviewNotesByContact((current) => ({
+                                    ...current,
+                                    [call.contactId]: [payload.note as LeadNoteRecord, ...(current[call.contactId] ?? [])].slice(0, 10),
+                                  }));
+                                  setReviewDrafts((current) => ({ ...current, [call.contactId]: "" }));
+                                } catch (error) {
+                                  setReviewErrors((current) => ({
+                                    ...current,
+                                    [call.contactId]: error instanceof Error ? error.message : "Unable to save manager review note.",
+                                  }));
+                                } finally {
+                                  setSavingReviewContactId((current) => (current === call.contactId ? null : current));
+                                }
+                              }}
+                              className="inline-flex rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-100 transition hover:border-blue-400 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-500"
+                            >
+                              {isSavingReview ? "Saving..." : "Save Manager Note"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </article>
                 );
               })}
@@ -719,11 +939,13 @@ function ManagerDashboard({
   loading,
   showRepWorkspace = true,
   onReviewNotification,
+  viewerRole,
 }: {
   metrics: DashboardMetrics | null;
   loading: boolean;
   showRepWorkspace?: boolean;
   onReviewNotification: (notificationId: string) => void;
+  viewerRole: string;
 }) {
   const [lockedPlan, setLockedPlan] = useState<ManagerLockedPlan | null>(null);
   const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
@@ -1112,7 +1334,9 @@ function ManagerDashboard({
         </section>
       ) : null}
 
-      {selectedRepDrilldown ? <RepCallDrawer drilldown={selectedRepDrilldown} onClose={() => setSelectedRepId(null)} /> : null}
+      {selectedRepDrilldown ? (
+        <RepCallDrawer drilldown={selectedRepDrilldown} onClose={() => setSelectedRepId(null)} viewerRole={viewerRole} />
+      ) : null}
     </div>
   );
 }
@@ -1233,7 +1457,13 @@ export default function DashboardPage() {
             Refresh Board
           </button>
         </div>
-        <ManagerDashboard metrics={metrics} loading={loading} showRepWorkspace={!shouldShowBothBoards} onReviewNotification={reviewNotification} />
+        <ManagerDashboard
+          metrics={metrics}
+          loading={loading}
+          showRepWorkspace={!shouldShowBothBoards}
+          onReviewNotification={reviewNotification}
+          viewerRole={effectiveRole}
+        />
         {shouldShowBothBoards ? (
           <section className="space-y-3">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
