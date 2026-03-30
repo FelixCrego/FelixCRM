@@ -5,6 +5,7 @@ import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook
 import { getAuthenticatedUser } from "@/lib/auth";
 import { buildSalesLearningSnapshot } from "@/lib/sales-learning";
 import { canUserManageAllLeads, getLeadById, prettyNameFromEmail } from "@/lib/store";
+import { getUserDisplayName } from "@/lib/workforce-store";
 
 export const maxDuration = 60;
 
@@ -67,9 +68,11 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
 
-function resolveRepName(email?: string | null) {
-  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
-  return normalizedEmail ? prettyNameFromEmail(normalizedEmail) : "someone from Felix";
+async function resolveRepName(userId: string, email?: string | null) {
+  return getUserDisplayName(userId, email).catch(() => {
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    return normalizedEmail ? prettyNameFromEmail(normalizedEmail) : "someone from Felix";
+  });
 }
 
 function normalizePlaybookPayload(raw: unknown): AIDynamicPlaybook | null {
@@ -328,10 +331,11 @@ export async function POST(req: Request) {
     if (!user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const providedRepName = typeof payload.repName === "string" ? payload.repName.trim() : "";
     repName =
-      typeof payload.repName === "string" && payload.repName.trim()
-        ? payload.repName.trim()
-        : resolveRepName(user.email);
+      providedRepName && !providedRepName.includes("@")
+        ? providedRepName
+        : await resolveRepName(user.id, providedRepName || user.email);
 
     leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : "";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";

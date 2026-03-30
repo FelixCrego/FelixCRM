@@ -897,7 +897,15 @@ export function LeadsListView({
                         {isDeleting ? "Deleting..." : "Delete"}
                       </button>
                     ) : null}
-                    <span className="inline-flex items-center gap-1 rounded-md border border-zinc-700/60 bg-zinc-900/40 px-2.5 py-1.5 text-xs text-zinc-300">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/leads/${lead.id}`)}
+                      className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 transition hover:bg-blue-500/15"
+                    >
+                      Open Workspace
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="hidden items-center gap-1 rounded-md border border-zinc-700/60 bg-zinc-900/40 px-2.5 py-1.5 text-xs text-zinc-300">
                       Open Workspace → <ArrowRight className="h-3.5 w-3.5" />
                     </span>
                   </div>

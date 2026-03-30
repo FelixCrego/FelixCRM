@@ -1,8 +1,9 @@
 import type { UserRole } from "@/lib/types";
 import { NextResponse } from "next/server";
-import { getEffectiveUserRole, getProfile, prettyNameFromEmail, saveProfile } from "@/lib/store";
+import { getEffectiveUserRole, getProfile, saveProfile } from "@/lib/store";
 import { getAuthenticatedUser, getAuthenticatedUserId } from "@/lib/auth";
 import { canEmailAccessSharedRecruiting } from "@/lib/recruiting-access";
+import { getUserDisplayName } from "@/lib/workforce-store";
 
 export async function GET() {
   try {
@@ -10,8 +11,7 @@ export async function GET() {
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const profile = await getProfile(user.id);
     const effectiveRole = await getEffectiveUserRole(user.id, user.email);
-    const normalizedEmail = typeof user.email === "string" ? user.email.trim().toLowerCase() : "";
-    const name = normalizedEmail ? prettyNameFromEmail(normalizedEmail) : "Current User";
+    const name = await getUserDisplayName(user.id, user.email).catch(() => "Current User");
     const canAccessRecruiting =
       effectiveRole === "MANAGER" || effectiveRole === "SUPER_ADMIN" || canEmailAccessSharedRecruiting(user.email);
     return NextResponse.json({ ...profile, role: effectiveRole, userId: user.id, email: user.email ?? null, name, canAccessRecruiting });

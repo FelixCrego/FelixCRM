@@ -25,6 +25,7 @@ import {
   CircleDollarSign,
   Menu,
   FolderKanban,
+  Clock3,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -78,6 +79,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/time-clock", label: "Time Clock", icon: Clock3 },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
@@ -89,6 +91,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/time-clock", label: "Time Clock", icon: Clock3 },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
@@ -101,6 +104,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/time-clock", label: "Time Clock", icon: Clock3 },
     { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
@@ -118,6 +122,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/time-clock", label: "Time Clock", icon: Clock3 },
     { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
