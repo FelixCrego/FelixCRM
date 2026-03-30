@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { getCallAnalyticsByLeadAndContactId, upsertCallAnalytics } from "@/lib/call-analytics-store";
 import { canUserViewAllLeads, getLeadById } from "@/lib/store";
 import { isExpiredIsoTimestamp, parseAmazonS3Uri, validateAmazonS3PresignedUrl } from "@/lib/contact-lens";
+import { hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 
 export type CallAnalyticsLookup = {
   lead_id?: string | null;
@@ -46,8 +47,33 @@ export async function requireAuthorizedCallAnalytics(request: Request) {
 }
 
 export async function getPlayableRecording(record: CallAnalyticsLookup) {
-  const s3Object = parseAmazonS3Uri(record.recording_s3_uri ?? null);
-  const region = getRegion(record);
+  let resolvedRecord = { ...record };
+  const currentS3Key = parseAmazonS3Uri(record.recording_s3_uri ?? null)?.key ?? "";
+  if (currentS3Key && /\/CallRecordings\/ivr\//i.test(currentS3Key)) {
+    try {
+      const recovered = await hydrateRecordingPayloadFromS3(record.contact_id);
+      if (recovered.recordingS3Uri && recovered.recordingS3Uri !== record.recording_s3_uri) {
+        resolvedRecord = {
+          ...resolvedRecord,
+          recording_s3_uri: recovered.recordingS3Uri,
+        };
+        await upsertCallAnalytics({
+          lead_id: record.lead_id ?? null,
+          contact_id: record.contact_id,
+          recording_s3_uri: recovered.recordingS3Uri,
+          recording_url: record.recording_url ?? null,
+          recording_url_expires_at: record.recording_url_expires_at ?? null,
+          event_source: recovered.eventSource ?? null,
+          source_event_time: recovered.sourceEventTime ?? null,
+        });
+      }
+    } catch {
+      // Keep the existing recording URI if recovery fails.
+    }
+  }
+
+  const s3Object = parseAmazonS3Uri(resolvedRecord.recording_s3_uri ?? null);
+  const region = getRegion(resolvedRecord);
 
   if (s3Object && region) {
     try {
@@ -63,10 +89,10 @@ export async function getPlayableRecording(record: CallAnalyticsLookup) {
       const url = `/api/call-recordings/stream?leadId=${encodeURIComponent(record.lead_id ?? "")}&contactId=${encodeURIComponent(record.contact_id)}`;
 
       await upsertCallAnalytics({
-        lead_id: record.lead_id ?? null,
-        contact_id: record.contact_id,
+        lead_id: resolvedRecord.lead_id ?? null,
+        contact_id: resolvedRecord.contact_id,
         recording_url_expires_at: expiresAt,
-        recording_s3_uri: record.recording_s3_uri ?? null,
+        recording_s3_uri: resolvedRecord.recording_s3_uri ?? null,
       });
 
       return {

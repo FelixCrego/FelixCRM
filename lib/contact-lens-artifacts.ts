@@ -23,7 +23,10 @@ type RecordingHydration = Pick<ContactLensWebhookPayload, "recordingS3Uri" | "ev
 type S3ObjectCandidate = {
   key: string;
   lastModified: number;
+  size: number;
 };
+
+const MIN_PLAYABLE_RECORDING_BYTES = 10000;
 
 function getAwsRegion() {
   return process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "us-east-1";
@@ -151,6 +154,7 @@ async function listObjectsForPrefix(
       candidates.push({
         key,
         lastModified: item.LastModified ? item.LastModified.getTime() : 0,
+        size: typeof item.Size === "number" ? item.Size : 0,
       });
     }
 
@@ -264,7 +268,7 @@ export async function hydrateRecordingPayloadFromS3(contactId: string, daysBack 
   );
 
   const bucket = process.env.AMAZON_CONNECT_RECORDINGS_BUCKET?.trim() || "amazon-connect-f93893c0453d";
-  const candidates: Array<{ key: string; lastModified: number }> = [];
+  const candidates: S3ObjectCandidate[] = [];
 
   for (const prefix of prefixes) {
     const response = await listObjectsForPrefix(bucket, prefix, 10, 1000).catch(() => null);
@@ -277,12 +281,24 @@ export async function hydrateRecordingPayloadFromS3(contactId: string, daysBack 
       candidates.push({
         key,
         lastModified: item.lastModified,
+        size: item.size,
       });
     }
   }
 
   if (!candidates.length) return {};
-  candidates.sort((a, b) => b.lastModified - a.lastModified);
+  candidates.sort((a, b) => {
+    const aPlayable = a.size >= MIN_PLAYABLE_RECORDING_BYTES ? 1 : 0;
+    const bPlayable = b.size >= MIN_PLAYABLE_RECORDING_BYTES ? 1 : 0;
+    if (bPlayable !== aPlayable) return bPlayable - aPlayable;
+
+    const aIvr = /\/CallRecordings\/ivr\//i.test(a.key) ? 1 : 0;
+    const bIvr = /\/CallRecordings\/ivr\//i.test(b.key) ? 1 : 0;
+    if (aIvr !== bIvr) return aIvr - bIvr;
+
+    if (b.size !== a.size) return b.size - a.size;
+    return b.lastModified - a.lastModified;
+  });
   const match = candidates[0];
   if (!match) return {};
 

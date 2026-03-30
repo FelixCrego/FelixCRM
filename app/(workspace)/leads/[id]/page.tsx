@@ -1455,7 +1455,7 @@ export default function LeadExecutionPage() {
   const callIntelState = getCallAnalysisState(callIntel);
   const playbackRecordingUrl =
     leadId && callIntel?.contact_id && (callIntel.recording_s3_uri || callIntel.recording_url)
-      ? `/api/call-recordings/stream?leadId=${encodeURIComponent(leadId)}&contactId=${encodeURIComponent(callIntel.contact_id)}`
+      ? `/api/call-recordings?leadId=${encodeURIComponent(leadId)}&contactId=${encodeURIComponent(callIntel.contact_id)}&mode=redirect`
       : callIntel?.recording_url ?? null;
 
   useEffect(() => {
