@@ -7,6 +7,8 @@ type SalesLearningSnapshot = {
   injectedData: string[];
   bookedDemoCount: number;
   transcriptBackedExampleCount: number;
+  transcriptSignals: string[];
+  currentLeadCallContext: string;
 };
 
 type TranscriptLine = {
@@ -146,6 +148,27 @@ function buildLearningExample(lead: Lead, record: CallAnalyticsRecord | null) {
   return lines.join("\n");
 }
 
+function buildCurrentLeadCallContext(record: CallAnalyticsRecord | null) {
+  if (!record) return "Current lead live call context: no stored transcript yet.";
+
+  const lines = [] as string[];
+  if (record.ai_summary) {
+    lines.push(`Latest call summary: ${truncate(record.ai_summary, 220)}`);
+  }
+
+  const objections = extractObjectionSignals(record);
+  if (objections.length) {
+    lines.push(`Latest objections from this lead: ${objections.join(" | ")}`);
+  }
+
+  const excerpt = extractTranscriptExcerpt(record);
+  if (excerpt) {
+    lines.push(`Latest transcript excerpt: ${excerpt}`);
+  }
+
+  return lines.length ? lines.join("\n") : "Current lead live call context: recording exists but no transcript text is available yet.";
+}
+
 export async function buildSalesLearningSnapshot(params: {
   userId: string;
   userEmail?: string | null;
@@ -165,7 +188,8 @@ export async function buildSalesLearningSnapshot(params: {
 
   const learningLeads = bookedDemoLeads.slice(0, 12);
   const leadIds = learningLeads.map((lead) => lead.id);
-  const callRows = await listCallAnalyticsByLeadIds(leadIds, 120).catch(() => [] as CallAnalyticsRecord[]);
+  const currentLeadIds = params.currentLeadId ? [params.currentLeadId] : [];
+  const callRows = await listCallAnalyticsByLeadIds(Array.from(new Set([...leadIds, ...currentLeadIds])), 140).catch(() => [] as CallAnalyticsRecord[]);
 
   const callsByLeadId = new Map<string, CallAnalyticsRecord[]>();
   for (const row of callRows) {
@@ -190,6 +214,30 @@ export async function buildSalesLearningSnapshot(params: {
   const transcriptBackedExampleCount = exampleBlocks.filter((example) => example.hasTranscript).length;
   const repHighlights = formatRepHighlights(bookedDemoLeads, repNamesById);
   const examplesText = exampleBlocks.map((example, index) => `${index + 1}. ${buildLearningExample(example.lead, example.record)}`).join("\n\n");
+  const currentLeadRecord = params.currentLeadId ? getBestCallRecord(callsByLeadId.get(params.currentLeadId) ?? []) : null;
+  const currentLeadCallContext = buildCurrentLeadCallContext(currentLeadRecord);
+  const transcriptSignals = Array.from(
+    new Set(
+      [
+        ...extractObjectionSignals(currentLeadRecord ?? ({} as CallAnalyticsRecord)).map((line) => `Current lead objection: ${line}`),
+        ...exampleBlocks.flatMap((example) => {
+          const signals: string[] = [];
+          if (example.record?.ai_summary) {
+            signals.push(`Recent win summary: ${truncate(example.record.ai_summary, 180)}`);
+          }
+          const objections = example.record ? extractObjectionSignals(example.record) : [];
+          if (objections[0]) {
+            signals.push(`Recent objection handled: ${objections[0]}`);
+          }
+          const excerpt = example.record ? extractTranscriptExcerpt(example.record) : "";
+          if (excerpt) {
+            signals.push(`Winning transcript cue: ${truncate(excerpt, 180)}`);
+          }
+          return signals;
+        }),
+      ].filter(Boolean),
+    ),
+  ).slice(0, 6);
 
   const injectedData = [
     `Deep research for target lead`,
@@ -198,6 +246,7 @@ export async function buildSalesLearningSnapshot(params: {
       ? `${transcriptBackedExampleCount} transcript-backed winning call examples`
       : "No transcript-backed wins synced yet",
     repHighlights[0] ? `Top rep pattern: ${repHighlights[0]}` : "No rep leaderboard pattern yet",
+    currentLeadRecord ? "Latest current-lead call transcript loaded" : "No current-lead transcript loaded yet",
   ];
 
   const promptContext = [
@@ -206,6 +255,7 @@ export async function buildSalesLearningSnapshot(params: {
     transcriptBackedExampleCount
       ? `Transcript-backed winning examples available: ${transcriptBackedExampleCount}`
       : "Transcript-backed winning examples available: 0. Use only the booked-demo and research patterns below.",
+    currentLeadCallContext,
     examplesText ? `Winning examples:\n${examplesText}` : "Winning examples: none yet.",
   ].join("\n\n");
 
@@ -214,5 +264,7 @@ export async function buildSalesLearningSnapshot(params: {
     injectedData,
     bookedDemoCount: bookedDemoLeads.length,
     transcriptBackedExampleCount,
+    transcriptSignals,
+    currentLeadCallContext,
   };
 }

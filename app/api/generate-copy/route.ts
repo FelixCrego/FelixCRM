@@ -1,23 +1,20 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { buildSalesLearningSnapshot } from "@/lib/sales-learning";
+import { canUserManageAllLeads, getLeadById } from "@/lib/store";
 
-const apiKey = process.env.GEMINI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const openAiApiKey = process.env.OPENAI_API_KEY;
+const openAiModel = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
 const GEMINI_MODELS = [
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-2.5-pro",
 ] as const;
-
-type PlaybookPayload = {
-  scripts: string[];
-  objections: Array<{ objection: string; counter: string }>;
-  closing: string;
-  roiSnapshot: string;
-  injectedData: string[];
-};
 
 type GeminiFallbackError = {
   attemptedModels: string[];
@@ -51,7 +48,7 @@ function parseConfiguredGeminiModels(rawModels: string | undefined): string[] {
         .filter(Boolean);
     }
   } catch {
-    // Fall back to delimiter-based parsing.
+    // Fall back to delimiter parsing.
   }
 
   return normalizedInput
@@ -60,43 +57,92 @@ function parseConfiguredGeminiModels(rawModels: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function normalizePlaybookPayload(raw: unknown): PlaybookPayload | null {
-  if (!raw || typeof raw !== "object") return null;
-  const candidate = raw as Partial<PlaybookPayload>;
+function dedupeLines(values: Array<string | undefined | null>, limit = 6) {
+  return Array.from(new Set(values.map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean))).slice(0, limit);
+}
 
-  if (
-    !Array.isArray(candidate.scripts) ||
-    !Array.isArray(candidate.objections) ||
-    typeof candidate.closing !== "string" ||
-    typeof candidate.roiSnapshot !== "string" ||
-    !Array.isArray(candidate.injectedData)
-  ) {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function normalizePlaybookPayload(raw: unknown): AIDynamicPlaybook | null {
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Partial<AIDynamicPlaybook> & Record<string, unknown>;
+
+  const headline = typeof candidate.headline === "string" ? candidate.headline.trim() : "";
+  const summary = typeof candidate.summary === "string" ? candidate.summary.trim() : "";
+  const refreshSummary = typeof candidate.refreshSummary === "string" ? candidate.refreshSummary.trim() : "";
+
+  const timingWindows = Array.isArray(candidate.timingWindows)
+    ? (candidate.timingWindows as unknown[])
+        .filter(isObjectRecord)
+        .map((item) => ({
+          label: typeof item.label === "string" ? item.label.trim() : "",
+          prompt: typeof item.prompt === "string" ? item.prompt.trim() : "",
+        }))
+        .filter((item) => item.label && item.prompt)
+        .slice(0, 4)
+    : [];
+
+  const sections = Array.isArray(candidate.sections)
+    ? (candidate.sections as unknown[])
+        .filter(isObjectRecord)
+        .map((item, index) => ({
+          id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : `section-${index + 1}`,
+          title: typeof item.title === "string" ? item.title.trim() : "",
+          goal: typeof item.goal === "string" ? item.goal.trim() : "",
+          lines: Array.isArray(item.lines)
+            ? item.lines.filter((line): line is string => typeof line === "string" && line.trim().length > 0).slice(0, 6)
+            : [],
+        }))
+        .filter((item) => item.title && item.goal && item.lines.length > 0)
+        .slice(0, 6)
+    : [];
+
+  const objections = Array.isArray(candidate.objections)
+    ? (candidate.objections as unknown[])
+        .filter(isObjectRecord)
+        .map((item) => ({
+          objection: typeof item.objection === "string" ? item.objection.trim() : "",
+          counter: typeof item.counter === "string" ? item.counter.trim() : "",
+          bridge: typeof item.bridge === "string" ? item.bridge.trim() : "",
+        }))
+        .filter((item) => item.objection && item.counter && item.bridge)
+        .slice(0, 8)
+    : [];
+
+  const closingOptions = Array.isArray(candidate.closingOptions)
+    ? candidate.closingOptions.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 5)
+    : [];
+  const proofPoints = Array.isArray(candidate.proofPoints)
+    ? candidate.proofPoints.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 8)
+    : [];
+  const transcriptSignals = Array.isArray(candidate.transcriptSignals)
+    ? candidate.transcriptSignals.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 8)
+    : [];
+  const injectedData = Array.isArray(candidate.injectedData)
+    ? candidate.injectedData.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 8)
+    : [];
+
+  if (!headline || !summary || !refreshSummary || !timingWindows.length || !sections.length || !objections.length || !closingOptions.length) {
     return null;
   }
 
-  const scripts = candidate.scripts.filter((line): line is string => typeof line === "string" && line.trim().length > 0);
-  const objections = candidate.objections
-    .filter(
-      (item): item is { objection: string; counter: string } =>
-        Boolean(item && typeof item === "object" && typeof item.objection === "string" && typeof item.counter === "string"),
-    )
-    .slice(0, 5);
-  const closing = candidate.closing.trim();
-  const roiSnapshot = candidate.roiSnapshot.trim();
-  const injectedData = candidate.injectedData.filter((line): line is string => typeof line === "string" && line.trim().length > 0);
-
-  if (!scripts.length || !objections.length || !closing || !roiSnapshot) return null;
-
   return {
-    scripts,
+    headline,
+    summary,
+    refreshSummary,
+    timingWindows,
+    sections,
     objections,
-    closing,
-    roiSnapshot,
+    closingOptions,
+    proofPoints,
+    transcriptSignals,
     injectedData,
   };
 }
 
-function parsePlaybookFromText(text: string): PlaybookPayload | null {
+function parsePlaybookFromText(text: string): AIDynamicPlaybook | null {
   const trimmed = text.trim();
   const variants = [trimmed];
 
@@ -116,54 +162,15 @@ function parsePlaybookFromText(text: string): PlaybookPayload | null {
       const normalized = normalizePlaybookPayload(parsed);
       if (normalized) return normalized;
     } catch {
-      // try next variant
+      // Try the next variant.
     }
   }
 
   return null;
 }
 
-function buildFallbackPlaybook(leadName: string, researchContext?: string, learnedData: string[] = []): PlaybookPayload {
-  const contextSnippet = (researchContext || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 2)
-    .join(" • ");
-
-  return {
-    scripts: [
-      `Hey ${leadName}, quick note — your current site is likely leaking high-intent mobile leads before they book.`,
-      "I already built a faster, conversion-focused version we can launch today with no downtime and direct booking/call routing.",
-      contextSnippet
-        ? `Based on research (${contextSnippet}), this upgrade can recover missed inquiries and turn existing traffic into booked jobs.`
-        : "This is designed to recover missed inquiries and turn existing traffic into booked jobs quickly.",
-    ],
-    objections: [
-      {
-        objection: "We already have a website.",
-        counter: "Totally fair — this is a conversion upgrade, not just a redesign. Same traffic, more booked jobs.",
-      },
-      {
-        objection: "I need to think about it.",
-        counter: "Makes sense. Let’s do a 10-minute ROI walkthrough so you can decide with numbers, not guesses.",
-      },
-      {
-        objection: "Send me details.",
-        counter: "Absolutely. I’ll send the preview + ROI snapshot and hold a deployment window for 24 hours.",
-      },
-    ],
-    closing: "Want me to lock your deployment slot so this can go live today?",
-    roiSnapshot: "Even a few recovered mobile bookings per month can add meaningful recurring revenue.",
-    injectedData: Array.from(
-      new Set(["AI research context", "Mobile conversion gap", "Fast deployment offer", ...learnedData].filter(Boolean)),
-    ).slice(0, 5),
-  };
-}
-
 async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt: string) {
   const modelErrors: GeminiFallbackError[] = [];
-
   const configuredModels = parseConfiguredGeminiModels(process.env.GEMINI_MODELS);
   const modelsToTry = Array.from(new Set([...(configuredModels || []), ...GEMINI_MODELS]));
 
@@ -174,12 +181,111 @@ async function generateWithGeminiModelFallback(genAI: GoogleGenerativeAI, prompt
       const response = await result.response;
       return { text: response.text().trim(), modelName };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      modelErrors.push({ attemptedModels: [modelName], message });
+      modelErrors.push({
+        attemptedModels: [modelName],
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   throw new GeminiModelFallbackError(modelErrors);
+}
+
+async function generateWithOpenAI(prompt: string) {
+  if (!openAiApiKey) throw new Error("Missing OPENAI_API_KEY configuration");
+
+  const openai = new OpenAI({ apiKey: openAiApiKey });
+  const completion = await openai.chat.completions.create({
+    model: openAiModel,
+    temperature: 0.7,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You rewrite spoken sales scripts into high-converting, transcript-aware call frameworks for live cold outreach. Return JSON only.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
+
+  const content = completion.choices[0]?.message?.content?.trim();
+  if (!content) throw new Error("OpenAI returned no content.");
+  return { text: content, modelName: openAiModel };
+}
+
+function buildPlaybookPrompt(params: {
+  leadName: string;
+  researchContext: string;
+  learnedContext: string;
+  fallbackPlaybook: AIDynamicPlaybook;
+  currentLeadCallContext: string;
+  stage: "gemini" | "openai";
+  geminiDraft?: string;
+}) {
+  const sharedRules = [
+    "You are building a real-time phone script generator for Eliot, who sells pre-built website demos to local service businesses.",
+    `Target lead: ${params.leadName}`,
+    `Deep research context:\n${params.researchContext || "No specific deep research provided."}`,
+    `Recent booked-demo learning and transcript context:\n${params.learnedContext}`,
+    `Current lead live call context:\n${params.currentLeadCallContext}`,
+    `Fallback framework to preserve and improve:\n${JSON.stringify(params.fallbackPlaybook)}`,
+    "Keep the fallback strategy intact: pattern interrupt, website already built, two time-frame close, live walkthrough, and grounded objection handling.",
+    "Use transcript-backed language from recent booked demos only when it is clearly supported by the CRM context.",
+    "Write in natural spoken language, not polished marketing copy.",
+    "No placeholders like [Your Name]. No markdown. Return valid JSON only.",
+    "Every section should be easy for a rep to read live on a call.",
+    "Give two time-frame prompts in timingWindows.",
+    "Include transcriptSignals that summarize the most useful live coaching cues from the transcript-backed context.",
+    "Use the exact JSON shape below:",
+    JSON.stringify(
+      {
+        headline: "string",
+        summary: "string",
+        refreshSummary: "string",
+        timingWindows: [{ label: "string", prompt: "string" }],
+        sections: [{ id: "string", title: "string", goal: "string", lines: ["string"] }],
+        objections: [{ objection: "string", counter: "string", bridge: "string" }],
+        closingOptions: ["string"],
+        proofPoints: ["string"],
+        transcriptSignals: ["string"],
+        injectedData: ["string"],
+      },
+      null,
+      2,
+    ),
+  ];
+
+  if (params.stage === "gemini") {
+    return [
+      ...sharedRules,
+      "Use Gemini to draft the first pass. Keep it practical, sharp, and call-ready.",
+    ].join("\n\n");
+  }
+
+  return [
+    ...sharedRules,
+    `Gemini first-pass draft to refine:\n${params.geminiDraft || "No Gemini draft available. Build the final version directly."}`,
+    "Use OpenAI to tighten the phrasing, improve the navigation of the script, and make the final output easier for reps to follow live.",
+  ].join("\n\n");
+}
+
+function mergePlaybook(
+  basePlaybook: AIDynamicPlaybook,
+  params: {
+    transcriptSignals: string[];
+    injectedData: string[];
+    refreshSummary: string;
+  },
+) {
+  return {
+    ...basePlaybook,
+    transcriptSignals: dedupeLines([...basePlaybook.transcriptSignals, ...params.transcriptSignals], 8),
+    injectedData: dedupeLines([...basePlaybook.injectedData, ...params.injectedData], 8),
+    refreshSummary: params.refreshSummary,
+  };
 }
 
 type GenerateCopyPayload = {
@@ -199,9 +305,9 @@ export async function POST(req: Request) {
   try {
     rawBody = await req.text();
 
-    let payload: Record<string, unknown> = {};
+    let payload: GenerateCopyPayload = {};
     try {
-      payload = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+      payload = rawBody ? (JSON.parse(rawBody) as GenerateCopyPayload) : {};
     } catch {
       payload = {};
     }
@@ -212,68 +318,131 @@ export async function POST(req: Request) {
     }
 
     leadId = typeof payload.leadId === "string" ? payload.leadId.trim() : "";
-    leadName = typeof payload.leadName === "string" && payload.leadName.trim() ? payload.leadName : "this business";
     activeTab = typeof payload.activeTab === "string" ? payload.activeTab.trim().toUpperCase() : "";
     researchContext = typeof payload.researchContext === "string" ? payload.researchContext : "";
+
+    const includeAll = await canUserManageAllLeads(user.id, user.email).catch(() => false);
+    const lead = leadId ? await getLeadById(leadId, user.id, { includeAll }).catch(() => null) : null;
+    leadName =
+      (typeof payload.leadName === "string" && payload.leadName.trim()) ||
+      lead?.businessName ||
+      "this business";
 
     if (!activeTab) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    if (!apiKey) {
-      if (activeTab === "PLAYBOOK") {
-        return NextResponse.json({
-          playbook: buildFallbackPlaybook(leadName, researchContext),
-          warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
-        });
-      }
-
-      return NextResponse.json({ error: "Missing GEMINI_API_KEY configuration" }, { status: 500 });
-    }
-
-    const genAI = new GoogleGenerativeAI(apiKey);
     const learningSnapshot = await buildSalesLearningSnapshot({
       userId: user.id,
       userEmail: user.email,
       currentLeadId: leadId || null,
     }).catch(() => null);
+
     const learnedContext =
       learningSnapshot?.promptContext ||
       "No team learning snapshot is available yet. Use only the target lead research context.";
     const learnedInjectedData = learningSnapshot?.injectedData ?? [];
+    const transcriptSignals = learningSnapshot?.transcriptSignals ?? [];
+    const currentLeadCallContext = learningSnapshot?.currentLeadCallContext || "Current lead live call context: no stored transcript yet.";
+    const hasSocialPresence =
+      Boolean(lead?.socialLinks?.length) || /(instagram|facebook|tiktok|youtube|linkedin|social)/i.test(researchContext);
 
-    const systemPrompt =
-      activeTab === "PLAYBOOK"
-        ? `You are an elite sales strategist helping close pre-built website deals for local service businesses.
-Create a highly persuasive, context-aware playbook for ${leadName}.
+    const baseFallbackPlaybook = buildFallbackPlaybook({
+      leadName,
+      city: lead?.city,
+      previewUrl: lead?.deployedUrl ?? "",
+      researchContext,
+      learnedData: learnedInjectedData,
+      transcriptSignals,
+      hasSocialPresence,
+      refreshSummary:
+        learningSnapshot
+          ? `Fallback framework loaded with ${learningSnapshot.bookedDemoCount} booked-demo wins and ${learningSnapshot.transcriptBackedExampleCount} transcript-backed examples.`
+          : undefined,
+    });
 
-CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on mobile booking, speed-to-lead, and conversion lift."}
-TEAM LEARNING CONTEXT (Booked demos, winning calls, objections): ${learnedContext}
+    if (activeTab === "PLAYBOOK") {
+      if (!geminiApiKey && !openAiApiKey) {
+        return NextResponse.json({
+          playbook: baseFallbackPlaybook,
+          warning: "Gemini and OpenAI are unavailable. Showing fallback playbook.",
+        });
+      }
 
-Return VALID JSON only (no markdown) with this exact shape:
-{
-  "scripts": [
-    "string opener that references their specific opportunity gap",
-    "string value pitch with speed-to-launch + conversion angle",
-    "string ROI line with realistic missed revenue framing"
-  ],
-  "objections": [
-    {"objection":"string","counter":"string"},
-    {"objection":"string","counter":"string"},
-    {"objection":"string","counter":"string"}
-  ],
-  "closing": "string closing ask that creates urgency without being pushy",
-  "roiSnapshot": "string one-liner estimate of lost leads/revenue opportunity",
-  "injectedData": ["string","string","string"]
-}
+      const modelTrail: string[] = [];
+      const warnings: string[] = [];
+      let geminiDraft = "";
+      let finalPlaybook: AIDynamicPlaybook | null = null;
 
-Rules:
-- Be specific, persuasive, and natural.
-- Mention website/mobile performance, missed lead capture, and fast deployment.
-- Reuse only the winning patterns, objections, and language that are supported by the CRM learning context above.
-- Include objection handling and close-ready language.
-- Do not include placeholders like [Your Name].`
-        : `You are an elite, high-converting tech sales copywriter.
+      if (geminiApiKey) {
+        try {
+          const genAI = new GoogleGenerativeAI(geminiApiKey);
+          const geminiGeneration = await generateWithGeminiModelFallback(
+            genAI,
+            buildPlaybookPrompt({
+              leadName,
+              researchContext,
+              learnedContext,
+              fallbackPlaybook: baseFallbackPlaybook,
+              currentLeadCallContext,
+              stage: "gemini",
+            }),
+          );
+          geminiDraft = geminiGeneration.text;
+          modelTrail.push(`Gemini ${geminiGeneration.modelName}`);
+          finalPlaybook = parsePlaybookFromText(geminiDraft);
+        } catch (error) {
+          if (error instanceof GeminiModelFallbackError) {
+            warnings.push(error.modelErrors[0]?.message ?? "Gemini models failed.");
+          } else {
+            warnings.push(error instanceof Error ? error.message : "Gemini request failed.");
+          }
+        }
+      }
+
+      if (openAiApiKey) {
+        try {
+          const openAiGeneration = await generateWithOpenAI(
+            buildPlaybookPrompt({
+              leadName,
+              researchContext,
+              learnedContext,
+              fallbackPlaybook: baseFallbackPlaybook,
+              currentLeadCallContext,
+              stage: "openai",
+              geminiDraft,
+            }),
+          );
+          modelTrail.push(`OpenAI ${openAiGeneration.modelName}`);
+          finalPlaybook = parsePlaybookFromText(openAiGeneration.text) ?? finalPlaybook;
+        } catch (error) {
+          warnings.push(error instanceof Error ? error.message : "OpenAI request failed.");
+        }
+      }
+
+      const refreshSummary = modelTrail.length
+        ? `${modelTrail.join(" + ")} refreshed this script using deep research, recent booked demos, and Amazon Connect transcript signals.`
+        : baseFallbackPlaybook.refreshSummary;
+
+      const playbook = mergePlaybook(finalPlaybook ?? baseFallbackPlaybook, {
+        transcriptSignals,
+        injectedData: learnedInjectedData,
+        refreshSummary,
+      });
+
+      return NextResponse.json({
+        playbook,
+        modelTrail,
+        warning: warnings.length ? warnings.join(" ") : undefined,
+      });
+    }
+
+    if (!geminiApiKey) {
+      return NextResponse.json({ error: "Missing GEMINI_API_KEY configuration" }, { status: 500 });
+    }
+
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const systemPrompt = `You are an elite, high-converting tech sales copywriter.
 Write a draft for a ${activeTab} to a prospect named ${leadName}.
 
 CRITICAL CONTEXT (Deep Research): ${researchContext || "No specific deep research provided. Focus on web optimization and speed-to-lead."}
@@ -289,43 +458,8 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
 
     try {
       const generation = await generateWithGeminiModelFallback(genAI, systemPrompt);
-      const text = generation.text;
-
-      if (activeTab === "PLAYBOOK") {
-        const parsedPlaybook = parsePlaybookFromText(text);
-        if (parsedPlaybook) {
-          parsedPlaybook.injectedData = Array.from(new Set([...learnedInjectedData, ...parsedPlaybook.injectedData])).slice(0, 5);
-          return NextResponse.json({ playbook: parsedPlaybook, draft: text, model: generation.modelName });
-        }
-
-        return NextResponse.json({
-          playbook: buildFallbackPlaybook(leadName, researchContext, learnedInjectedData),
-          draft: text,
-          model: generation.modelName,
-          warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
-        });
-      }
-
-      return NextResponse.json({ draft: text, model: generation.modelName });
+      return NextResponse.json({ draft: generation.text, model: generation.modelName });
     } catch (generationError) {
-      if (generationError instanceof GeminiModelFallbackError) {
-        console.error("Gemini Draft Generation Error (all models failed):", {
-          attemptedModels: generationError.attemptedModels,
-          modelErrors: generationError.modelErrors,
-        });
-      } else {
-        console.error("Gemini Draft Generation Error:", generationError);
-      }
-
-      if (activeTab === "PLAYBOOK") {
-        const fallbackMessage = "Gemini is temporarily unavailable. Showing fallback playbook.";
-
-        return NextResponse.json({
-          playbook: buildFallbackPlaybook(leadName, researchContext, learnedInjectedData),
-          warning: fallbackMessage,
-        });
-      }
-
       if (generationError instanceof GeminiModelFallbackError) {
         const firstError = generationError.modelErrors[0]?.message ?? "All configured Gemini models failed.";
         return NextResponse.json(
@@ -340,12 +474,16 @@ Output ONLY the draft text. No robotic greetings, no filler.`;
       throw generationError;
     }
   } catch (error) {
-    console.error("Gemini Draft Error:", error);
+    console.error("Draft Error:", error);
 
     if (activeTab === "PLAYBOOK" || rawBody.toUpperCase().includes("PLAYBOOK")) {
       return NextResponse.json({
-        playbook: buildFallbackPlaybook(leadName, researchContext),
-        warning: "Gemini is temporarily unavailable. Showing fallback playbook.",
+        playbook: buildFallbackPlaybook({
+          leadName,
+          researchContext,
+          refreshSummary: "Fallback playbook loaded because the AI refresh failed.",
+        }),
+        warning: "AI refresh failed. Showing fallback playbook.",
       });
     }
 

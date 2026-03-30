@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
+import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 import { createClientComponentClient } from "@/lib/supabase-client";
@@ -17,6 +18,8 @@ type LeadRecord = {
   businessName?: string | null;
   status?: string | null;
   phone?: string | null;
+  source_query?: string | null;
+  sourceQuery?: string | null;
   website?: string | null;
   website_url?: string | null;
   websiteUrl?: string | null;
@@ -163,7 +166,7 @@ type SalesRepOption = {
 
 type FetchStatus = "loading" | "ready" | "error";
 type ActivityTab = "Notes" | "SMS" | "Email" | "Call Audio & AI";
-type ScriptTab = "Scripts" | "Objections";
+type ScriptTab = "Scripts" | "Objections" | "Signals";
 type ExecutionLeadStatus = "New" | "Pitched" | "Demo Booked" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
 const GOOGLE_VOICE_HOME_URL = "https://voice.google.com";
@@ -175,14 +178,6 @@ type AwsActiveContact = {
   onEnded?: (callback: () => void) => void;
   getContactId?: () => string;
   sendDigit?: (digit: string) => void;
-};
-
-type AIDynamicPlaybook = {
-  scripts: string[];
-  objections: Array<{ objection: string; counter: string }>;
-  closing: string;
-  roiSnapshot: string;
-  injectedData: string[];
 };
 
 type CallIntelTranscriptLine = {
@@ -218,64 +213,471 @@ type CallAnalysisState = {
   description: string;
 };
 
-const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
-  "206": { timeZone: "America/Los_Angeles", location: "Seattle, WA" },
-  "213": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
-  "305": { timeZone: "America/New_York", location: "Miami, FL" },
-  "312": { timeZone: "America/Chicago", location: "Chicago, IL" },
-  "323": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
-  "347": { timeZone: "America/New_York", location: "New York, NY" },
-  "404": { timeZone: "America/New_York", location: "Atlanta, GA" },
-  "415": { timeZone: "America/Los_Angeles", location: "San Francisco, CA" },
-  "469": { timeZone: "America/Chicago", location: "Dallas, TX" },
-  "512": { timeZone: "America/Chicago", location: "Austin, TX" },
-  "602": { timeZone: "America/Phoenix", location: "Phoenix, AZ" },
-  "646": { timeZone: "America/New_York", location: "New York, NY" },
-  "702": { timeZone: "America/Los_Angeles", location: "Las Vegas, NV" },
-  "713": { timeZone: "America/Chicago", location: "Houston, TX" },
-  "786": { timeZone: "America/New_York", location: "Miami, FL" },
-  "818": { timeZone: "America/Los_Angeles", location: "Los Angeles, CA" },
-  "917": { timeZone: "America/New_York", location: "New York, NY" },
+type TimeZoneHint = {
+  matches: string[];
+  timeZone: string;
+  location: string;
 };
 
-const CITY_TIMEZONE_HINTS: Array<{ match: string; timeZone: string }> = [
-  { match: "new york", timeZone: "America/New_York" },
-  { match: "miami", timeZone: "America/New_York" },
-  { match: "atlanta", timeZone: "America/New_York" },
-  { match: "chicago", timeZone: "America/Chicago" },
-  { match: "dallas", timeZone: "America/Chicago" },
-  { match: "houston", timeZone: "America/Chicago" },
-  { match: "denver", timeZone: "America/Denver" },
-  { match: "phoenix", timeZone: "America/Phoenix" },
-  { match: "los angeles", timeZone: "America/Los_Angeles" },
-  { match: "san francisco", timeZone: "America/Los_Angeles" },
-  { match: "seattle", timeZone: "America/Los_Angeles" },
+function buildAreaCodeLookup(codes: string[], timeZone: string, location: string) {
+  return Object.fromEntries(codes.map((code) => [code, { timeZone, location }]));
+}
+
+const PHONE_AREA_CODE_TIMEZONES: Record<string, { timeZone: string; location: string }> = {
+  ...buildAreaCodeLookup(
+    [
+      "201",
+      "202",
+      "203",
+      "212",
+      "215",
+      "216",
+      "239",
+      "240",
+      "267",
+      "301",
+      "305",
+      "321",
+      "347",
+      "352",
+      "386",
+      "404",
+      "407",
+      "410",
+      "412",
+      "470",
+      "516",
+      "561",
+      "585",
+      "607",
+      "610",
+      "614",
+      "617",
+      "631",
+      "646",
+      "678",
+      "703",
+      "704",
+      "706",
+      "727",
+      "754",
+      "757",
+      "786",
+      "813",
+      "845",
+      "857",
+      "860",
+      "904",
+      "917",
+      "954",
+      "980",
+    ],
+    "America/New_York",
+    "Eastern Time",
+  ),
+  ...buildAreaCodeLookup(
+    [
+      "214",
+      "224",
+      "225",
+      "254",
+      "281",
+      "312",
+      "314",
+      "316",
+      "402",
+      "405",
+      "469",
+      "504",
+      "512",
+      "515",
+      "563",
+      "573",
+      "615",
+      "618",
+      "630",
+      "636",
+      "651",
+      "660",
+      "701",
+      "713",
+      "715",
+      "773",
+      "816",
+      "832",
+      "847",
+      "901",
+      "903",
+      "918",
+      "920",
+      "931",
+      "936",
+      "940",
+      "972",
+    ],
+    "America/Chicago",
+    "Central Time",
+  ),
+  ...buildAreaCodeLookup(
+    ["303", "385", "406", "435", "505", "575", "720", "801", "970"],
+    "America/Denver",
+    "Mountain Time",
+  ),
+  ...buildAreaCodeLookup(
+    [
+      "206",
+      "209",
+      "213",
+      "253",
+      "310",
+      "323",
+      "360",
+      "408",
+      "415",
+      "425",
+      "442",
+      "503",
+      "509",
+      "530",
+      "541",
+      "559",
+      "619",
+      "626",
+      "650",
+      "661",
+      "702",
+      "707",
+      "714",
+      "747",
+      "760",
+      "775",
+      "805",
+      "818",
+      "858",
+      "909",
+      "916",
+      "925",
+      "949",
+      "971",
+    ],
+    "America/Los_Angeles",
+    "Pacific Time",
+  ),
+  ...buildAreaCodeLookup(["480", "520", "602", "623", "928"], "America/Phoenix", "Arizona"),
+  ...buildAreaCodeLookup(["808"], "Pacific/Honolulu", "Hawaii"),
+  ...buildAreaCodeLookup(["907"], "America/Anchorage", "Alaska"),
+};
+
+const CITY_TIMEZONE_HINTS: TimeZoneHint[] = [
+  {
+    matches: [
+      "atlanta",
+      "baltimore",
+      "boston",
+      "charlotte",
+      "cincinnati",
+      "cleveland",
+      "columbus",
+      "detroit",
+      "fort lauderdale",
+      "jacksonville",
+      "lexington",
+      "louisville",
+      "manhattan",
+      "miami",
+      "new york",
+      "orlando",
+      "philadelphia",
+      "pittsburgh",
+      "queens",
+      "raleigh",
+      "staten island",
+      "tampa",
+      "washington dc",
+      "west palm beach",
+    ],
+    timeZone: "America/New_York",
+    location: "Eastern Time",
+  },
+  {
+    matches: [
+      "austin",
+      "chicago",
+      "dallas",
+      "fort worth",
+      "houston",
+      "kansas city",
+      "memphis",
+      "milwaukee",
+      "minneapolis",
+      "nashville",
+      "new orleans",
+      "oklahoma city",
+      "san antonio",
+      "st louis",
+    ],
+    timeZone: "America/Chicago",
+    location: "Central Time",
+  },
+  {
+    matches: ["albuquerque", "boise", "colorado springs", "denver", "salt lake city"],
+    timeZone: "America/Denver",
+    location: "Mountain Time",
+  },
+  {
+    matches: ["mesa", "phoenix", "scottsdale", "tucson"],
+    timeZone: "America/Phoenix",
+    location: "Arizona",
+  },
+  {
+    matches: [
+      "fresno",
+      "las vegas",
+      "long beach",
+      "los angeles",
+      "oakland",
+      "sacramento",
+      "san diego",
+      "san francisco",
+      "san jose",
+      "seattle",
+    ],
+    timeZone: "America/Los_Angeles",
+    location: "Pacific Time",
+  },
+  {
+    matches: ["england", "london", "united kingdom"],
+    timeZone: "Europe/London",
+    location: "United Kingdom",
+  },
 ];
 
-function inferLeadTimeZone(lead: LeadRecord | null): { timeZone: string; location: string; source: string } {
-  const phone = lead?.phone ?? "";
+const STATE_TIMEZONE_HINTS: TimeZoneHint[] = [
+  {
+    matches: [
+      "connecticut",
+      "ct",
+      "delaware",
+      "de",
+      "district of columbia",
+      "dc",
+      "florida",
+      "fl",
+      "georgia",
+      "ga",
+      "indiana",
+      "in",
+      "kentucky",
+      "ky",
+      "maine",
+      "me",
+      "maryland",
+      "md",
+      "massachusetts",
+      "ma",
+      "michigan",
+      "mi",
+      "new hampshire",
+      "nh",
+      "new jersey",
+      "nj",
+      "new york",
+      "ny",
+      "north carolina",
+      "nc",
+      "ohio",
+      "oh",
+      "pennsylvania",
+      "pa",
+      "rhode island",
+      "ri",
+      "south carolina",
+      "sc",
+      "vermont",
+      "vt",
+      "virginia",
+      "va",
+      "west virginia",
+      "wv",
+    ],
+    timeZone: "America/New_York",
+    location: "Eastern Time",
+  },
+  {
+    matches: [
+      "alabama",
+      "al",
+      "arkansas",
+      "ar",
+      "illinois",
+      "il",
+      "iowa",
+      "ia",
+      "kansas",
+      "ks",
+      "louisiana",
+      "la",
+      "minnesota",
+      "mn",
+      "mississippi",
+      "ms",
+      "missouri",
+      "mo",
+      "nebraska",
+      "ne",
+      "north dakota",
+      "nd",
+      "oklahoma",
+      "ok",
+      "south dakota",
+      "sd",
+      "tennessee",
+      "tn",
+      "texas",
+      "tx",
+      "wisconsin",
+      "wi",
+    ],
+    timeZone: "America/Chicago",
+    location: "Central Time",
+  },
+  {
+    matches: ["colorado", "co", "idaho", "id", "montana", "mt", "new mexico", "nm", "utah", "ut", "wyoming", "wy"],
+    timeZone: "America/Denver",
+    location: "Mountain Time",
+  },
+  {
+    matches: ["arizona", "az"],
+    timeZone: "America/Phoenix",
+    location: "Arizona",
+  },
+  {
+    matches: ["california", "ca", "nevada", "nv", "oregon", "or", "washington", "wa"],
+    timeZone: "America/Los_Angeles",
+    location: "Pacific Time",
+  },
+  {
+    matches: ["alaska", "ak"],
+    timeZone: "America/Anchorage",
+    location: "Alaska",
+  },
+  {
+    matches: ["hawaii", "hi"],
+    timeZone: "Pacific/Honolulu",
+    location: "Hawaii",
+  },
+];
+
+function normalizeLocationText(value: string) {
+  return ` ${value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+}
+
+function findTimeZoneHint(value: string, hints: TimeZoneHint[]) {
+  const normalized = normalizeLocationText(value);
+  if (!normalized.trim()) return null;
+
+  return hints.find((hint) => hint.matches.some((match) => normalized.includes(` ${match} `))) ?? null;
+}
+
+function extractAreaCode(phone: string) {
   const digits = phone.replace(/\D/g, "");
   const normalized = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-  const areaCode = normalized.length >= 10 ? normalized.slice(0, 3) : "";
+  return normalized.length >= 10 ? normalized.slice(0, 3) : "";
+}
 
-  if (areaCode && PHONE_AREA_CODE_TIMEZONES[areaCode]) {
-    const areaMatch = PHONE_AREA_CODE_TIMEZONES[areaCode];
-    return { timeZone: areaMatch.timeZone, location: areaMatch.location, source: `phone area code (${areaCode})` };
+function getMeaningfulText(value: string | null | undefined) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === "unknown") return "";
+  return trimmed;
+}
+
+function collectLeadPhoneNumbers(lead: LeadRecord | null) {
+  const seen = new Set<string>();
+  const collected: string[] = [];
+
+  const addPhone = (value: string | null | undefined) => {
+    const phone = getMeaningfulText(value);
+    if (!phone || seen.has(phone)) return;
+    seen.add(phone);
+    collected.push(phone);
+  };
+
+  addPhone(lead?.phone);
+
+  for (const contactList of [lead?.contacts, lead?.source_payload?.contacts, lead?.sourcePayload?.contacts]) {
+    if (!Array.isArray(contactList)) continue;
+    for (const contact of contactList) {
+      if (!Array.isArray(contact?.phones)) continue;
+      for (const phone of contact.phones) {
+        addPhone(phone);
+      }
+    }
   }
 
-  const sourceWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "";
+  return collected;
+}
+
+function formatTimeZoneLabel(timeZone: string) {
+  const label = timeZone.split("/").pop()?.replace(/_/g, " ").trim();
+  return label || "Local timezone";
+}
+
+function inferLeadTimeZone(
+  lead: LeadRecord | null,
+  fallbackTimeZone: string,
+): { timeZone: string; location: string; source: string } {
+  const leadCity = getMeaningfulText(lead?.city);
+  const sourceQuery = getMeaningfulText(lead?.sourceQuery ?? lead?.source_query);
+
+  for (const candidate of [
+    { value: leadCity, source: "lead city", location: leadCity },
+    { value: sourceQuery, source: "lead source query", location: leadCity || "Lead search location" },
+  ]) {
+    if (!candidate.value) continue;
+
+    const cityMatch = findTimeZoneHint(candidate.value, CITY_TIMEZONE_HINTS);
+    if (cityMatch) {
+      return {
+        timeZone: cityMatch.timeZone,
+        location: candidate.location || cityMatch.location,
+        source: candidate.source,
+      };
+    }
+
+    const stateMatch = findTimeZoneHint(candidate.value, STATE_TIMEZONE_HINTS);
+    if (stateMatch) {
+      return {
+        timeZone: stateMatch.timeZone,
+        location: candidate.location || stateMatch.location,
+        source: `${candidate.source}/state`,
+      };
+    }
+  }
+
+  const sourceWebsite = getMeaningfulText(lead?.website || lead?.website_url || lead?.websiteUrl);
   const lowerWebsite = sourceWebsite.toLowerCase();
   if (lowerWebsite.endsWith(".co.uk") || lowerWebsite.includes(".co.uk/")) {
-    return { timeZone: "Europe/London", location: "United Kingdom", source: "website scrape domain" };
+    return { timeZone: "Europe/London", location: "United Kingdom", source: "website domain" };
   }
 
-  const city = (lead?.city || "").toLowerCase();
-  const cityMatch = CITY_TIMEZONE_HINTS.find((candidate) => city.includes(candidate.match));
-  if (cityMatch) {
-    return { timeZone: cityMatch.timeZone, location: lead?.city || "Lead city", source: "lead city" };
+  for (const phone of collectLeadPhoneNumbers(lead)) {
+    const areaCode = extractAreaCode(phone);
+    if (areaCode && PHONE_AREA_CODE_TIMEZONES[areaCode]) {
+      const areaMatch = PHONE_AREA_CODE_TIMEZONES[areaCode];
+      return {
+        timeZone: areaMatch.timeZone,
+        location: leadCity || areaMatch.location,
+        source: `phone area code (${areaCode})`,
+      };
+    }
   }
 
-  return { timeZone: "America/Los_Angeles", location: lead?.city || "Unknown location", source: "fallback" };
+  return {
+    timeZone: fallbackTimeZone,
+    location: leadCity || formatTimeZoneLabel(fallbackTimeZone),
+    source: "browser timezone fallback",
+  };
 }
 
 function toTwelveHourLabel(timeValue: string): string {
@@ -1198,7 +1600,12 @@ export default function LeadExecutionPage() {
     setBrandingSecondaryColor(branding?.secondaryColor || enrichmentColors[1] || enrichmentColors[0] || "#2563eb");
   }, [lead?.enrichment, lead?.id, lead?.sourcePayload, lead?.source_payload]);
 
-  const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
+  const hasSocialPresenceForPlaybook = useMemo(
+    () => /(instagram|facebook|tiktok|youtube|linkedin|social)/i.test(researchInsight || ""),
+    [researchInsight],
+  );
+
+  const fallbackPlaybookLegacy = useMemo<any>(
     () => ({
       scripts: [
         `Hey ${leadName}, I noticed your current site creates friction on mobile when people are trying to book fast. I built a conversion-focused version for you here: ${deployedUrl || "your preview link"}.`,
@@ -1224,6 +1631,18 @@ export default function LeadExecutionPage() {
       injectedData: ["AI deep research summary", "Mobile booking conversion gap", "Live preview + speed-to-launch angle"],
     }),
     [leadName, deployedUrl],
+  );
+
+  const fallbackPlaybook = useMemo<AIDynamicPlaybook>(
+    () =>
+      buildFallbackPlaybook({
+        leadName,
+        city: leadCity,
+        previewUrl: deployedUrl,
+        researchContext: researchInsight,
+        hasSocialPresence: hasSocialPresenceForPlaybook,
+      }),
+    [deployedUrl, hasSocialPresenceForPlaybook, leadCity, leadName, researchInsight],
   );
 
   const [aiPlaybook, setAiPlaybook] = useState<AIDynamicPlaybook>(fallbackPlaybook);
@@ -2067,7 +2486,7 @@ export default function LeadExecutionPage() {
 
       if (!data) {
         setAiPlaybook(fallbackPlaybook);
-        setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
+        setPlaybookError("AI refresh is temporarily unavailable. Showing the fallback script.");
         return;
       }
 
@@ -2079,36 +2498,31 @@ export default function LeadExecutionPage() {
 
       if (data.playbook) {
         setAiPlaybook(data.playbook);
-        if (data.warning) {
-          setPlaybookError(data.warning);
-        }
+        setPlaybookError(data.warning || "");
         return;
       }
 
       if (!response.ok) {
         setAiPlaybook(fallbackPlaybook);
-        if (data.error?.toLowerCase().includes("failed to generate draft")) {
-          setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
-        } else {
-          setPlaybookError(data.error || "Could not generate playbook with Gemini.");
-        }
+        setPlaybookError(data.error || "Could not refresh the live script right now.");
         return;
       }
 
       if (!data.draft) {
-        setPlaybookError(data.error || "Could not generate playbook with Gemini.");
+        setPlaybookError(data.error || "Could not refresh the live script right now.");
         return;
       }
 
       const parsed = JSON.parse(data.draft) as AIDynamicPlaybook;
-      if (!Array.isArray(parsed.scripts) || !Array.isArray(parsed.objections) || !parsed.closing || !parsed.roiSnapshot) {
+      if (!Array.isArray(parsed.sections) || !Array.isArray(parsed.objections) || !Array.isArray(parsed.closingOptions) || !parsed.headline) {
         throw new Error("Playbook response missing required fields");
       }
 
       setAiPlaybook(parsed);
+      setPlaybookError("");
     } catch (error) {
       console.error("Playbook generation failed", error);
-      setPlaybookError("Gemini is temporarily unavailable. Showing fallback playbook.");
+      setPlaybookError("AI refresh is temporarily unavailable. Showing the fallback script.");
       setAiPlaybook(fallbackPlaybook);
     } finally {
       setPlaybookLoading(false);
@@ -2212,9 +2626,9 @@ export default function LeadExecutionPage() {
   const isLiveCall = callStatus === "connected";
   const isCallInProgress = isDialing || isLiveCall;
 
-  const leadTimeMeta = useMemo(() => inferLeadTimeZone(lead), [lead]);
-  const leadTimeZone = leadTimeMeta.timeZone;
   const repTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
+  const leadTimeMeta = useMemo(() => inferLeadTimeZone(lead, repTimeZone), [lead, repTimeZone]);
+  const leadTimeZone = leadTimeMeta.timeZone;
 
   const leadDayOptions = useMemo(() => {
     const now = new Date();
@@ -3568,20 +3982,24 @@ export default function LeadExecutionPage() {
 
         <section className="col-span-12 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-span-4">
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 space-y-4">
               <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-300">
                 <span>🧠</span>
-                Dynamic AI Playbook
+                Real-Time Script Generator
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-sm font-semibold text-zinc-100">{aiPlaybook.headline}</p>
+                <p className="mt-2 text-xs leading-5 text-zinc-400">{aiPlaybook.summary}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleGeneratePlaybook}
                   disabled={playbookLoading}
-                  className="rounded-lg border border-indigo-500/40 px-3 py-1 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-lg border border-indigo-500/40 px-3 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {playbookLoading ? "Building..." : "Generate with Gemini"}
+                  {playbookLoading ? "Refreshing..." : "Refresh Script"}
                 </button>
-                {(["Scripts", "Objections"] as ScriptTab[]).map((tab) => (
+                {(["Scripts", "Objections", "Signals"] as ScriptTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setScriptTab(tab)}
@@ -3591,35 +4009,119 @@ export default function LeadExecutionPage() {
                   </button>
                 ))}
               </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">AI Refresh Status</p>
+                <p className="mt-2 text-xs leading-5 text-zinc-300">{aiPlaybook.refreshSummary}</p>
+                {playbookError ? <p className="mt-2 text-xs text-amber-300">{playbookError}</p> : null}
+              </div>
             </div>
 
             {scriptTab === "Scripts" ? (
-              <div className="space-y-3 text-sm text-zinc-200">
-                <h3 className="text-sm font-semibold text-zinc-100">Gemini Deep-Research Pitch Sequence</h3>
-                {aiPlaybook.scripts.map((script) => (
-                  <p key={script} className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                    {script}
-                  </p>
+              <div className="space-y-4 text-sm text-zinc-200">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {aiPlaybook.timingWindows.map((window) => (
+                    <div key={window.label} className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">{window.label}</p>
+                      <p className="mt-2 text-sm leading-6 text-emerald-50">{window.prompt}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-3">
+                  {aiPlaybook.sections.map((section, index) => (
+                    <div key={section.id} className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Step {index + 1}</p>
+                          <h3 className="mt-1 text-sm font-semibold text-zinc-100">{section.title}</h3>
+                        </div>
+                        <span className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-zinc-400">
+                          Live Call
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-zinc-400">{section.goal}</p>
+                      <div className="mt-3 space-y-2">
+                        {section.lines.map((line, lineIndex) => (
+                          <p key={`${section.id}-${lineIndex}`} className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 leading-6 text-zinc-200">
+                            {line}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-200">Close Options</p>
+                  <div className="mt-3 space-y-2">
+                    {aiPlaybook.closingOptions.map((option, index) => (
+                      <p key={`${option}-${index}`} className="rounded-lg border border-indigo-500/20 bg-indigo-950/40 px-3 py-2 leading-6 text-indigo-50">
+                        {option}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : scriptTab === "Objections" ? (
+              <div className="space-y-3 text-sm text-zinc-300">
+                {aiPlaybook.objections.map((item) => (
+                  <div key={item.objection} className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Objection</p>
+                    <p className="mt-2 text-sm font-medium text-zinc-100">{item.objection}</p>
+                    <div className="mt-3 space-y-3 text-sm leading-6">
+                      <div className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Counter</p>
+                        <p className="mt-2 text-zinc-200">{item.counter}</p>
+                      </div>
+                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">Bridge Back To The Close</p>
+                        <p className="mt-2 text-amber-50">{item.bridge}</p>
+                      </div>
+                    </div>
+                  </div>
                 ))}
-                <p className="rounded-lg border border-emerald-600/40 bg-emerald-900/20 p-3 text-emerald-100">
-                  <span className="font-semibold">ROI Snapshot:</span> {aiPlaybook.roiSnapshot}
-                </p>
-                <p className="rounded-lg border border-indigo-600/40 bg-indigo-950/30 p-3 text-indigo-100">
-                  <span className="font-semibold">Close:</span> {aiPlaybook.closing}
-                </p>
-                <span className="inline-flex rounded-md border border-zinc-600 px-2 py-1 text-[11px] text-zinc-300">
-                  Injected data: {aiPlaybook.injectedData.join(" + ")}
-                </span>
-                {playbookError ? <p className="text-xs text-amber-300">{playbookError}</p> : null}
               </div>
             ) : (
-              <ul className="space-y-3 text-sm text-zinc-300">
-                {aiPlaybook.objections.map((item) => (
-                  <li key={item.objection} className="rounded-lg border border-zinc-700 bg-zinc-950 p-3">
-                    “{item.objection}” → {item.counter}
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-4 text-sm text-zinc-300">
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Transcript Signals</p>
+                  <div className="mt-3 space-y-2">
+                    {aiPlaybook.transcriptSignals.map((signal, index) => (
+                      <p key={`${signal}-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 leading-6 text-zinc-200">
+                        {signal}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">What Is Working Right Now</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {aiPlaybook.proofPoints.map((point, index) => (
+                      <span
+                        key={`${point}-${index}`}
+                        className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-100"
+                      >
+                        {point}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">Injected Inputs</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {aiPlaybook.injectedData.map((item, index) => (
+                      <span
+                        key={`${item}-${index}`}
+                        className="inline-flex rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-[11px] font-medium text-zinc-300"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </section>
