@@ -1132,7 +1132,7 @@ export default function TimeClockPage() {
                               <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Direct Time Edit</p>
                               <h3 className="mt-1 text-lg font-semibold text-white">Add or Correct Shift</h3>
                             </div>
-                            <span className="text-xs text-zinc-500">Saves an approved time entry directly into payroll.</span>
+                            <span className="text-xs text-zinc-500">Leave clock out blank to fix only the start time on an existing or open shift.</span>
                           </div>
                           <div className="grid gap-3 md:grid-cols-2">
                             <label className="space-y-2 md:col-span-2">
@@ -1184,7 +1184,7 @@ export default function TimeClockPage() {
                             <button
                               type="button"
                               onClick={() =>
-                                directClockInAt && directClockOutAt
+                                directClockInAt && (directClockOutAt || draft.editEntryId)
                                   ? void runRequest(
                                       "PATCH",
                                       {
@@ -1196,7 +1196,7 @@ export default function TimeClockPage() {
                                       },
                                       `save-entry-${employee.id}`,
                                     )
-                                  : setError("Pick both the direct-edit clock-in and clock-out times before saving.")
+                                  : setError("Pick a clock-in time, then either select an existing shift or add a clock-out time.")
                               }
                               disabled={busyKey === `save-entry-${employee.id}`}
                               className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/15 disabled:opacity-60"

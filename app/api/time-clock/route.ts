@@ -330,8 +330,8 @@ export async function PATCH(request: Request) {
       if (typeof body.userId !== "string" || !body.userId.trim()) {
         return NextResponse.json({ error: "Employee is required." }, { status: 400 });
       }
-      if (typeof body.clockInAt !== "string" || typeof body.clockOutAt !== "string") {
-        return NextResponse.json({ error: "Clock in and clock out are required." }, { status: 400 });
+      if (typeof body.clockInAt !== "string") {
+        return NextResponse.json({ error: "Clock in is required." }, { status: 400 });
       }
 
       const managerName = await getUserDisplayName(viewer.user.id, viewer.user.email).catch(() => "Manager");
@@ -339,7 +339,7 @@ export async function PATCH(request: Request) {
         employeeUserId: body.userId.trim(),
         entryId: parseNullableString(body.entryId),
         clockInAt: body.clockInAt,
-        clockOutAt: body.clockOutAt,
+        clockOutAt: typeof body.clockOutAt === "string" && body.clockOutAt.trim() ? body.clockOutAt : null,
         managerUserId: viewer.user.id,
         managerName,
       });

@@ -636,18 +636,29 @@ export async function saveTimeClockEntry(params: {
   employeeUserId: string;
   entryId?: string | null;
   clockInAt: string;
-  clockOutAt: string;
+  clockOutAt?: string | null;
   managerUserId: string;
   managerName: string;
 }) {
   const normalizedClockInAt = parseDateTimeInput(params.clockInAt, "Clock in");
-  const normalizedClockOutAt = parseDateTimeInput(params.clockOutAt, "Clock out");
-  validateClosedShift(normalizedClockInAt, normalizedClockOutAt);
 
   return updateWorkforceUser(params.employeeUserId, (current) => {
     const targetEntryId = params.entryId && params.entryId.trim() ? params.entryId.trim() : null;
-    if (targetEntryId && !current.entries.some((entry) => entry.id === targetEntryId)) {
+    const targetEntry = targetEntryId ? current.entries.find((entry) => entry.id === targetEntryId) ?? null : null;
+    if (targetEntryId && !targetEntry) {
       throw new Error("Time entry not found.");
+    }
+
+    const normalizedClockOutAt =
+      typeof params.clockOutAt === "string" && params.clockOutAt.trim()
+        ? parseDateTimeInput(params.clockOutAt, "Clock out")
+        : targetEntry?.clockOutAt ?? null;
+
+    if (!targetEntryId && !normalizedClockOutAt) {
+      throw new Error("Clock out time is required when adding a new manual shift.");
+    }
+    if (normalizedClockOutAt) {
+      validateClosedShift(normalizedClockInAt, normalizedClockOutAt);
     }
 
     const baseEntry: TimeClockEntry = {
@@ -658,18 +669,22 @@ export async function saveTimeClockEntry(params: {
       durationMinutes: null,
       regularMinutes: null,
       overtimeMinutes: null,
-      overtimeStatus: "APPROVED",
-      approvedByUserId: params.managerUserId,
-      approvedByName: params.managerName,
-      approvedAt: new Date().toISOString(),
+      overtimeStatus: normalizedClockOutAt ? "APPROVED" : "NONE",
+      approvedByUserId: normalizedClockOutAt ? params.managerUserId : null,
+      approvedByName: normalizedClockOutAt ? params.managerName : null,
+      approvedAt: normalizedClockOutAt ? new Date().toISOString() : null,
     };
 
     const entries = targetEntryId
       ? current.entries.map((entry) => (entry.id === targetEntryId ? baseEntry : entry))
       : [baseEntry, ...current.entries];
 
+    const recalculatedEntries = recalculateEntries(entries, current.settings);
+
     return {
-      entries: finalizeApprovedEntry(recalculateEntries(entries, current.settings), baseEntry.id, params.managerUserId, params.managerName),
+      entries: normalizedClockOutAt
+        ? finalizeApprovedEntry(recalculatedEntries, baseEntry.id, params.managerUserId, params.managerName)
+        : recalculatedEntries,
     };
   });
 }
