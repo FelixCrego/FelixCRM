@@ -14,6 +14,10 @@ export type WeeklyPayrollSummary = {
   commissionEarned: number;
   commissionPaid: number;
   commissionUnpaid: number;
+  overrideDeals: number;
+  managerOverrideEarned: number;
+  teamLeadOverrideEarned: number;
+  overrideEarned: number;
   regularPay: number;
   overtimeApprovedPay: number;
   overtimePendingPay: number;
@@ -40,6 +44,9 @@ type MutablePayrollSummary = {
   commissionDeals: number;
   commissionEarned: number;
   commissionPaid: number;
+  overrideDeals: number;
+  managerOverrideEarned: number;
+  teamLeadOverrideEarned: number;
 };
 
 function getWeekStart(date: Date) {
@@ -78,6 +85,11 @@ function getAttributedRepId(lead: Lead) {
   return lead.soldByUserId ?? lead.ownerId ?? null;
 }
 
+function getNetRevenue(lead: Lead) {
+  const grossRevenue = lead.closedDealValue ?? 0;
+  return grossRevenue - grossRevenue * COMMISSION_FEE_HOLDBACK_RATE;
+}
+
 export function supportsHourlyTracking(payType: PayType) {
   return payType === "HOURLY" || payType === "HOURLY_PLUS_COMMISSION";
 }
@@ -95,6 +107,9 @@ function createMutableWeek(weekStart: string): MutablePayrollSummary {
     commissionDeals: 0,
     commissionEarned: 0,
     commissionPaid: 0,
+    overrideDeals: 0,
+    managerOverrideEarned: 0,
+    teamLeadOverrideEarned: 0,
   };
 }
 
@@ -153,13 +168,12 @@ function applyEntryToWeeks(user: WorkforceUser, weeks: Map<string, MutablePayrol
   }
 }
 
-function applyLeadToWeeks(user: WorkforceUser, weeks: Map<string, MutablePayrollSummary>, lead: Lead) {
+function applyRepCommissionToWeeks(user: WorkforceUser, weeks: Map<string, MutablePayrollSummary>, lead: Lead) {
   const closedAt = parseDate(lead.closedAt);
   if (!closedAt || !supportsCommission(user.settings.payType)) return;
 
   const week = getOrCreateWeek(weeks, getWeekStart(closedAt));
-  const grossRevenue = lead.closedDealValue ?? 0;
-  const netRevenue = grossRevenue - grossRevenue * COMMISSION_FEE_HOLDBACK_RATE;
+  const netRevenue = getNetRevenue(lead);
   const commissionRate = getEffectiveCommissionRate(lead.soldByEmail ?? user.email, user.settings.commissionRate);
   const commissionEarned = netRevenue * commissionRate;
   const paidAmount =
@@ -172,13 +186,34 @@ function applyLeadToWeeks(user: WorkforceUser, weeks: Map<string, MutablePayroll
   week.commissionPaid += paidAmount;
 }
 
+function applyOverrideToWeeks(
+  user: WorkforceUser,
+  weeks: Map<string, MutablePayrollSummary>,
+  lead: Lead,
+  overrideType: "manager" | "teamLead",
+  overrideRate: number,
+) {
+  const closedAt = parseDate(lead.closedAt);
+  if (!closedAt || overrideRate <= 0) return;
+
+  const week = getOrCreateWeek(weeks, getWeekStart(closedAt));
+  const overrideEarned = getNetRevenue(lead) * overrideRate;
+  week.overrideDeals += 1;
+  if (overrideType === "manager") {
+    week.managerOverrideEarned += overrideEarned;
+  } else {
+    week.teamLeadOverrideEarned += overrideEarned;
+  }
+}
+
 function finalizeWeek(user: WorkforceUser, week: MutablePayrollSummary): WeeklyPayrollSummary {
   const hourlyRate = user.settings.hourlyRate ?? 0;
   const regularPay = (week.regularMinutes / 60) * hourlyRate;
   const overtimeApprovedPay = (week.overtimeApprovedMinutes / 60) * hourlyRate * OVERTIME_RATE_MULTIPLIER;
   const overtimePendingPay = (week.overtimePendingMinutes / 60) * hourlyRate * OVERTIME_RATE_MULTIPLIER;
   const commissionUnpaid = Math.max(0, week.commissionEarned - week.commissionPaid);
-  const totalOwed = regularPay + overtimeApprovedPay + commissionUnpaid;
+  const overrideEarned = week.managerOverrideEarned + week.teamLeadOverrideEarned;
+  const totalOwed = regularPay + overtimeApprovedPay + commissionUnpaid + overrideEarned;
   const totalProjected = totalOwed + overtimePendingPay;
 
   return {
@@ -191,6 +226,10 @@ function finalizeWeek(user: WorkforceUser, week: MutablePayrollSummary): WeeklyP
     commissionEarned: week.commissionEarned,
     commissionPaid: week.commissionPaid,
     commissionUnpaid,
+    overrideDeals: week.overrideDeals,
+    managerOverrideEarned: week.managerOverrideEarned,
+    teamLeadOverrideEarned: week.teamLeadOverrideEarned,
+    overrideEarned,
     regularPay,
     overtimeApprovedPay,
     overtimePendingPay,
@@ -202,25 +241,42 @@ function finalizeWeek(user: WorkforceUser, week: MutablePayrollSummary): WeeklyP
 export function buildPayrollSummaries(users: WorkforceUser[], leads: Lead[], weeksToInclude = 8): UserPayrollSummary[] {
   const nowIso = new Date().toISOString();
   const currentWeek = getWeekStart(new Date());
-  const leadsByUserId = new Map<string, Lead[]>();
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const weeksByUserId = new Map<string, Map<string, MutablePayrollSummary>>();
 
-  for (const lead of leads) {
-    if (!isClosedDeal(lead)) continue;
-    const userId = getAttributedRepId(lead);
-    if (!userId) continue;
-    const bucket = leadsByUserId.get(userId) ?? [];
-    bucket.push(lead);
-    leadsByUserId.set(userId, bucket);
-  }
-
-  return users.map((user) => {
+  for (const user of users) {
     const weeks = new Map<string, MutablePayrollSummary>();
     weeks.set(currentWeek, createMutableWeek(currentWeek));
     applyEntryToWeeks(user, weeks, nowIso);
-    for (const lead of leadsByUserId.get(user.id) ?? []) {
-      applyLeadToWeeks(user, weeks, lead);
+    weeksByUserId.set(user.id, weeks);
+  }
+
+  for (const lead of leads) {
+    if (!isClosedDeal(lead)) continue;
+    const repUserId = getAttributedRepId(lead);
+    if (!repUserId) continue;
+
+    const repUser = usersById.get(repUserId);
+    if (repUser) {
+      applyRepCommissionToWeeks(repUser, weeksByUserId.get(repUser.id) ?? new Map<string, MutablePayrollSummary>(), lead);
     }
 
+    const repSettings = repUser?.settings;
+    const managerUser =
+      repSettings?.managerUserId && repSettings.managerUserId !== repUserId ? usersById.get(repSettings.managerUserId) ?? null : null;
+    if (managerUser && repSettings?.managerOverrideRate) {
+      applyOverrideToWeeks(managerUser, weeksByUserId.get(managerUser.id) ?? new Map<string, MutablePayrollSummary>(), lead, "manager", repSettings.managerOverrideRate);
+    }
+
+    const teamLeadUser =
+      repSettings?.teamLeadUserId && repSettings.teamLeadUserId !== repUserId ? usersById.get(repSettings.teamLeadUserId) ?? null : null;
+    if (teamLeadUser && repSettings?.teamLeadOverrideRate) {
+      applyOverrideToWeeks(teamLeadUser, weeksByUserId.get(teamLeadUser.id) ?? new Map<string, MutablePayrollSummary>(), lead, "teamLead", repSettings.teamLeadOverrideRate);
+    }
+  }
+
+  return users.map((user) => {
+    const weeks = weeksByUserId.get(user.id) ?? new Map<string, MutablePayrollSummary>([[currentWeek, createMutableWeek(currentWeek)]]);
     const history = [...weeks.values()]
       .sort((a, b) => new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime())
       .slice(0, weeksToInclude)

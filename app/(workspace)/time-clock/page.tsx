@@ -6,6 +6,8 @@ import { getEffectiveCommissionRate } from "@/lib/commission-utils";
 
 type PayType = "COMMISSION" | "HOURLY" | "HOURLY_PLUS_COMMISSION";
 type OvertimeStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
+type TimeEditRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+type TimeEditRequestType = "ADD_SHIFT" | "EDIT_SHIFT";
 type TimeClockEntry = {
   id: string;
   clockInAt: string;
@@ -13,6 +15,21 @@ type TimeClockEntry = {
   durationMinutes: number | null;
   overtimeMinutes: number | null;
   overtimeStatus: OvertimeStatus;
+  approvedByName: string | null;
+  approvedAt: string | null;
+};
+type TimeEditRequest = {
+  id: string;
+  requestType: TimeEditRequestType;
+  targetEntryId: string | null;
+  requestedClockInAt: string;
+  requestedClockOutAt: string;
+  note: string | null;
+  status: TimeEditRequestStatus;
+  submittedAt: string;
+  submittedByName: string;
+  reviewedAt: string | null;
+  reviewedByName: string | null;
 };
 type WorkforceUser = {
   id: string;
@@ -25,9 +42,14 @@ type WorkforceUser = {
     commissionRate: number | null;
     maxWeeklyHours: number | null;
     requireOvertimeApproval: boolean;
+    managerUserId: string | null;
+    teamLeadUserId: string | null;
+    managerOverrideRate: number | null;
+    teamLeadOverrideRate: number | null;
   };
   currentEntry: TimeClockEntry | null;
   entries: TimeClockEntry[];
+  editRequests: TimeEditRequest[];
   weeklyWorkedMinutes: number;
   weeklyPendingOvertimeMinutes: number;
   weeklyApprovedOvertimeMinutes: number;
@@ -43,9 +65,25 @@ type PendingApproval = {
   overtimeMinutes: number;
   maxWeeklyHours: number | null;
 };
+type PendingTimeEditRequest = {
+  employeeUserId: string;
+  employeeName: string;
+  employeeEmail: string | null;
+  requestId: string;
+  requestType: TimeEditRequestType;
+  submittedAt: string;
+  submittedByName: string;
+  requestedClockInAt: string;
+  requestedClockOutAt: string;
+  note: string | null;
+  targetEntryId: string | null;
+  originalClockInAt: string | null;
+  originalClockOutAt: string | null;
+};
 type Snapshot = {
   viewerRole?: string;
   canManageWorkforce: boolean;
+  canEditAssignments: boolean;
   self: WorkforceUser;
   team: WorkforceUser[];
   payroll: {
@@ -53,6 +91,7 @@ type Snapshot = {
     team: UserPayrollSummary[];
   };
   pendingApprovals: PendingApproval[];
+  pendingTimeEditRequests: PendingTimeEditRequest[];
 };
 type WeeklyPayrollSummary = {
   weekStart: string;
@@ -64,6 +103,10 @@ type WeeklyPayrollSummary = {
   commissionEarned: number;
   commissionPaid: number;
   commissionUnpaid: number;
+  overrideDeals: number;
+  managerOverrideEarned: number;
+  teamLeadOverrideEarned: number;
+  overrideEarned: number;
   regularPay: number;
   overtimeApprovedPay: number;
   overtimePendingPay: number;
@@ -86,6 +129,19 @@ type Draft = {
   commissionRate: string;
   maxWeeklyHours: string;
   requireOvertimeApproval: boolean;
+  managerUserId: string;
+  teamLeadUserId: string;
+  managerOverrideRate: string;
+  teamLeadOverrideRate: string;
+  editEntryId: string;
+  editClockInAt: string;
+  editClockOutAt: string;
+};
+type SelfRequestDraft = {
+  targetEntryId: string;
+  requestedClockInAt: string;
+  requestedClockOutAt: string;
+  note: string;
 };
 
 function formatCurrency(value: number | null | undefined) {
@@ -108,6 +164,25 @@ function formatDateTime(value: string | null | undefined) {
   return parsed.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+function toLocalInputValue(value: string | null | undefined) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function localInputToIso(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 function buildDraft(user: WorkforceUser): Draft {
   return {
     payType: user.settings.payType,
@@ -115,6 +190,28 @@ function buildDraft(user: WorkforceUser): Draft {
     commissionRate: String(Math.round(getEffectiveCommissionRate(user.email, user.settings.commissionRate) * 100)),
     maxWeeklyHours: user.settings.maxWeeklyHours !== null ? String(user.settings.maxWeeklyHours) : "",
     requireOvertimeApproval: user.settings.requireOvertimeApproval,
+    managerUserId: user.settings.managerUserId ?? "",
+    teamLeadUserId: user.settings.teamLeadUserId ?? "",
+    managerOverrideRate:
+      user.settings.managerOverrideRate !== null && user.settings.managerOverrideRate !== undefined
+        ? String(Math.round(user.settings.managerOverrideRate * 1000) / 10)
+        : "",
+    teamLeadOverrideRate:
+      user.settings.teamLeadOverrideRate !== null && user.settings.teamLeadOverrideRate !== undefined
+        ? String(Math.round(user.settings.teamLeadOverrideRate * 1000) / 10)
+        : "",
+    editEntryId: "",
+    editClockInAt: "",
+    editClockOutAt: "",
+  };
+}
+
+function emptySelfRequestDraft(): SelfRequestDraft {
+  return {
+    targetEntryId: "",
+    requestedClockInAt: "",
+    requestedClockOutAt: "",
+    note: "",
   };
 }
 
@@ -125,7 +222,7 @@ function parseDraftNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function badgeTone(status: OvertimeStatus) {
+function badgeTone(status: OvertimeStatus | TimeEditRequestStatus) {
   if (status === "APPROVED") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
   if (status === "PENDING") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
   if (status === "REJECTED") return "border-rose-500/30 bg-rose-500/10 text-rose-200";
@@ -146,6 +243,18 @@ function payTypeLabel(payType: PayType) {
   return "Commission";
 }
 
+function roleLabel(role: string) {
+  return role.replaceAll("_", " ");
+}
+
+function requestTypeLabel(requestType: TimeEditRequestType) {
+  return requestType === "EDIT_SHIFT" ? "Edit Shift" : "Add Shift";
+}
+
+function entryOptionLabel(entry: TimeClockEntry) {
+  return `${formatDateTime(entry.clockInAt)}${entry.clockOutAt ? ` -> ${formatDateTime(entry.clockOutAt)}` : " -> Open shift"}`;
+}
+
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
@@ -153,6 +262,7 @@ function formatPercent(value: number) {
 export default function TimeClockPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [selfRequestDraft, setSelfRequestDraft] = useState<SelfRequestDraft>(emptySelfRequestDraft());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -169,11 +279,7 @@ export default function TimeClockPage() {
         throw new Error(payload && "error" in payload && typeof payload.error === "string" ? payload.error : "Failed to load time clock.");
       }
       setSnapshot(payload);
-      setDrafts((current) => {
-        const next = { ...current };
-        for (const user of payload.team) next[user.id] = next[user.id] ?? buildDraft(user);
-        return next;
-      });
+      setDrafts(Object.fromEntries(payload.team.map((user) => [user.id, buildDraft(user)])));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load time clock.");
     } finally {
@@ -197,13 +303,11 @@ export default function TimeClockPage() {
         throw new Error(payload && "error" in payload && typeof payload.error === "string" ? payload.error : "Request failed.");
       }
       setSnapshot(payload);
-      setDrafts((current) => {
-        const next = { ...current };
-        for (const user of payload.team) next[user.id] = buildDraft(user);
-        return next;
-      });
+      setDrafts(Object.fromEntries(payload.team.map((user) => [user.id, buildDraft(user)])));
+      return payload;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Request failed.");
+      return null;
     } finally {
       setBusyKey(null);
     }
@@ -222,6 +326,35 @@ export default function TimeClockPage() {
     return (self.weeklyWorkedMinutes / 60) * self.settings.hourlyRate;
   }, [self]);
   const effectiveSelfCommissionRate = self ? getEffectiveCommissionRate(self.email, self.settings.commissionRate) : 0;
+  const teamUserById = useMemo(() => new Map((snapshot?.team ?? []).map((user) => [user.id, user])), [snapshot?.team]);
+  const managerOptions = useMemo(
+    () => (snapshot?.team ?? []).filter((user) => user.role === "MANAGER" || user.role === "SUPER_ADMIN"),
+    [snapshot?.team],
+  );
+  const teamLeadOptions = useMemo(
+    () => (snapshot?.team ?? []).filter((user) => user.role === "TEAM_LEAD"),
+    [snapshot?.team],
+  );
+  const managerReports = useMemo(() => {
+    const map = new Map<string, WorkforceUser[]>();
+    for (const user of snapshot?.team ?? []) {
+      if (!user.settings.managerUserId) continue;
+      const bucket = map.get(user.settings.managerUserId) ?? [];
+      bucket.push(user);
+      map.set(user.settings.managerUserId, bucket);
+    }
+    return map;
+  }, [snapshot?.team]);
+  const teamLeadReports = useMemo(() => {
+    const map = new Map<string, WorkforceUser[]>();
+    for (const user of snapshot?.team ?? []) {
+      if (!user.settings.teamLeadUserId) continue;
+      const bucket = map.get(user.settings.teamLeadUserId) ?? [];
+      bucket.push(user);
+      map.set(user.settings.teamLeadUserId, bucket);
+    }
+    return map;
+  }, [snapshot?.team]);
   const teamPayrollHistory = useMemo(
     () =>
       (snapshot?.payroll.team ?? [])
@@ -238,9 +371,34 @@ export default function TimeClockPage() {
             new Date(right.week.weekStart).getTime() - new Date(left.week.weekStart).getTime() ||
             left.name.localeCompare(right.name),
         )
-        .slice(0, 20),
+        .slice(0, 24),
     [snapshot?.payroll.team],
   );
+
+  async function submitSelfEditRequest() {
+    const requestedClockInAt = localInputToIso(selfRequestDraft.requestedClockInAt);
+    const requestedClockOutAt = localInputToIso(selfRequestDraft.requestedClockOutAt);
+    if (!requestedClockInAt || !requestedClockOutAt) {
+      setError("Pick both the requested clock-in and clock-out times.");
+      return;
+    }
+
+    const payload = await runRequest(
+      "POST",
+      {
+        action: "SUBMIT_EDIT_REQUEST",
+        targetEntryId: selfRequestDraft.targetEntryId || null,
+        requestedClockInAt,
+        requestedClockOutAt,
+        note: selfRequestDraft.note.trim() || null,
+      },
+      "submit-edit-request",
+    );
+
+    if (payload) {
+      setSelfRequestDraft(emptySelfRequestDraft());
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -248,8 +406,8 @@ export default function TimeClockPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.22em] text-blue-200">Workforce</p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">Time Clock</h1>
-            <p className="mt-3 max-w-3xl text-sm text-zinc-300">Hourly employees can clock in and out here. Managers can set rate, weekly cap, and overtime approval from the same page.</p>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">Time Clock & Payroll</h1>
+            <p className="mt-3 max-w-3xl text-sm text-zinc-300">Reps can clock in, track payroll, and submit missed-punch fixes here. Management can review overtime, approve edit requests, correct time directly, and manage team overrides from the same page.</p>
           </div>
           <button
             type="button"
@@ -277,7 +435,7 @@ export default function TimeClockPage() {
             <article className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Commission Rate</p>
               <p className="mt-2 text-3xl font-semibold text-white">{selfSupportsCommission ? formatPercent(effectiveSelfCommissionRate) : "--"}</p>
-              <p className="mt-2 text-sm text-zinc-400">{selfSupportsCommission ? "Auto-pulled from your commission settings" : "Not earning commission in this pay mode"}</p>
+              <p className="mt-2 text-sm text-zinc-400">{selfSupportsCommission ? "Auto-pulled from your rep settings" : "Not active in this pay mode"}</p>
             </article>
             <article className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Hourly Rate</p>
@@ -302,7 +460,7 @@ export default function TimeClockPage() {
             <article className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Current Week Owed</p>
               <p className="mt-2 text-3xl font-semibold text-white">{formatCurrency(payrollSelf?.currentWeek.totalOwed ?? 0)}</p>
-              <p className="mt-2 text-sm text-zinc-400">{payrollSelf ? `${formatCurrency(payrollSelf.currentWeek.commissionUnpaid)} commission still unpaid this week` : "Payroll summary unavailable"}</p>
+              <p className="mt-2 text-sm text-zinc-400">{payrollSelf ? `${formatCurrency(payrollSelf.currentWeek.commissionUnpaid)} rep commission unpaid this week` : "Payroll summary unavailable"}</p>
             </article>
           </section>
 
@@ -327,18 +485,118 @@ export default function TimeClockPage() {
             </div>
           </section>
 
+          <section className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
+            <article className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+              <div className="mb-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Corrections</p>
+                <h2 className="mt-2 text-2xl font-semibold text-white">Missed Punch Request</h2>
+                <p className="mt-2 text-sm text-zinc-400">Use this when you missed a clock-in or clock-out. Management can approve the correction directly into payroll.</p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-2 md:col-span-2">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Existing Shift</span>
+                  <select
+                    value={selfRequestDraft.targetEntryId}
+                    onChange={(event) => {
+                      const entryId = event.target.value;
+                      const entry = self.entries.find((item) => item.id === entryId) ?? null;
+                      setSelfRequestDraft((current) => ({
+                        ...current,
+                        targetEntryId: entryId,
+                        requestedClockInAt: entry ? toLocalInputValue(entry.clockInAt) : current.requestedClockInAt,
+                        requestedClockOutAt: entry ? toLocalInputValue(entry.clockOutAt) : current.requestedClockOutAt,
+                      }));
+                    }}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                  >
+                    <option value="">New missed shift</option>
+                    {self.entries.slice(0, 12).map((entry) => (
+                      <option key={entry.id} value={entry.id}>{entryOptionLabel(entry)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Requested Clock In</span>
+                  <input
+                    type="datetime-local"
+                    value={selfRequestDraft.requestedClockInAt}
+                    onChange={(event) => setSelfRequestDraft((current) => ({ ...current, requestedClockInAt: event.target.value }))}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Requested Clock Out</span>
+                  <input
+                    type="datetime-local"
+                    value={selfRequestDraft.requestedClockOutAt}
+                    onChange={(event) => setSelfRequestDraft((current) => ({ ...current, requestedClockOutAt: event.target.value }))}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                  />
+                </label>
+                <label className="space-y-2 md:col-span-2">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Reason</span>
+                  <textarea
+                    rows={3}
+                    value={selfRequestDraft.note}
+                    onChange={(event) => setSelfRequestDraft((current) => ({ ...current, note: event.target.value }))}
+                    placeholder="Example: forgot to clock out after the 4:30 PM demo"
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-zinc-500">Approved requests write back into payroll and the shift history automatically.</p>
+                <button
+                  type="button"
+                  onClick={() => void submitSelfEditRequest()}
+                  disabled={busyKey === "submit-edit-request"}
+                  className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/15 disabled:opacity-60"
+                >
+                  {busyKey === "submit-edit-request" ? "Submitting..." : "Submit Edit Request"}
+                </button>
+              </div>
+            </article>
+
+            <article className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Request History</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-white">My Time Edit Requests</h2>
+                </div>
+                <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">{self.editRequests.length} total</span>
+              </div>
+              <div className="space-y-3">
+                {self.editRequests.length === 0 ? (
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-400">No edit requests submitted yet.</div>
+                ) : (
+                  self.editRequests.slice(0, 6).map((request) => (
+                    <article key={request.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-white">{requestTypeLabel(request.requestType)}</p>
+                        <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${badgeTone(request.status)}`}>{request.status}</span>
+                      </div>
+                      <p className="mt-2 text-sm text-zinc-300">{formatDateTime(request.requestedClockInAt)} to {formatDateTime(request.requestedClockOutAt)}</p>
+                      <p className="mt-1 text-xs text-zinc-500">Submitted {formatDateTime(request.submittedAt)}{request.reviewedAt ? ` | Reviewed by ${request.reviewedByName ?? "Manager"} ${formatDateTime(request.reviewedAt)}` : ""}</p>
+                      {request.note ? <p className="mt-2 text-sm text-zinc-400">{request.note}</p> : null}
+                    </article>
+                  ))
+                )}
+              </div>
+            </article>
+          </section>
+
           <section className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Payroll</p>
                 <h2 className="mt-2 text-2xl font-semibold text-white">This Week Payroll</h2>
-                <p className="mt-2 text-sm text-zinc-400">Commission is broken out separately from hourly pay so reps and management can see the weekly mix clearly.</p>
+                <p className="mt-2 text-sm text-zinc-400">Hourly pay, overtime, rep commission, and team overrides are split into separate lines so payroll is easy to audit.</p>
               </div>
               <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">
                 OT uses 1.5x
               </span>
             </div>
-            <div className="grid gap-4 lg:grid-cols-5">
+            <div className="grid gap-4 lg:grid-cols-6">
               <article className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
                 <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Base Hourly</p>
                 <p className="mt-2 text-2xl font-semibold text-white">{formatCurrency(payrollSelf?.currentWeek.regularPay ?? 0)}</p>
@@ -355,9 +613,14 @@ export default function TimeClockPage() {
                 <p className="mt-2 text-sm text-zinc-400">{formatHours(payrollSelf?.currentWeek.overtimePendingMinutes ?? 0)}</p>
               </article>
               <article className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Commission</p>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Rep Commission</p>
                 <p className="mt-2 text-2xl font-semibold text-white">{formatCurrency(payrollSelf?.currentWeek.commissionEarned ?? 0)}</p>
                 <p className="mt-2 text-sm text-zinc-400">{payrollSelf?.currentWeek.commissionDeals ?? 0} closed deal(s)</p>
+              </article>
+              <article className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Team Overrides</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{formatCurrency(payrollSelf?.currentWeek.overrideEarned ?? 0)}</p>
+                <p className="mt-2 text-sm text-zinc-400">{payrollSelf?.currentWeek.overrideDeals ?? 0} team deal(s)</p>
               </article>
               <article className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4">
                 <p className="text-[11px] uppercase tracking-[0.16em] text-blue-200">Total Owed</p>
@@ -375,17 +638,18 @@ export default function TimeClockPage() {
               </div>
               <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">{self.entries.length} entries</span>
             </div>
-            <div className="overflow-hidden rounded-2xl border border-zinc-800">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-zinc-950 text-zinc-400"><tr><th className="px-4 py-3">Clock In</th><th className="px-4 py-3">Clock Out</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">OT</th><th className="px-4 py-3">Approval</th></tr></thead>
+            <div className="overflow-x-auto rounded-2xl border border-zinc-800">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="bg-zinc-950 text-zinc-400"><tr><th className="px-4 py-3">Clock In</th><th className="px-4 py-3">Clock Out</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">OT</th><th className="px-4 py-3">Approval</th><th className="px-4 py-3">Reviewed By</th></tr></thead>
                 <tbody>
-                  {self.entries.length === 0 ? <tr className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-400"><td className="px-4 py-4" colSpan={5}>No shifts logged yet.</td></tr> : self.entries.slice(0, 14).map((entry) => (
+                  {self.entries.length === 0 ? <tr className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-400"><td className="px-4 py-4" colSpan={6}>No shifts logged yet.</td></tr> : self.entries.slice(0, 14).map((entry) => (
                     <tr key={entry.id} className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-200">
                       <td className="px-4 py-3">{formatDateTime(entry.clockInAt)}</td>
                       <td className="px-4 py-3">{formatDateTime(entry.clockOutAt)}</td>
                       <td className="px-4 py-3">{formatHours(entry.durationMinutes)}</td>
                       <td className="px-4 py-3">{formatHours(entry.overtimeMinutes ?? 0)}</td>
                       <td className="px-4 py-3"><span className={`inline-flex rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${badgeTone(entry.overtimeStatus)}`}>{entry.overtimeStatus === "NONE" ? "No OT" : entry.overtimeStatus}</span></td>
+                      <td className="px-4 py-3 text-zinc-400">{entry.approvedByName ?? "--"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -403,22 +667,23 @@ export default function TimeClockPage() {
                 {payrollSelf?.history.length ?? 0} weeks
               </span>
             </div>
-            <div className="overflow-hidden rounded-2xl border border-zinc-800">
-              <table className="w-full text-left text-sm">
+            <div className="overflow-x-auto rounded-2xl border border-zinc-800">
+              <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="bg-zinc-950 text-zinc-400">
                   <tr>
                     <th className="px-4 py-3">Week</th>
                     <th className="px-4 py-3">Hourly</th>
                     <th className="px-4 py-3">Approved OT</th>
                     <th className="px-4 py-3">Pending OT</th>
-                    <th className="px-4 py-3">Commission</th>
+                    <th className="px-4 py-3">Rep Commission</th>
+                    <th className="px-4 py-3">Overrides</th>
                     <th className="px-4 py-3">Total Owed</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(payrollSelf?.history.length ?? 0) === 0 ? (
                     <tr className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-400">
-                      <td className="px-4 py-4" colSpan={6}>No payroll history yet.</td>
+                      <td className="px-4 py-4" colSpan={7}>No payroll history yet.</td>
                     </tr>
                   ) : (
                     payrollSelf?.history.map((week) => (
@@ -428,6 +693,7 @@ export default function TimeClockPage() {
                         <td className="px-4 py-3">{formatCurrency(week.overtimeApprovedPay)}</td>
                         <td className="px-4 py-3 text-amber-300">{formatCurrency(week.overtimePendingPay)}</td>
                         <td className="px-4 py-3">{formatCurrency(week.commissionEarned)}</td>
+                        <td className="px-4 py-3">{formatCurrency(week.overrideEarned)}</td>
                         <td className="px-4 py-3 font-semibold text-white">{formatCurrency(week.totalOwed)}</td>
                       </tr>
                     ))
@@ -449,43 +715,52 @@ export default function TimeClockPage() {
                     {snapshot.payroll.team.length} reps
                   </span>
                 </div>
-                <div className="overflow-hidden rounded-2xl border border-zinc-800">
-                  <table className="w-full text-left text-sm">
+                <div className="overflow-x-auto rounded-2xl border border-zinc-800">
+                  <table className="w-full min-w-[1080px] text-left text-sm">
                     <thead className="bg-zinc-950 text-zinc-400">
                       <tr>
                         <th className="px-4 py-3">Employee</th>
+                        <th className="px-4 py-3">Role</th>
+                        <th className="px-4 py-3">Manager / Team Lead</th>
                         <th className="px-4 py-3">Pay Mode</th>
                         <th className="px-4 py-3">Commission Rate</th>
                         <th className="px-4 py-3">Hourly</th>
                         <th className="px-4 py-3">Approved OT</th>
-                        <th className="px-4 py-3">Pending OT</th>
-                        <th className="px-4 py-3">Commission</th>
+                        <th className="px-4 py-3">Rep Commission</th>
+                        <th className="px-4 py-3">Overrides</th>
                         <th className="px-4 py-3">Total Owed</th>
                       </tr>
                     </thead>
                     <tbody>
                       {snapshot.payroll.team.length === 0 ? (
                         <tr className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-400">
-                          <td className="px-4 py-4" colSpan={8}>No team payroll data yet.</td>
+                          <td className="px-4 py-4" colSpan={10}>No team payroll data yet.</td>
                         </tr>
                       ) : (
-                        snapshot.payroll.team.map((user) => (
-                          <tr key={user.userId} className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-200">
-                            <td className="px-4 py-3">
-                              <div className="flex flex-col">
-                                <span className="font-medium text-white">{user.name}</span>
-                                <span className="text-xs text-zinc-500">{user.email ?? user.userId}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">{payTypeLabel(user.payType)}</td>
-                            <td className="px-4 py-3">{supportsCommission(user.payType) ? formatPercent(user.commissionRate) : "--"}</td>
-                            <td className="px-4 py-3">{formatCurrency(user.currentWeek.regularPay)}</td>
-                            <td className="px-4 py-3">{formatCurrency(user.currentWeek.overtimeApprovedPay)}</td>
-                            <td className="px-4 py-3 text-amber-300">{formatCurrency(user.currentWeek.overtimePendingPay)}</td>
-                            <td className="px-4 py-3">{formatCurrency(user.currentWeek.commissionEarned)}</td>
-                            <td className="px-4 py-3 font-semibold text-white">{formatCurrency(user.currentWeek.totalOwed)}</td>
-                          </tr>
-                        ))
+                        snapshot.payroll.team.map((user) => {
+                          const worker = teamUserById.get(user.userId);
+                          const managerName = worker?.settings.managerUserId ? teamUserById.get(worker.settings.managerUserId)?.name ?? "--" : "--";
+                          const teamLeadName = worker?.settings.teamLeadUserId ? teamUserById.get(worker.settings.teamLeadUserId)?.name ?? "--" : "--";
+                          return (
+                            <tr key={user.userId} className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-200">
+                              <td className="px-4 py-3">
+                                <div className="flex flex-col">
+                                  <span className="font-medium text-white">{user.name}</span>
+                                  <span className="text-xs text-zinc-500">{user.email ?? user.userId}</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">{worker ? roleLabel(worker.role) : "--"}</td>
+                              <td className="px-4 py-3 text-xs text-zinc-300">{managerName} / {teamLeadName}</td>
+                              <td className="px-4 py-3">{payTypeLabel(user.payType)}</td>
+                              <td className="px-4 py-3">{supportsCommission(user.payType) ? formatPercent(user.commissionRate) : "--"}</td>
+                              <td className="px-4 py-3">{formatCurrency(user.currentWeek.regularPay)}</td>
+                              <td className="px-4 py-3">{formatCurrency(user.currentWeek.overtimeApprovedPay)}</td>
+                              <td className="px-4 py-3">{formatCurrency(user.currentWeek.commissionEarned)}</td>
+                              <td className="px-4 py-3">{formatCurrency(user.currentWeek.overrideEarned)}</td>
+                              <td className="px-4 py-3 font-semibold text-white">{formatCurrency(user.currentWeek.totalOwed)}</td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -499,25 +774,26 @@ export default function TimeClockPage() {
                     <h2 className="mt-2 text-2xl font-semibold text-white">Recent Weekly Payroll</h2>
                   </div>
                   <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">
-                    last 20 rows
+                    last 24 rows
                   </span>
                 </div>
-                <div className="overflow-hidden rounded-2xl border border-zinc-800">
-                  <table className="w-full text-left text-sm">
+                <div className="overflow-x-auto rounded-2xl border border-zinc-800">
+                  <table className="w-full min-w-[920px] text-left text-sm">
                     <thead className="bg-zinc-950 text-zinc-400">
                       <tr>
                         <th className="px-4 py-3">Employee</th>
                         <th className="px-4 py-3">Week</th>
                         <th className="px-4 py-3">Hourly</th>
                         <th className="px-4 py-3">Approved OT</th>
-                        <th className="px-4 py-3">Commission</th>
+                        <th className="px-4 py-3">Rep Commission</th>
+                        <th className="px-4 py-3">Overrides</th>
                         <th className="px-4 py-3">Total Owed</th>
                       </tr>
                     </thead>
                     <tbody>
                       {teamPayrollHistory.length === 0 ? (
                         <tr className="border-t border-zinc-800 bg-zinc-900/70 text-zinc-400">
-                          <td className="px-4 py-4" colSpan={6}>No historical payroll rows yet.</td>
+                          <td className="px-4 py-4" colSpan={7}>No historical payroll rows yet.</td>
                         </tr>
                       ) : (
                         teamPayrollHistory.map((row) => (
@@ -527,6 +803,7 @@ export default function TimeClockPage() {
                             <td className="px-4 py-3">{formatCurrency(row.week.regularPay)}</td>
                             <td className="px-4 py-3">{formatCurrency(row.week.overtimeApprovedPay)}</td>
                             <td className="px-4 py-3">{formatCurrency(row.week.commissionEarned)}</td>
+                            <td className="px-4 py-3">{formatCurrency(row.week.overrideEarned)}</td>
                             <td className="px-4 py-3 font-semibold text-white">{formatCurrency(row.week.totalOwed)}</td>
                           </tr>
                         ))
@@ -585,8 +862,62 @@ export default function TimeClockPage() {
               <section className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Manager Queue</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">Time Edit Requests</h2>
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+                    <ShieldAlert className="h-3.5 w-3.5" />
+                    {snapshot.pendingTimeEditRequests.length} pending
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {snapshot.pendingTimeEditRequests.length === 0 ? (
+                    <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-400">No time-edit requests are waiting right now.</div>
+                  ) : snapshot.pendingTimeEditRequests.map((request) => (
+                    <article key={request.requestId} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                      <div className="flex flex-col gap-4">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-lg font-semibold text-white">{request.employeeName}</p>
+                            <span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-200">{requestTypeLabel(request.requestType)}</span>
+                          </div>
+                          <p className="mt-1 text-sm text-zinc-400">{request.employeeEmail ?? "No email"} | Submitted by {request.submittedByName} {formatDateTime(request.submittedAt)}</p>
+                          <p className="mt-2 text-sm text-zinc-300">Requested: {formatDateTime(request.requestedClockInAt)} to {formatDateTime(request.requestedClockOutAt)}</p>
+                          {request.originalClockInAt || request.originalClockOutAt ? (
+                            <p className="mt-1 text-xs text-zinc-500">Current record: {formatDateTime(request.originalClockInAt)} to {formatDateTime(request.originalClockOutAt)}</p>
+                          ) : null}
+                          {request.note ? <p className="mt-2 text-sm text-zinc-400">{request.note}</p> : null}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void runRequest("PATCH", { action: "REVIEW_TIME_EDIT", userId: request.employeeUserId, requestId: request.requestId, approved: true }, `approve-request-${request.requestId}`)}
+                            disabled={busyKey === `approve-request-${request.requestId}` || busyKey === `reject-request-${request.requestId}`}
+                            className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/15 disabled:opacity-60"
+                          >
+                            {busyKey === `approve-request-${request.requestId}` ? "Saving..." : "Approve Request"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void runRequest("PATCH", { action: "REVIEW_TIME_EDIT", userId: request.employeeUserId, requestId: request.requestId, approved: false }, `reject-request-${request.requestId}`)}
+                            disabled={busyKey === `approve-request-${request.requestId}` || busyKey === `reject-request-${request.requestId}`}
+                            className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/15 disabled:opacity-60"
+                          >
+                            {busyKey === `reject-request-${request.requestId}` ? "Saving..." : "Reject Request"}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
                     <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Manager Controls</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">Hourly Employee Setup</h2>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">Payroll Setup, Teams, and Time Edits</h2>
+                    <p className="mt-2 text-sm text-zinc-400">Super Admin can attach reps to managers and team leads, set override percentages, and fix time entries directly. Managers can still update pay mode and approve requests.</p>
                   </div>
                   <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">{snapshot.team.length} users</span>
                 </div>
@@ -594,18 +925,36 @@ export default function TimeClockPage() {
                   {snapshot.team.map((employee) => {
                     const draft = drafts[employee.id] ?? buildDraft(employee);
                     const draftCommissionRate = parseDraftNumber(draft.commissionRate);
+                    const draftManagerOverrideRate = parseDraftNumber(draft.managerOverrideRate);
+                    const draftTeamLeadOverrideRate = parseDraftNumber(draft.teamLeadOverrideRate);
+                    const directClockInAt = localInputToIso(draft.editClockInAt);
+                    const directClockOutAt = localInputToIso(draft.editClockOutAt);
+                    const assignedManager = employee.settings.managerUserId ? teamUserById.get(employee.settings.managerUserId)?.name ?? "--" : "--";
+                    const assignedTeamLead = employee.settings.teamLeadUserId ? teamUserById.get(employee.settings.teamLeadUserId)?.name ?? "--" : "--";
+                    const managedReports = managerReports.get(employee.id) ?? [];
+                    const leadReports = teamLeadReports.get(employee.id) ?? [];
+
                     return (
                       <article key={employee.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
                         <div className="mb-4 flex items-start justify-between gap-3">
                           <div>
                             <p className="text-lg font-semibold text-white">{employee.name}</p>
-                            <p className="mt-1 text-sm text-zinc-400">{employee.email ?? employee.id} | {employee.role.replace("_", " ")}</p>
+                            <p className="mt-1 text-sm text-zinc-400">{employee.email ?? employee.id} | {roleLabel(employee.role)}</p>
+                            <p className="mt-2 text-xs text-zinc-500">Assigned manager: {assignedManager} | Assigned team lead: {assignedTeamLead}</p>
                           </div>
                           <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-right">
                             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Worked This Week</p>
                             <p className="mt-1 text-sm font-semibold text-white">{formatHours(employee.weeklyWorkedMinutes)}</p>
                           </div>
                         </div>
+
+                        {(managedReports.length > 0 || leadReports.length > 0) ? (
+                          <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3 text-sm text-zinc-300">
+                            {managedReports.length > 0 ? <p>Manager roster: {managedReports.map((user) => user.name).join(", ")}</p> : null}
+                            {leadReports.length > 0 ? <p className={managedReports.length > 0 ? "mt-1" : ""}>Team lead roster: {leadReports.map((user) => user.name).join(", ")}</p> : null}
+                          </div>
+                        ) : null}
+
                         <div className="grid gap-3 md:grid-cols-2">
                           <label className="space-y-2">
                             <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Pay Type</span>
@@ -663,7 +1012,59 @@ export default function TimeClockPage() {
                               className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
                             />
                           </label>
-                          <label className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-200">
+                          <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Manager</span>
+                            <select
+                              value={draft.managerUserId}
+                              onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, managerUserId: event.target.value } }))}
+                              disabled={!snapshot.canEditAssignments}
+                              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
+                            >
+                              <option value="">No manager</option>
+                              {managerOptions.filter((option) => option.id !== employee.id).map((option) => (
+                                <option key={option.id} value={option.id}>{option.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Team Lead</span>
+                            <select
+                              value={draft.teamLeadUserId}
+                              onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, teamLeadUserId: event.target.value } }))}
+                              disabled={!snapshot.canEditAssignments}
+                              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
+                            >
+                              <option value="">No team lead</option>
+                              {teamLeadOptions.filter((option) => option.id !== employee.id).map((option) => (
+                                <option key={option.id} value={option.id}>{option.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Manager Override %</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.1"
+                              value={draft.managerOverrideRate}
+                              onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, managerOverrideRate: event.target.value } }))}
+                              disabled={!snapshot.canEditAssignments || !draft.managerUserId}
+                              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Team Lead Override %</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.1"
+                              value={draft.teamLeadOverrideRate}
+                              onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, teamLeadOverrideRate: event.target.value } }))}
+                              disabled={!snapshot.canEditAssignments || !draft.teamLeadUserId}
+                              className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-200 md:col-span-2">
                             <span className="flex items-center gap-2"><UserCog className="h-4 w-4 text-zinc-400" />Require OT Approval</span>
                             <input
                               type="checkbox"
@@ -674,8 +1075,12 @@ export default function TimeClockPage() {
                             />
                           </label>
                         </div>
+
                         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="text-xs text-zinc-500">{employee.currentEntry ? `Clocked in since ${formatDateTime(employee.currentEntry.clockInAt)}` : supportsHourlyTracking(employee.settings.payType) ? "Currently clocked out" : "Hourly tracking disabled"}</div>
+                          <div className="text-xs text-zinc-500">
+                            {employee.currentEntry ? `Clocked in since ${formatDateTime(employee.currentEntry.clockInAt)}` : supportsHourlyTracking(employee.settings.payType) ? "Currently clocked out" : "Hourly tracking disabled"}
+                            {!snapshot.canEditAssignments ? " | Team assignments and override rates are Super Admin only." : ""}
+                          </div>
                           <button
                             type="button"
                             onClick={() =>
@@ -689,6 +1094,10 @@ export default function TimeClockPage() {
                                   commissionRate: supportsCommission(draft.payType) && draftCommissionRate !== null ? draftCommissionRate / 100 : null,
                                   maxWeeklyHours: supportsHourlyTracking(draft.payType) ? parseDraftNumber(draft.maxWeeklyHours) : null,
                                   requireOvertimeApproval: draft.requireOvertimeApproval,
+                                  managerUserId: draft.managerUserId || null,
+                                  teamLeadUserId: draft.teamLeadUserId || null,
+                                  managerOverrideRate: draft.managerUserId && draftManagerOverrideRate !== null ? draftManagerOverrideRate / 100 : null,
+                                  teamLeadOverrideRate: draft.teamLeadUserId && draftTeamLeadOverrideRate !== null ? draftTeamLeadOverrideRate / 100 : null,
                                 },
                                 `save-${employee.id}`,
                               )
@@ -698,6 +1107,86 @@ export default function TimeClockPage() {
                           >
                             {busyKey === `save-${employee.id}` ? "Saving..." : "Save Settings"}
                           </button>
+                        </div>
+
+                        <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                          <div className="mb-3 flex items-center justify-between">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Direct Time Edit</p>
+                              <h3 className="mt-1 text-lg font-semibold text-white">Add or Correct Shift</h3>
+                            </div>
+                            <span className="text-xs text-zinc-500">Saves an approved time entry directly into payroll.</span>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label className="space-y-2 md:col-span-2">
+                              <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Existing Shift</span>
+                              <select
+                                value={draft.editEntryId}
+                                onChange={(event) => {
+                                  const entryId = event.target.value;
+                                  const entry = employee.entries.find((item) => item.id === entryId) ?? null;
+                                  setDrafts((current) => ({
+                                    ...current,
+                                    [employee.id]: {
+                                      ...draft,
+                                      editEntryId: entryId,
+                                      editClockInAt: entry ? toLocalInputValue(entry.clockInAt) : "",
+                                      editClockOutAt: entry ? toLocalInputValue(entry.clockOutAt) : "",
+                                    },
+                                  }));
+                                }}
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                              >
+                                <option value="">New missed shift</option>
+                                {employee.entries.slice(0, 12).map((entry) => (
+                                  <option key={entry.id} value={entry.id}>{entryOptionLabel(entry)}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="space-y-2">
+                              <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Clock In</span>
+                              <input
+                                type="datetime-local"
+                                value={draft.editClockInAt}
+                                onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, editClockInAt: event.target.value } }))}
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                              />
+                            </label>
+                            <label className="space-y-2">
+                              <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Clock Out</span>
+                              <input
+                                type="datetime-local"
+                                value={draft.editClockOutAt}
+                                onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, editClockOutAt: event.target.value } }))}
+                                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                            <p className="text-xs text-zinc-500">Use this when the time should be corrected immediately instead of waiting on a rep request.</p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                directClockInAt && directClockOutAt
+                                  ? void runRequest(
+                                      "PATCH",
+                                      {
+                                        action: "SAVE_TIME_ENTRY",
+                                        userId: employee.id,
+                                        entryId: draft.editEntryId || null,
+                                        clockInAt: directClockInAt,
+                                        clockOutAt: directClockOutAt,
+                                      },
+                                      `save-entry-${employee.id}`,
+                                    )
+                                  : setError("Pick both the direct-edit clock-in and clock-out times before saving.")
+                              }
+                              disabled={busyKey === `save-entry-${employee.id}`}
+                              className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/15 disabled:opacity-60"
+                            >
+                              {busyKey === `save-entry-${employee.id}` ? "Saving..." : draft.editEntryId ? "Update Time Entry" : "Add Time Entry"}
+                            </button>
+                          </div>
                         </div>
                       </article>
                     );
