@@ -49,7 +49,9 @@ function parseNullableNumber(value: unknown) {
 }
 
 function parsePayType(value: unknown): PayType {
-  return value === "HOURLY" ? "HOURLY" : "COMMISSION";
+  if (value === "HOURLY") return "HOURLY";
+  if (value === "HOURLY_PLUS_COMMISSION") return "HOURLY_PLUS_COMMISSION";
+  return "COMMISSION";
 }
 
 async function buildSnapshot(userId: string, role: UserRole): Promise<Snapshot> {
@@ -172,8 +174,8 @@ export async function PATCH(request: Request) {
       const payType = parsePayType(body.payType);
       await saveWorkforceSettings(body.userId.trim(), {
         payType,
-        hourlyRate: payType === "HOURLY" ? parseNullableNumber(body.hourlyRate) : null,
-        maxWeeklyHours: payType === "HOURLY" ? parseNullableNumber(body.maxWeeklyHours) : null,
+        hourlyRate: payType === "COMMISSION" ? null : parseNullableNumber(body.hourlyRate),
+        maxWeeklyHours: payType === "COMMISSION" ? null : parseNullableNumber(body.maxWeeklyHours),
         requireOvertimeApproval: typeof body.requireOvertimeApproval === "boolean" ? body.requireOvertimeApproval : true,
       });
     } else if (body.action === "REVIEW_OVERTIME") {

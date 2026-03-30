@@ -16,7 +16,7 @@ type AuthAdminUser = {
   user_metadata?: Record<string, unknown> | null;
 };
 
-export type PayType = "COMMISSION" | "HOURLY";
+export type PayType = "COMMISSION" | "HOURLY" | "HOURLY_PLUS_COMMISSION";
 export type OvertimeStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
 
 export type TimeClockSettings = {
@@ -131,8 +131,12 @@ function parseTimeClockSettings(metadata: Record<string, unknown>): TimeClockSet
   const settings = asObjectRecord(container.settings) ?? {};
   const hourlyRate = parseNumber(settings.hourlyRate);
   const maxWeeklyHours = parseNumber(settings.maxWeeklyHours);
+  const payType =
+    settings.payType === "HOURLY" || settings.payType === "HOURLY_PLUS_COMMISSION"
+      ? settings.payType
+      : "COMMISSION";
   return {
-    payType: settings.payType === "HOURLY" ? "HOURLY" : "COMMISSION",
+    payType,
     hourlyRate: hourlyRate !== null && hourlyRate >= 0 ? hourlyRate : null,
     maxWeeklyHours: maxWeeklyHours !== null && maxWeeklyHours >= 0 ? maxWeeklyHours : null,
     requireOvertimeApproval: parseBoolean(settings.requireOvertimeApproval, true),
@@ -330,7 +334,7 @@ export async function saveWorkforceSettings(
 
 export async function clockInWorkforceUser(userId: string) {
   return updateWorkforceUser(userId, (current) => {
-    if (current.settings.payType !== "HOURLY") {
+    if (current.settings.payType !== "HOURLY" && current.settings.payType !== "HOURLY_PLUS_COMMISSION") {
       throw new Error("Hourly tracking is not enabled for this employee.");
     }
     if (current.currentEntry) {

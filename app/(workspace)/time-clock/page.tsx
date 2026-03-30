@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlarmClockCheck, BadgeDollarSign, Clock3, ShieldAlert, TimerReset, UserCog } from "lucide-react";
 
-type PayType = "COMMISSION" | "HOURLY";
+type PayType = "COMMISSION" | "HOURLY" | "HOURLY_PLUS_COMMISSION";
 type OvertimeStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
 type TimeClockEntry = {
   id: string;
@@ -97,6 +97,16 @@ function badgeTone(status: OvertimeStatus) {
   return "border-zinc-700 bg-zinc-800/70 text-zinc-300";
 }
 
+function supportsHourlyTracking(payType: PayType) {
+  return payType === "HOURLY" || payType === "HOURLY_PLUS_COMMISSION";
+}
+
+function payTypeLabel(payType: PayType) {
+  if (payType === "HOURLY_PLUS_COMMISSION") return "Hourly + Commission";
+  if (payType === "HOURLY") return "Hourly";
+  return "Commission";
+}
+
 export default function TimeClockPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -161,6 +171,7 @@ export default function TimeClockPage() {
   }, []);
 
   const self = snapshot?.self ?? null;
+  const selfSupportsHourly = self ? supportsHourlyTracking(self.settings.payType) : false;
   const weeklyGross = useMemo(() => {
     if (!self || self.settings.hourlyRate === null) return null;
     return (self.weeklyWorkedMinutes / 60) * self.settings.hourlyRate;
@@ -209,6 +220,11 @@ export default function TimeClockPage() {
               <p className="mt-2 text-sm text-zinc-400">{self.weeklyRemainingMinutes !== null ? `${formatHours(self.weeklyRemainingMinutes)} left before overtime` : "No weekly cap set"}</p>
             </article>
             <article className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Pay Mode</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{payTypeLabel(self.settings.payType)}</p>
+              <p className="mt-2 text-sm text-zinc-400">{selfSupportsHourly ? "Clock and cap tracking enabled" : "Commission-only tracking"}</p>
+            </article>
+            <article className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
               <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Pending OT</p>
               <p className="mt-2 text-3xl font-semibold text-white">{formatHours(self.weeklyPendingOvertimeMinutes)}</p>
               <p className="mt-2 text-sm text-zinc-400">{weeklyGross !== null ? `Estimated gross ${formatCurrency(weeklyGross)}` : "Set a rate to estimate pay"}</p>
@@ -219,13 +235,13 @@ export default function TimeClockPage() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">My Shift</p>
-                <h2 className="mt-2 text-2xl font-semibold text-white">{self.currentEntry ? "Clocked In" : self.settings.payType === "HOURLY" ? "Ready To Clock In" : "Hourly Tracking Not Enabled"}</h2>
-                <p className="mt-2 text-sm text-zinc-400">{self.currentEntry ? `Started ${formatDateTime(self.currentEntry.clockInAt)}` : self.settings.payType === "HOURLY" ? "Punch in when your shift starts and clock out when you finish." : "A manager needs to switch you to hourly before you can use the clock."}</p>
+                <h2 className="mt-2 text-2xl font-semibold text-white">{self.currentEntry ? "Clocked In" : selfSupportsHourly ? "Ready To Clock In" : "Hourly Tracking Not Enabled"}</h2>
+                <p className="mt-2 text-sm text-zinc-400">{self.currentEntry ? `Started ${formatDateTime(self.currentEntry.clockInAt)}` : selfSupportsHourly ? "Punch in when your shift starts and clock out when you finish." : "A manager needs to switch you to an hourly pay mode before you can use the clock."}</p>
               </div>
               <button
                 type="button"
                 onClick={() => void runRequest("POST", { action: self.currentEntry ? "CLOCK_OUT" : "CLOCK_IN" }, "clock")}
-                disabled={busyKey === "clock" || self.settings.payType !== "HOURLY"}
+                disabled={busyKey === "clock" || !selfSupportsHourly}
                 className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
                   self.currentEntry ? "border border-rose-500/30 bg-rose-500/10 text-rose-100 hover:bg-rose-500/15" : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15"
                 }`}
@@ -338,11 +354,20 @@ export default function TimeClockPage() {
                             <span className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Pay Type</span>
                             <select
                               value={draft.payType}
-                              onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, payType: event.target.value === "HOURLY" ? "HOURLY" : "COMMISSION" } }))}
+                              onChange={(event) => {
+                                const nextPayType =
+                                  event.target.value === "HOURLY_PLUS_COMMISSION"
+                                    ? "HOURLY_PLUS_COMMISSION"
+                                    : event.target.value === "HOURLY"
+                                      ? "HOURLY"
+                                      : "COMMISSION";
+                                setDrafts((current) => ({ ...current, [employee.id]: { ...draft, payType: nextPayType } }));
+                              }}
                               className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none"
                             >
                               <option value="COMMISSION">Commission</option>
                               <option value="HOURLY">Hourly</option>
+                              <option value="HOURLY_PLUS_COMMISSION">Hourly + Commission</option>
                             </select>
                           </label>
                           <label className="space-y-2">
@@ -353,7 +378,7 @@ export default function TimeClockPage() {
                               step="0.01"
                               value={draft.hourlyRate}
                               onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, hourlyRate: event.target.value } }))}
-                              disabled={draft.payType !== "HOURLY"}
+                              disabled={!supportsHourlyTracking(draft.payType)}
                               className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
                             />
                           </label>
@@ -365,7 +390,7 @@ export default function TimeClockPage() {
                               step="0.25"
                               value={draft.maxWeeklyHours}
                               onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, maxWeeklyHours: event.target.value } }))}
-                              disabled={draft.payType !== "HOURLY"}
+                              disabled={!supportsHourlyTracking(draft.payType)}
                               className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 outline-none disabled:opacity-50"
                             />
                           </label>
@@ -375,16 +400,29 @@ export default function TimeClockPage() {
                               type="checkbox"
                               checked={draft.requireOvertimeApproval}
                               onChange={(event) => setDrafts((current) => ({ ...current, [employee.id]: { ...draft, requireOvertimeApproval: event.target.checked } }))}
-                              disabled={draft.payType !== "HOURLY"}
+                              disabled={!supportsHourlyTracking(draft.payType)}
                               className="size-4 rounded border-zinc-700 bg-zinc-900"
                             />
                           </label>
                         </div>
                         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="text-xs text-zinc-500">{employee.currentEntry ? `Clocked in since ${formatDateTime(employee.currentEntry.clockInAt)}` : employee.settings.payType === "HOURLY" ? "Currently clocked out" : "Hourly tracking disabled"}</div>
+                          <div className="text-xs text-zinc-500">{employee.currentEntry ? `Clocked in since ${formatDateTime(employee.currentEntry.clockInAt)}` : supportsHourlyTracking(employee.settings.payType) ? "Currently clocked out" : "Hourly tracking disabled"}</div>
                           <button
                             type="button"
-                            onClick={() => void runRequest("PATCH", { action: "SAVE_SETTINGS", userId: employee.id, payType: draft.payType, hourlyRate: draft.payType === "HOURLY" ? parseDraftNumber(draft.hourlyRate) : null, maxWeeklyHours: draft.payType === "HOURLY" ? parseDraftNumber(draft.maxWeeklyHours) : null, requireOvertimeApproval: draft.requireOvertimeApproval }, `save-${employee.id}`)}
+                            onClick={() =>
+                              void runRequest(
+                                "PATCH",
+                                {
+                                  action: "SAVE_SETTINGS",
+                                  userId: employee.id,
+                                  payType: draft.payType,
+                                  hourlyRate: supportsHourlyTracking(draft.payType) ? parseDraftNumber(draft.hourlyRate) : null,
+                                  maxWeeklyHours: supportsHourlyTracking(draft.payType) ? parseDraftNumber(draft.maxWeeklyHours) : null,
+                                  requireOvertimeApproval: draft.requireOvertimeApproval,
+                                },
+                                `save-${employee.id}`,
+                              )
+                            }
                             disabled={busyKey === `save-${employee.id}`}
                             className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/15 disabled:opacity-60"
                           >
