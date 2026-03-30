@@ -240,6 +240,17 @@ function formatDateTime(value: string) {
   });
 }
 
+function getNewYorkDayKey(value: string | Date) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(parsed);
+}
+
 function formatDurationSeconds(value: number) {
   if (!value || value <= 0) return "No duration";
   const minutes = Math.floor(value / 60);
@@ -319,6 +330,18 @@ function RepCallDrawer({
     setResolvedDurations({});
   }, [drilldown.userId]);
 
+  const todayKey = getNewYorkDayKey(new Date());
+  const talkSecondsToday = drilldown.recentCalls.reduce((total, call) => {
+    if (getNewYorkDayKey(call.callAt) !== todayKey) return total;
+    return total + (resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0);
+  }, 0);
+  const displayedTalkMinutesToday = Math.round(talkSecondsToday / 60);
+  const displayedConnectedToday = drilldown.recentCalls.reduce((total, call) => {
+    if (getNewYorkDayKey(call.callAt) !== todayKey) return total;
+    const duration = resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0;
+    return total + (duration >= 45 ? 1 : 0);
+  }, 0);
+
   return (
     <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -350,7 +373,7 @@ function RepCallDrawer({
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Connected</p>
-            <p className="mt-1 text-xl font-semibold text-white">{drilldown.connectedToday}</p>
+            <p className="mt-1 text-xl font-semibold text-white">{displayedConnectedToday}</p>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Recorded</p>
@@ -359,7 +382,7 @@ function RepCallDrawer({
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3">
             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Talk Time</p>
-            <p className="mt-1 text-xl font-semibold text-white">{drilldown.talkMinutesToday} min</p>
+            <p className="mt-1 text-xl font-semibold text-white">{displayedTalkMinutesToday} min</p>
             <p className="mt-1 text-xs text-zinc-500">{drilldown.totalCalls} calls in feed</p>
           </div>
         </div>
