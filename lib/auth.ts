@@ -1,9 +1,11 @@
 import { cookies, headers } from "next/headers";
+import type { NextResponse } from "next/server";
 
 export const AUTH_ACCESS_TOKEN_COOKIE = "felix_access_token";
 export const AUTH_REFRESH_TOKEN_COOKIE = "felix_refresh_token";
 export const AUTH_USER_HEADER = "x-felix-user-id";
 export const AUTH_USER_EMAIL_HEADER = "x-felix-user-email";
+export const AUTH_REFRESH_BUFFER_SECONDS = 10 * 60;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -31,10 +33,68 @@ type SupabaseSignUpResponse = {
   } | null;
 };
 
+type AuthCookieSession = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+};
+
 function requireSupabaseAuthConfig() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("Supabase auth requires NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   }
+}
+
+function decodeJwtPayload(token: string) {
+  const [, payload] = token.split(".");
+  if (!payload) return null;
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const json = typeof atob === "function"
+      ? atob(padded)
+      : Buffer.from(payload, "base64url").toString("utf8");
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export function getAccessTokenRemainingSeconds(accessToken: string, now = Date.now()) {
+  const payload = decodeJwtPayload(accessToken);
+  const exp = typeof payload?.exp === "number" ? payload.exp : NaN;
+  if (!Number.isFinite(exp)) return null;
+  return Math.floor(exp - now / 1000);
+}
+
+export function shouldRefreshAccessToken(accessToken: string, bufferSeconds = AUTH_REFRESH_BUFFER_SECONDS) {
+  if (!accessToken) return true;
+  const remainingSeconds = getAccessTokenRemainingSeconds(accessToken);
+  if (remainingSeconds === null) return true;
+  return remainingSeconds <= bufferSeconds;
+}
+
+export function setAuthCookies(response: NextResponse, session: AuthCookieSession) {
+  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, session.accessToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: session.expiresIn,
+  });
+  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, session.refreshToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+}
+
+export function clearAuthCookies(response: NextResponse) {
+  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
+  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
 }
 
 function getNormalizedEmail(usernameOrEmail: string) {

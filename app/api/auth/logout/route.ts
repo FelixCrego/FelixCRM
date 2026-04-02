@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { AUTH_ACCESS_TOKEN_COOKIE, AUTH_REFRESH_TOKEN_COOKIE } from "@/lib/auth";
-import { getAuthenticatedUser } from "@/lib/auth";
+import { clearAuthCookies, getAuthenticatedUser } from "@/lib/auth";
 import { endAllActiveUserSessions } from "@/lib/session-activity";
 
 export async function POST() {
@@ -9,7 +8,6 @@ export async function POST() {
     await endAllActiveUserSessions(user.id).catch(() => null);
   }
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
-  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
+  clearAuthCookies(response);
   return response;
 }

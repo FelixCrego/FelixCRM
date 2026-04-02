@@ -5,6 +5,7 @@ import {
   AUTH_REFRESH_TOKEN_COOKIE,
   AUTH_USER_EMAIL_HEADER,
   AUTH_USER_HEADER,
+  setAuthCookies,
   getSupabaseUserByAccessToken,
   refreshSupabaseSession,
 } from "@/lib/auth";
@@ -13,6 +14,7 @@ const PUBLIC_PATHS = [
   "/login",
   "/signup",
   "/apply",
+  "/api/auth/refresh",
   "/api/auth/login",
   "/api/auth/signup",
   "/api/public",
@@ -80,20 +82,7 @@ export async function middleware(request: NextRequest) {
     requestHeaders.set(AUTH_USER_EMAIL_HEADER, refreshed.email ?? "");
 
     const response = NextResponse.next({ request: { headers: requestHeaders } });
-    response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, refreshed.accessToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: refreshed.expiresIn,
-    });
-    response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, refreshed.refreshToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30,
-    });
+    setAuthCookies(response, refreshed);
     return response;
   } catch {
     return unauthorizedResponse(request);

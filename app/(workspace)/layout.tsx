@@ -1,6 +1,7 @@
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleProvider } from "@/components/role-context";
 import { AmazonConnectProvider } from "@/components/amazon-connect-provider";
+import { AuthSessionKeeper } from "@/components/auth-session-keeper";
 import { SessionActivityTracker } from "@/components/session-activity-tracker";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getEffectiveUserRole } from "@/lib/store";
@@ -15,6 +16,7 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
   return (
     <RoleProvider initialRole={initialRole}>
       <AmazonConnectProvider>
+        <AuthSessionKeeper />
         <SessionActivityTracker />
         <DashboardShell>{children}</DashboardShell>
       </AmazonConnectProvider>
