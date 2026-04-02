@@ -159,6 +159,9 @@ type DashboardMetrics = {
       revenueThisMonth: number;
       streakDays: number;
       overallStatus: "on_track" | "at_risk" | "off_track";
+      dialsStatus: "on_track" | "at_risk" | "off_track";
+      contactRateStatus: "on_track" | "at_risk" | "off_track";
+      demosStatus: "on_track" | "at_risk" | "off_track";
       paceGapLabel: string;
     }>;
     repCallDrilldowns: Array<{
@@ -368,6 +371,66 @@ function StatusBadge({ status }: { status: "on_track" | "at_risk" | "off_track" 
       {meta.label}
     </span>
   );
+}
+
+function getMetricStatusText(status: "on_track" | "at_risk" | "off_track") {
+  if (status === "on_track") return "On Pace";
+  if (status === "at_risk") return "Watch";
+  return "Off Pace";
+}
+
+function MetricStatusBadge({
+  label,
+  status,
+}: {
+  label: string;
+  status: "on_track" | "at_risk" | "off_track";
+}) {
+  const meta = getStatusMeta(status);
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${meta.className}`}>
+      <span className="text-zinc-300">{label}</span>
+      <span className="text-current">{getMetricStatusText(status)}</span>
+    </span>
+  );
+}
+
+function buildScorecardPaceSummary(scorecard: DashboardMetrics["team"]["scorecards"][number]) {
+  const groups: Array<{
+    title: string;
+    labels: string[];
+  }> = [
+    {
+      title: "On pace",
+      labels: [
+        scorecard.dialsStatus === "on_track" ? "dials" : "",
+        scorecard.contactRateStatus === "on_track" ? "contact rate" : "",
+        scorecard.demosStatus === "on_track" ? "demos" : "",
+      ].filter(Boolean),
+    },
+    {
+      title: "Watch",
+      labels: [
+        scorecard.dialsStatus === "at_risk" ? "dials" : "",
+        scorecard.contactRateStatus === "at_risk" ? "contact rate" : "",
+        scorecard.demosStatus === "at_risk" ? "demos" : "",
+      ].filter(Boolean),
+    },
+    {
+      title: "Needs attention",
+      labels: [
+        scorecard.dialsStatus === "off_track" ? "dials" : "",
+        scorecard.contactRateStatus === "off_track" ? "contact rate" : "",
+        scorecard.demosStatus === "off_track" ? "demos" : "",
+      ].filter(Boolean),
+    },
+  ];
+
+  return groups
+    .filter((group) => group.labels.length > 0)
+    .map((group) => `${group.title}: ${group.labels.join(", ")}`)
+    .join(". ");
 }
 
 function KpiCard({
@@ -1402,6 +1465,12 @@ function ManagerDashboard({
                       <p className="mt-1 text-sm font-semibold text-white">{rep.paceGapLabel}</p>
                     </div>
                   </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <MetricStatusBadge label="Dials" status={rep.dialsStatus} />
+                    <MetricStatusBadge label="Contact" status={rep.contactRateStatus} />
+                    <MetricStatusBadge label="Demos" status={rep.demosStatus} />
+                  </div>
+                  <p className="mt-3 text-xs text-zinc-400">{buildScorecardPaceSummary(rep)}</p>
                   <p className="mt-3 text-xs font-medium uppercase tracking-[0.14em] text-blue-300">
                     Open calls and recordings
                   </p>

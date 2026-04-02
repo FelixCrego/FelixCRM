@@ -1333,6 +1333,9 @@ export async function GET() {
           revenueThisMonth: row.revenueThisMonth,
           streakDays: row.streakDays,
           overallStatus: row.overallStatus,
+          dialsStatus: getPerformanceStatus(row.dialsToday, row.expectedDialsByNow),
+          contactRateStatus: getPerformanceStatus(row.contactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct),
+          demosStatus: getTodayPacedStatus(row.demosToday, row.expectedDemosByNow),
           paceGapLabel: `${formatSignedNumber(row.dialGapToday)} vs pace`,
         };
       })
