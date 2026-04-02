@@ -34,6 +34,7 @@ export async function POST(request: Request) {
       businessName,
       phone: body?.phone?.trim() || null,
       websiteUrl: body?.websiteUrl?.trim() || null,
+      sourceType: "ADDED",
     });
 
     return NextResponse.json({ lead }, { status: 201 });

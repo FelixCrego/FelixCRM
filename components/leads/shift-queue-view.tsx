@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
+import { RECENT_LEAD_WINDOW_DAYS, getLeadSourceType, isRecentLead } from "@/lib/lead-source";
 import type { Lead } from "@/lib/types";
 import type { LeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import {
@@ -51,6 +52,7 @@ type ShiftQueueViewProps = {
 };
 
 type QueueFilter = "ALL" | ShiftQueueLane;
+type LeadIntakeFilter = "ALL" | "RECENT_SCRAPED" | "RECENT_ADDED";
 type ScriptTab = "Scripts" | "Objections" | "Signals";
 type QueueOwnerOption = {
   id: string;
@@ -78,6 +80,12 @@ const queueFilterOptions: Array<{ value: QueueFilter; label: string }> = [
   { value: "FOLLOW_UP", label: "Follow Ups" },
   { value: "FRESH", label: "Fresh Starts" },
   { value: "DEMO", label: "Demo Prep" },
+];
+
+const leadIntakeFilterOptions: Array<{ value: LeadIntakeFilter; label: string }> = [
+  { value: "ALL", label: "All lead sources" },
+  { value: "RECENT_SCRAPED", label: "Recently scraped" },
+  { value: "RECENT_ADDED", label: "Recently added" },
 ];
 
 const statusLabelMap: Record<LeadWorkspaceStatus, string> = {
@@ -282,6 +290,7 @@ export function ShiftQueueView({
     startOutboundCall,
   } = useAmazonConnect();
   const [selectedFilter, setSelectedFilter] = useState<QueueFilter>("ALL");
+  const [selectedLeadIntake, setSelectedLeadIntake] = useState<LeadIntakeFilter>("ALL");
   const [selectedIndustry, setSelectedIndustry] = useState("ALL");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [dialingLeadId, setDialingLeadId] = useState<string | null>(null);
@@ -316,10 +325,20 @@ export function ShiftQueueView({
     if (!normalized) return "ALL";
     return industryOptions.includes(normalized) ? normalized : "ALL";
   }, [industryOptions, initialIndustry]);
+  const leadIntakeFilteredLeads = useMemo(() => {
+    return (leads ?? []).filter((lead) => {
+      if (selectedLeadIntake === "ALL") return true;
+      if (!isRecentLead(lead, RECENT_LEAD_WINDOW_DAYS)) return false;
+
+      const leadSourceType = getLeadSourceType(lead);
+      if (selectedLeadIntake === "RECENT_SCRAPED") return leadSourceType === "SCRAPED";
+      return leadSourceType === "ADDED";
+    });
+  }, [leads, selectedLeadIntake]);
   const industryFilteredLeads = useMemo(() => {
-    if (selectedIndustry === "ALL") return leads ?? [];
-    return (leads ?? []).filter((lead) => lead.businessType?.trim() === selectedIndustry);
-  }, [leads, selectedIndustry]);
+    if (selectedIndustry === "ALL") return leadIntakeFilteredLeads;
+    return leadIntakeFilteredLeads.filter((lead) => lead.businessType?.trim() === selectedIndustry);
+  }, [leadIntakeFilteredLeads, selectedIndustry]);
 
   const baseQueueEntries = useMemo(() => buildShiftQueueEntries(industryFilteredLeads), [industryFilteredLeads]);
   const allTrackableEntries = useMemo(
@@ -352,13 +371,18 @@ export function ShiftQueueView({
     try {
       const raw = window.localStorage.getItem(storageKey);
       const parsed = raw
-        ? (JSON.parse(raw) as { filter?: QueueFilter; industry?: string | null; selectedLeadId?: string | null } | null)
+        ? (JSON.parse(raw) as { filter?: QueueFilter; leadIntake?: LeadIntakeFilter | null; industry?: string | null; selectedLeadId?: string | null } | null)
         : null;
 
       if (parsed?.filter && queueFilterOptions.some((option) => option.value === parsed.filter)) {
         setSelectedFilter(parsed.filter);
       } else {
         setSelectedFilter("ALL");
+      }
+      if (parsed?.leadIntake && leadIntakeFilterOptions.some((option) => option.value === parsed.leadIntake)) {
+        setSelectedLeadIntake(parsed.leadIntake);
+      } else {
+        setSelectedLeadIntake("ALL");
       }
       if (typeof parsed?.selectedLeadId === "string") {
         setSelectedLeadId(parsed.selectedLeadId);
@@ -374,6 +398,7 @@ export function ShiftQueueView({
     } catch {
       // Ignore malformed queue preferences.
       setSelectedFilter("ALL");
+      setSelectedLeadIntake("ALL");
       setSelectedLeadId(null);
       setSelectedIndustry(resolvedInitialIndustry);
     }
@@ -381,11 +406,14 @@ export function ShiftQueueView({
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify({ filter: selectedFilter, industry: selectedIndustry, selectedLeadId }));
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({ filter: selectedFilter, leadIntake: selectedLeadIntake, industry: selectedIndustry, selectedLeadId }),
+      );
     } catch {
       // Ignore storage failures.
     }
-  }, [selectedFilter, selectedIndustry, selectedLeadId, storageKey]);
+  }, [selectedFilter, selectedLeadIntake, selectedIndustry, selectedLeadId, storageKey]);
 
   useEffect(() => {
     if (visibleQueueEntries.length === 0) {
@@ -535,6 +563,14 @@ export function ShiftQueueView({
   const queueFocusLaneLabel = queueFocusLane ? getShiftQueueLaneLabel(queueFocusLane) : null;
   const queueFocusRemaining = queueFocusLane ? queuePlanProgress?.remainingCountsByLane[queueFocusLane] ?? 0 : 0;
   const queueCallsRemaining = queuePlanProgress?.remainingCalls ?? 0;
+  const intakeWindowLabel = `last ${RECENT_LEAD_WINDOW_DAYS} days`;
+  const leadIntakeSummary =
+    selectedLeadIntake === "ALL"
+      ? "Show every callable lead source in this queue."
+      : selectedLeadIntake === "RECENT_SCRAPED"
+        ? `Only leads scraped into the CRM in the ${intakeWindowLabel} are feeding this board.`
+        : `Only leads added manually or by CSV in the ${intakeWindowLabel} are feeding this board.`;
+  const hasFocusedQueue = selectedIndustry !== "ALL" || selectedLeadIntake !== "ALL";
   const queueCoachSummary = queuePlanProgress
     ? queueFocusLane && queueFocusRemaining > 0
       ? `${queueFocusRemaining} more ${queueFocusLaneLabel?.toLowerCase()} call${queueFocusRemaining === 1 ? "" : "s"} to stay on the manager-set mix.`
@@ -703,6 +739,14 @@ export function ShiftQueueView({
     router.replace(nextHref);
   }
 
+  function handleLeadIntakeChange(nextLeadIntake: string) {
+    const safeLeadIntake = leadIntakeFilterOptions.some((option) => option.value === nextLeadIntake)
+      ? (nextLeadIntake as LeadIntakeFilter)
+      : "ALL";
+    setSelectedLeadIntake(safeLeadIntake);
+    setSelectedLeadId(null);
+  }
+
   return (
     <div className="space-y-5">
       {showDisposition && dispositionEntry ? (
@@ -837,6 +881,27 @@ export function ShiftQueueView({
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
+              <label className="block">
+                <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-400">
+                  <Clock3 className="h-4 w-4" />
+                  Lead Intake
+                </span>
+                <select
+                  value={selectedLeadIntake}
+                  onChange={(event) => handleLeadIntakeChange(event.target.value)}
+                  className="mt-3 w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                >
+                  {leadIntakeFilterOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-3 text-xs leading-5 text-zinc-400">{leadIntakeSummary}</p>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Momentum Tier</p>
@@ -922,23 +987,23 @@ export function ShiftQueueView({
 
       {queueEntries.length === 0 ? (
         <section className="rounded-[28px] border border-emerald-300/20 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),transparent_42%),linear-gradient(145deg,rgba(9,20,16,0.98),rgba(8,16,20,0.96))] p-8 text-center">
-          <div className="mx-auto max-w-xl">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-emerald-100">
-              <CheckCircle2 className="h-7 w-7" />
-            </div>
-            <h2 className="mt-4 text-2xl font-semibold text-white">
-              {selectedIndustry === "ALL" ? "Queue is clear." : `No ${selectedIndustry} leads are ready right now.`}
-            </h2>
-            <p className="mt-3 text-sm leading-6 text-zinc-300">
-              {selectedIndustry === "ALL"
-                ? "There are no callable leads left that still need a same-day touch. Use "
-                : `There are no callable ${selectedIndustry} leads left that still need a same-day touch. Change the industry focus or use `}
+            <div className="mx-auto max-w-xl">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-emerald-100">
+                <CheckCircle2 className="h-7 w-7" />
+              </div>
+              <h2 className="mt-4 text-2xl font-semibold text-white">
+                {!hasFocusedQueue ? "Queue is clear." : "No leads match this queue focus right now."}
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-zinc-300">
+                {!hasFocusedQueue
+                  ? "There are no callable leads left that still need a same-day touch. Use "
+                  : "There are no callable leads left that still need a same-day touch for the current industry or lead-intake filters. Change the filters or use "}
               <Link href={leadWorkspaceHref} className="font-semibold text-emerald-100 underline decoration-emerald-300/40 underline-offset-4">
                 {leadWorkspaceLabel}
               </Link>
-              {selectedIndustry === "ALL"
+              {!hasFocusedQueue
                 ? " to review the rest of the book or come back when new assignments or due follow-ups land."
-                : " to review the rest of the book while you reset the focus."}
+                : " while you reset the queue focus."}
             </p>
           </div>
         </section>
@@ -1020,7 +1085,7 @@ export function ShiftQueueView({
               })}
               {visibleQueueEntries.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/50 px-4 py-5 text-sm text-zinc-500">
-                  No leads are sitting in this lane right now. Switch filters, change the industry focus, or keep clearing the board.
+                  No leads are sitting in this lane right now. Switch the lane, lead-intake filter, or industry focus, or keep clearing the board.
                 </div>
               ) : null}
             </div>

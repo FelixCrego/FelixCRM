@@ -1,6 +1,7 @@
 import { dedupeKey } from "@/lib/utils";
 import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
+import { inferLeadSourceType, normalizeLeadSourceType, type LeadSourceType } from "@/lib/lead-source";
 import { normalizeUserRole } from "@/lib/role-utils";
 import { normalizeShiftQueueSettings, type ShiftQueueSettings } from "@/lib/shift-queue";
 
@@ -63,6 +64,13 @@ function titleCaseWords(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
+}
+
+function normalizeIsoTimestamp(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
 }
 
 export function prettyNameFromEmail(email: string) {
@@ -1025,12 +1033,32 @@ function leadToMemory(lead: any): Lead {
       : accountManagementRaw && Array.isArray(accountManagementRaw.seo_tasks)
         ? accountManagementRaw.seo_tasks
         : [];
+  const sourceQuery =
+    typeof sourcePayload.sourceQuery === "string"
+      ? sourcePayload.sourceQuery
+      : typeof sourcePayload.source_query === "string"
+        ? sourcePayload.source_query
+        : null;
+  const sourceType =
+    normalizeLeadSourceType(sourcePayload.sourceType) ??
+    normalizeLeadSourceType(sourcePayload.source_type) ??
+    inferLeadSourceType({
+      sourceQuery,
+      businessType: lead.businessType ?? lead.business_type,
+      city: lead.city,
+    });
+  const createdAt =
+    normalizeIsoTimestamp(lead.createdAt) ??
+    normalizeIsoTimestamp(lead.created_at) ??
+    normalizeIsoTimestamp(lead.updatedAt) ??
+    normalizeIsoTimestamp(lead.updated_at);
 
   return {
     id: lead.id,
     businessName: lead.businessName ?? lead.business_name,
     city: lead.city,
     businessType: lead.businessType ?? lead.business_type,
+    createdAt,
     phone: lead.phone,
     email: lead.email,
     websiteUrl: lead.websiteUrl ?? lead.website_url,
@@ -1100,12 +1128,8 @@ function leadToMemory(lead: any): Lead {
           ? sourcePayload.ai_research_summary
           : null,
     enrichment: normalizeLeadEnrichmentPayload(sourcePayload.enrichment, lead.businessName ?? lead.business_name, lead.phone),
-    sourceQuery:
-      typeof sourcePayload.sourceQuery === "string"
-        ? sourcePayload.sourceQuery
-        : typeof sourcePayload.source_query === "string"
-          ? sourcePayload.source_query
-          : null,
+    sourceQuery,
+    sourceType,
     contacts: contactsFromPayload,
     demoBooking:
       sourcePayload.demoBooking && typeof sourcePayload.demoBooking === "object"
@@ -1364,13 +1388,29 @@ export async function listClaimableLeads(limit = 100) {
   return leads.map(leadToMemory);
 }
 
-type CreateLeadInput = { businessName: string; phone?: string | null; websiteUrl?: string | null; aiResearchSummary?: string | null; sourceQuery?: string | null };
+type CreateLeadInput = {
+  businessName: string;
+  phone?: string | null;
+  websiteUrl?: string | null;
+  aiResearchSummary?: string | null;
+  sourceQuery?: string | null;
+  sourceType?: LeadSourceType | null;
+};
 
 export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, options?: { mergeOnDuplicate?: boolean }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
   const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
   const computedDedupeKey = dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain);
+  const resolvedSourceQuery = lead.sourceQuery ?? "manual_entry";
+  const resolvedSourceType =
+    normalizeLeadSourceType(lead.sourceType) ??
+    inferLeadSourceType({
+      sourceQuery: resolvedSourceQuery,
+      businessType: "Manual",
+      city: "Unknown",
+    }) ??
+    "ADDED";
 
   try {
     const payload = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
@@ -1394,7 +1434,8 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
               socialLinks: [],
               aiResearchSummary: lead.aiResearchSummary ?? null,
               enrichment: null,
-              sourceQuery: lead.sourceQuery ?? "manual_entry",
+              sourceQuery: resolvedSourceQuery,
+              sourceType: resolvedSourceType,
             },
           }
         : {
@@ -1414,7 +1455,8 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
               socialLinks: [],
               aiResearchSummary: lead.aiResearchSummary ?? null,
               enrichment: null,
-              sourceQuery: lead.sourceQuery ?? "manual_entry",
+              sourceQuery: resolvedSourceQuery,
+              sourceType: resolvedSourceType,
             },
           }),
     }));
@@ -1440,6 +1482,15 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
       if (!existing) throw error;
 
       const existingPayload = existing[payloadColumn] && typeof existing[payloadColumn] === "object" ? existing[payloadColumn] as Record<string, unknown> : {};
+      const existingSourceQuery =
+        typeof existingPayload.sourceQuery === "string" && existingPayload.sourceQuery.trim()
+          ? existingPayload.sourceQuery
+          : typeof existingPayload.source_query === "string" && existingPayload.source_query.trim()
+            ? existingPayload.source_query
+            : null;
+      const existingSourceType =
+        normalizeLeadSourceType(existingPayload.sourceType) ??
+        normalizeLeadSourceType(existingPayload.source_type);
       const patchPayload = isSnakeLeadsTable(table)
         ? {
             ...(existing.owner_id ? {} : { owner_id: ownerId }),
@@ -1450,9 +1501,8 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
               aiResearchSummary: typeof existingPayload.aiResearchSummary === "string" && existingPayload.aiResearchSummary.trim()
                 ? existingPayload.aiResearchSummary
                 : lead.aiResearchSummary ?? null,
-              sourceQuery: typeof existingPayload.sourceQuery === "string" && existingPayload.sourceQuery.trim()
-                ? existingPayload.sourceQuery
-                : lead.sourceQuery ?? "csv_import",
+              sourceQuery: existingSourceQuery ?? resolvedSourceQuery,
+              sourceType: existingSourceType ?? resolvedSourceType,
             },
           }
         : {
@@ -1464,9 +1514,8 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
               aiResearchSummary: typeof existingPayload.aiResearchSummary === "string" && existingPayload.aiResearchSummary.trim()
                 ? existingPayload.aiResearchSummary
                 : lead.aiResearchSummary ?? null,
-              sourceQuery: typeof existingPayload.sourceQuery === "string" && existingPayload.sourceQuery.trim()
-                ? existingPayload.sourceQuery
-                : lead.sourceQuery ?? "csv_import",
+              sourceQuery: existingSourceQuery ?? resolvedSourceQuery,
+              sourceType: existingSourceType ?? resolvedSourceType,
             },
           };
 
@@ -1526,6 +1575,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
                 aiResearchSummary: lead.aiResearchSummary ?? null,
                 enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
+                sourceType: "SCRAPED",
               },
             }
           : {
@@ -1548,6 +1598,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
                 aiResearchSummary: lead.aiResearchSummary ?? null,
                 enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
+                sourceType: "SCRAPED",
               },
             }),
       }));

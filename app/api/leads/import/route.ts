@@ -37,6 +37,7 @@ export async function POST(request: Request) {
         websiteUrl: typeof lead?.websiteUrl === "string" ? lead.websiteUrl.trim() || null : null,
         aiResearchSummary: typeof lead?.aiResearchSummary === "string" ? lead.aiResearchSummary.trim() || null : null,
         sourceQuery: typeof lead?.sourceQuery === "string" ? lead.sourceQuery.trim() || "csv_import" : "csv_import",
+        sourceType: "ADDED",
       }, {
         mergeOnDuplicate: Boolean(body.mergeDuplicates),
       });

@@ -71,6 +71,7 @@ export type Lead = {
   businessName: string;
   city: string;
   businessType: string;
+  createdAt?: string | null;
   phone?: string | null;
   email?: string | null;
   websiteUrl?: string | null;
@@ -79,6 +80,7 @@ export type Lead = {
   aiResearchSummary?: string | null;
   enrichment?: LeadEnrichmentPayload | null;
   sourceQuery?: string | null;
+  sourceType?: "SCRAPED" | "ADDED" | null;
   contacts?: Array<{
     id: string;
     name: string;
