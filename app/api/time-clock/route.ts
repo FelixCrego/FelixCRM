@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getEffectiveUserRole, listLeads, saveManagedUserSettings } from "@/lib/store";
 import { buildPayrollSummaries, type UserPayrollSummary } from "@/lib/payroll-utils";
+import { listRecentUserSessions } from "@/lib/session-activity";
 import {
   clockInWorkforceUser,
   clockOutWorkforceUser,
@@ -20,6 +21,9 @@ import {
 import type { UserRole } from "@/lib/types";
 
 const MANAGER_ROLES = new Set<UserRole>(["MANAGER", "SUPER_ADMIN"]);
+const ACTIVE_SESSION_GRACE_MS = 5 * 60 * 1000;
+
+type CrmPresence = "ACTIVE" | "IDLE" | "UNAVAILABLE";
 
 type Snapshot = {
   viewerRole: UserRole;
@@ -27,6 +31,27 @@ type Snapshot = {
   canEditAssignments: boolean;
   self: WorkforceUser;
   team: WorkforceUser[];
+  liveWorkforce: {
+    sessionTrackingEnabled: boolean;
+    summary: {
+      clockedInCount: number;
+      activeInCrmCount: number;
+      idleCount: number;
+    };
+    clockedInUsers: Array<{
+      userId: string;
+      name: string;
+      email: string | null;
+      role: UserRole;
+      payType: PayType;
+      clockInAt: string;
+      clockedInMinutes: number;
+      weeklyWorkedMinutes: number;
+      crmPresence: CrmPresence;
+      lastSeenAt: string | null;
+      lastPath: string | null;
+    }>;
+  } | null;
   payroll: {
     self: UserPayrollSummary;
     team: UserPayrollSummary[];
@@ -94,16 +119,100 @@ function parseUserRole(value: unknown): UserRole | null {
   return null;
 }
 
+function getClockedInMinutes(clockInAt: string, now = new Date()) {
+  const startedAt = new Date(clockInAt).getTime();
+  const currentTime = now.getTime();
+  if (Number.isNaN(startedAt) || Number.isNaN(currentTime) || currentTime <= startedAt) return 0;
+  return Math.max(1, Math.round((currentTime - startedAt) / 60000));
+}
+
+function buildLiveWorkforce(
+  team: WorkforceUser[],
+  sessionData: Awaited<ReturnType<typeof listRecentUserSessions>>,
+  now = new Date(),
+) {
+  const latestActiveSessionByUserId = new Map<string, { lastSeenAt: string; lastPath: string | null }>();
+
+  for (const session of sessionData.sessions) {
+    if (session.sessionStatus !== "ACTIVE" || !session.userId) continue;
+    const currentLastSeen = new Date(session.lastSeenAt).getTime();
+    const existingLastSeen = latestActiveSessionByUserId.get(session.userId)
+      ? new Date(latestActiveSessionByUserId.get(session.userId)?.lastSeenAt ?? "").getTime()
+      : 0;
+    if (!Number.isNaN(currentLastSeen) && currentLastSeen >= existingLastSeen) {
+      latestActiveSessionByUserId.set(session.userId, {
+        lastSeenAt: session.lastSeenAt,
+        lastPath: session.lastPath,
+      });
+    }
+  }
+
+  const nowMs = now.getTime();
+  const sessionTrackingEnabled = !sessionData.tableMissing;
+  const clockedInUsers = team
+    .filter((employee) => employee.currentEntry)
+    .map((employee) => {
+      const currentEntry = employee.currentEntry as WorkforceUser["currentEntry"] & { clockInAt: string };
+      const session = latestActiveSessionByUserId.get(employee.id) ?? null;
+      const lastSeenAtMs = session ? new Date(session.lastSeenAt).getTime() : NaN;
+      const crmPresence: CrmPresence =
+        !sessionTrackingEnabled
+          ? "UNAVAILABLE"
+          : session && !Number.isNaN(lastSeenAtMs) && nowMs - lastSeenAtMs <= ACTIVE_SESSION_GRACE_MS
+            ? "ACTIVE"
+            : "IDLE";
+
+      return {
+        userId: employee.id,
+        name: employee.name,
+        email: employee.email,
+        role: employee.role,
+        payType: employee.settings.payType,
+        clockInAt: currentEntry.clockInAt,
+        clockedInMinutes: getClockedInMinutes(currentEntry.clockInAt, now),
+        weeklyWorkedMinutes: employee.weeklyWorkedMinutes,
+        crmPresence,
+        lastSeenAt: session?.lastSeenAt ?? null,
+        lastPath: session?.lastPath ?? null,
+      };
+    })
+    .sort((left, right) => {
+      const presenceRank = (presence: CrmPresence) => {
+        if (presence === "ACTIVE") return 0;
+        if (presence === "IDLE") return 1;
+        return 2;
+      };
+
+      return (
+        presenceRank(left.crmPresence) - presenceRank(right.crmPresence) ||
+        new Date(left.clockInAt).getTime() - new Date(right.clockInAt).getTime() ||
+        left.name.localeCompare(right.name)
+      );
+    });
+
+  return {
+    sessionTrackingEnabled,
+    summary: {
+      clockedInCount: clockedInUsers.length,
+      activeInCrmCount: clockedInUsers.filter((user) => user.crmPresence === "ACTIVE").length,
+      idleCount: clockedInUsers.filter((user) => user.crmPresence === "IDLE").length,
+    },
+    clockedInUsers,
+  };
+}
+
 async function buildSnapshot(userId: string, role: UserRole): Promise<Snapshot> {
   const canManageWorkforce = isManagerRole(role);
-  const [self, team, leads] = await Promise.all([
+  const [self, team, leads, sessionData] = await Promise.all([
     getWorkforceUser(userId),
     canManageWorkforce ? listWorkforceUsers() : Promise.resolve([] as WorkforceUser[]),
     listLeads(userId, { includeAll: canManageWorkforce }).catch(() => []),
+    canManageWorkforce ? listRecentUserSessions(200).catch(() => ({ sessions: [], tableMissing: true })) : Promise.resolve({ sessions: [], tableMissing: true }),
   ]);
   const payrollUsers = canManageWorkforce ? team : [self];
   const payrollSummaries = buildPayrollSummaries(payrollUsers, leads);
   const payrollSelf = payrollSummaries.find((summary) => summary.userId === userId) ?? buildPayrollSummaries([self], leads)[0];
+  const liveWorkforce = canManageWorkforce ? buildLiveWorkforce(team, sessionData) : null;
 
   const pendingApprovals = canManageWorkforce
     ? team
@@ -158,6 +267,7 @@ async function buildSnapshot(userId: string, role: UserRole): Promise<Snapshot> 
     canEditAssignments: canEditAssignments(role),
     self,
     team,
+    liveWorkforce,
     payroll: {
       self: payrollSelf,
       team: canManageWorkforce ? payrollSummaries : [],

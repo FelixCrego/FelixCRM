@@ -86,6 +86,27 @@ type Snapshot = {
   canEditAssignments: boolean;
   self: WorkforceUser;
   team: WorkforceUser[];
+  liveWorkforce: {
+    sessionTrackingEnabled: boolean;
+    summary: {
+      clockedInCount: number;
+      activeInCrmCount: number;
+      idleCount: number;
+    };
+    clockedInUsers: Array<{
+      userId: string;
+      name: string;
+      email: string | null;
+      role: string;
+      payType: PayType;
+      clockInAt: string;
+      clockedInMinutes: number;
+      weeklyWorkedMinutes: number;
+      crmPresence: "ACTIVE" | "IDLE" | "UNAVAILABLE";
+      lastSeenAt: string | null;
+      lastPath: string | null;
+    }>;
+  } | null;
   payroll: {
     self: UserPayrollSummary;
     team: UserPayrollSummary[];
@@ -261,6 +282,18 @@ function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function crmPresenceTone(presence: "ACTIVE" | "IDLE" | "UNAVAILABLE") {
+  if (presence === "ACTIVE") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (presence === "IDLE") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+  return "border-zinc-700 bg-zinc-800/70 text-zinc-300";
+}
+
+function crmPresenceLabel(presence: "ACTIVE" | "IDLE" | "UNAVAILABLE") {
+  if (presence === "ACTIVE") return "Active In CRM";
+  if (presence === "IDLE") return "Clocked In, Idle";
+  return "CRM Activity Unknown";
+}
+
 export default function TimeClockPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -329,6 +362,7 @@ export default function TimeClockPage() {
   }, [self]);
   const effectiveSelfCommissionRate = self ? getEffectiveCommissionRate(self.email, self.settings.commissionRate) : 0;
   const teamUserById = useMemo(() => new Map((snapshot?.team ?? []).map((user) => [user.id, user])), [snapshot?.team]);
+  const liveWorkforce = snapshot?.liveWorkforce ?? null;
   const managerOptions = useMemo(
     () => (snapshot?.team ?? []).filter((user) => user.role === "MANAGER" || user.role === "SUPER_ADMIN"),
     [snapshot?.team],
@@ -710,6 +744,95 @@ export default function TimeClockPage() {
               <section className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Live Workforce</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">Who Is Clocked In Right Now</h2>
+                    <p className="mt-2 text-sm text-zinc-400">Open shifts plus whether the rep is actively moving inside the CRM.</p>
+                  </div>
+                  <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+                    {liveWorkforce?.summary.clockedInCount ?? 0} clocked in
+                  </span>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <article className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Clocked In Now</p>
+                    <p className="mt-2 text-3xl font-semibold text-white">{liveWorkforce?.summary.clockedInCount ?? 0}</p>
+                    <p className="mt-2 text-sm text-zinc-400">Anyone with an open shift on the payroll clock.</p>
+                  </article>
+                  <article className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-emerald-200/70">Active In CRM</p>
+                    <p className="mt-2 text-3xl font-semibold text-white">{liveWorkforce?.summary.activeInCrmCount ?? 0}</p>
+                    <p className="mt-2 text-sm text-zinc-400">Clocked in and recently active in FelixCRM.</p>
+                  </article>
+                  <article className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-amber-200/70">Clocked In, Idle</p>
+                    <p className="mt-2 text-3xl font-semibold text-white">{liveWorkforce?.summary.idleCount ?? 0}</p>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      {liveWorkforce?.sessionTrackingEnabled === false
+                        ? "CRM session tracking is not installed, so idle vs active is unavailable."
+                        : "Open shift but no recent CRM heartbeat."}
+                    </p>
+                  </article>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {(liveWorkforce?.clockedInUsers.length ?? 0) === 0 ? (
+                    <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-zinc-400">
+                      Nobody is clocked in right now.
+                    </div>
+                  ) : (
+                    liveWorkforce?.clockedInUsers.map((employee) => (
+                      <article key={employee.userId} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-lg font-semibold text-white">{employee.name}</p>
+                              <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${crmPresenceTone(employee.crmPresence)}`}>
+                                {crmPresenceLabel(employee.crmPresence)}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-zinc-400">
+                              {employee.email ?? employee.userId} | {roleLabel(employee.role)} | {payTypeLabel(employee.payType)}
+                            </p>
+                            <p className="mt-2 text-sm text-zinc-300">
+                              Clocked in {formatDateTime(employee.clockInAt)} | Live shift {formatHours(employee.clockedInMinutes)} | Worked this week {formatHours(employee.weeklyWorkedMinutes)}
+                            </p>
+                            {employee.lastSeenAt ? (
+                              <p className="mt-1 text-xs text-zinc-500">
+                                Last CRM activity {formatDateTime(employee.lastSeenAt)}
+                                {employee.lastPath ? ` | ${employee.lastPath}` : ""}
+                              </p>
+                            ) : liveWorkforce?.sessionTrackingEnabled === false ? (
+                              <p className="mt-1 text-xs text-zinc-500">CRM session tracking is unavailable in this environment.</p>
+                            ) : (
+                              <p className="mt-1 text-xs text-zinc-500">No active CRM session detected for this rep.</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const worker = teamUserById.get(employee.userId);
+                              if (!worker) return;
+                              setDrafts((current) => ({
+                                ...current,
+                                [employee.userId]: current[employee.userId] ?? buildDraft(worker),
+                              }));
+                              document.getElementById(`employee-${employee.userId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
+                            className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:border-zinc-600"
+                          >
+                            Open Employee Card
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
                     <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Team Payroll</p>
                     <h2 className="mt-2 text-2xl font-semibold text-white">Current Week Payroll Owed</h2>
                   </div>
@@ -937,7 +1060,7 @@ export default function TimeClockPage() {
                     const leadReports = teamLeadReports.get(employee.id) ?? [];
 
                     return (
-                      <article key={employee.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                      <article id={`employee-${employee.id}`} key={employee.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
                         <div className="mb-4 flex items-start justify-between gap-3">
                           <div>
                             <p className="text-lg font-semibold text-white">{employee.name}</p>
