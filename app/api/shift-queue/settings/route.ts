@@ -6,9 +6,10 @@ import {
   canUserAssignLeads,
   getShiftQueueSettings,
   isValidLeadAssignmentUserId,
+  listLeads,
   saveShiftQueueSettings,
 } from "@/lib/store";
-import { normalizeShiftQueueSettings, SHIFT_QUEUE_PRESETS } from "@/lib/shift-queue";
+import { getShiftQueueIndustryOptions, normalizeShiftQueueSettings, SHIFT_QUEUE_PRESETS } from "@/lib/shift-queue";
 
 export async function GET(request: Request) {
   try {
@@ -21,12 +22,16 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const settings = await getShiftQueueSettings(targetUserId);
+    const [settings, leads] = await Promise.all([
+      getShiftQueueSettings(targetUserId),
+      listLeads(targetUserId, { includeAll: false }).catch(() => []),
+    ]);
     return NextResponse.json({
       settings,
       targetUserId,
       canManage,
       presets: SHIFT_QUEUE_PRESETS,
+      industries: getShiftQueueIndustryOptions(leads),
     });
   } catch (error) {
     return NextResponse.json(

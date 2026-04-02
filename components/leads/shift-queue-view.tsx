@@ -29,6 +29,7 @@ import {
   buildShiftQueueEntries,
   buildShiftQueuePlanProgress,
   getShiftQueueLaneLabel,
+  getShiftQueueIndustryOptions,
   prioritizeShiftQueueEntries,
   SHIFT_QUEUE_LANES,
   type ShiftQueueEntry,
@@ -46,6 +47,7 @@ type ShiftQueueViewProps = {
   queueSettings?: ShiftQueueSettings | null;
   canManageQueues?: boolean;
   selectableQueueOwners?: QueueOwnerOption[];
+  initialIndustry?: string | null;
 };
 
 type QueueFilter = "ALL" | ShiftQueueLane;
@@ -262,6 +264,7 @@ export function ShiftQueueView({
   queueSettings = null,
   canManageQueues = false,
   selectableQueueOwners = [],
+  initialIndustry = null,
 }: ShiftQueueViewProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -279,6 +282,7 @@ export function ShiftQueueView({
     startOutboundCall,
   } = useAmazonConnect();
   const [selectedFilter, setSelectedFilter] = useState<QueueFilter>("ALL");
+  const [selectedIndustry, setSelectedIndustry] = useState("ALL");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [dialingLeadId, setDialingLeadId] = useState<string | null>(null);
   const [activeQueueLeadId, setActiveQueueLeadId] = useState<string | null>(null);
@@ -305,9 +309,23 @@ export function ShiftQueueView({
   const leadWorkspaceHref = viewingManagedQueue ? "/leads" : "/my-leads";
   const leadWorkspaceLabel = viewingManagedQueue ? "Lead Directory" : "My Leads";
   const storageKey = useMemo(() => `felix.shiftQueue.${queueOwnerId ?? currentUserId ?? "default"}`, [currentUserId, queueOwnerId]);
+  const industryOptions = useMemo(() => getShiftQueueIndustryOptions(leads ?? []), [leads]);
+  const resolvedInitialIndustry = useMemo(() => {
+    if (typeof initialIndustry !== "string") return "ALL";
+    const normalized = initialIndustry.trim();
+    if (!normalized) return "ALL";
+    return industryOptions.includes(normalized) ? normalized : "ALL";
+  }, [industryOptions, initialIndustry]);
+  const industryFilteredLeads = useMemo(() => {
+    if (selectedIndustry === "ALL") return leads ?? [];
+    return (leads ?? []).filter((lead) => lead.businessType?.trim() === selectedIndustry);
+  }, [leads, selectedIndustry]);
 
-  const baseQueueEntries = useMemo(() => buildShiftQueueEntries(leads ?? []), [leads]);
-  const allTrackableEntries = useMemo(() => buildShiftQueueEntries(leads ?? [], { includeTouchedToday: true }), [leads]);
+  const baseQueueEntries = useMemo(() => buildShiftQueueEntries(industryFilteredLeads), [industryFilteredLeads]);
+  const allTrackableEntries = useMemo(
+    () => buildShiftQueueEntries(industryFilteredLeads, { includeTouchedToday: true }),
+    [industryFilteredLeads],
+  );
 
   const completedTodayEntries = useMemo(
     () =>
@@ -333,27 +351,41 @@ export function ShiftQueueView({
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(storageKey);
-      if (!raw) return;
+      const parsed = raw
+        ? (JSON.parse(raw) as { filter?: QueueFilter; industry?: string | null; selectedLeadId?: string | null } | null)
+        : null;
 
-      const parsed = JSON.parse(raw) as { filter?: QueueFilter; selectedLeadId?: string | null } | null;
       if (parsed?.filter && queueFilterOptions.some((option) => option.value === parsed.filter)) {
         setSelectedFilter(parsed.filter);
+      } else {
+        setSelectedFilter("ALL");
       }
       if (typeof parsed?.selectedLeadId === "string") {
         setSelectedLeadId(parsed.selectedLeadId);
+      } else {
+        setSelectedLeadId(null);
       }
+
+      const nextIndustry =
+        typeof parsed?.industry === "string" && industryOptions.includes(parsed.industry)
+          ? parsed.industry
+          : resolvedInitialIndustry;
+      setSelectedIndustry(nextIndustry);
     } catch {
       // Ignore malformed queue preferences.
+      setSelectedFilter("ALL");
+      setSelectedLeadId(null);
+      setSelectedIndustry(resolvedInitialIndustry);
     }
-  }, [storageKey]);
+  }, [industryOptions, resolvedInitialIndustry, storageKey]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify({ filter: selectedFilter, selectedLeadId }));
+      window.localStorage.setItem(storageKey, JSON.stringify({ filter: selectedFilter, industry: selectedIndustry, selectedLeadId }));
     } catch {
       // Ignore storage failures.
     }
-  }, [selectedFilter, selectedLeadId, storageKey]);
+  }, [selectedFilter, selectedIndustry, selectedLeadId, storageKey]);
 
   useEffect(() => {
     if (visibleQueueEntries.length === 0) {
@@ -652,6 +684,25 @@ export function ShiftQueueView({
     router.replace(nextHref);
   }
 
+  function handleIndustryChange(nextIndustry: string) {
+    const normalizedNextIndustry = nextIndustry.trim();
+    const safeIndustry = normalizedNextIndustry && industryOptions.includes(normalizedNextIndustry) ? normalizedNextIndustry : "ALL";
+    setSelectedIndustry(safeIndustry);
+    setSelectedLeadId(null);
+
+    if (!pathname || typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (safeIndustry === "ALL") {
+      params.delete("industry");
+    } else {
+      params.set("industry", safeIndustry);
+    }
+
+    const nextHref = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    router.replace(nextHref);
+  }
+
   return (
     <div className="space-y-5">
       {showDisposition && dispositionEntry ? (
@@ -755,6 +806,37 @@ export function ShiftQueueView({
             ) : null}
 
             <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
+              <label className="block">
+                <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-400">
+                  <Target className="h-4 w-4" />
+                  Industry Focus
+                </span>
+                <select
+                  value={selectedIndustry}
+                  onChange={(event) => handleIndustryChange(event.target.value)}
+                  className="mt-3 w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                >
+                  <option value="ALL">All industries</option>
+                  {industryOptions.map((industry) => (
+                    <option key={industry} value={industry}>
+                      {industry}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-3 text-xs leading-5 text-zinc-400">
+                {selectedIndustry === "ALL"
+                  ? "Show every callable lead in this queue."
+                  : `Only ${selectedIndustry} leads are feeding this board right now.`}
+              </p>
+              {queueSettings?.industry ? (
+                <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-sky-200/80">
+                  Blueprint default: {queueSettings.industry}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Momentum Tier</p>
@@ -844,13 +926,19 @@ export function ShiftQueueView({
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-emerald-100">
               <CheckCircle2 className="h-7 w-7" />
             </div>
-            <h2 className="mt-4 text-2xl font-semibold text-white">Queue is clear.</h2>
+            <h2 className="mt-4 text-2xl font-semibold text-white">
+              {selectedIndustry === "ALL" ? "Queue is clear." : `No ${selectedIndustry} leads are ready right now.`}
+            </h2>
             <p className="mt-3 text-sm leading-6 text-zinc-300">
-              There are no callable leads left that still need a same-day touch. Use{" "}
+              {selectedIndustry === "ALL"
+                ? "There are no callable leads left that still need a same-day touch. Use "
+                : `There are no callable ${selectedIndustry} leads left that still need a same-day touch. Change the industry focus or use `}
               <Link href={leadWorkspaceHref} className="font-semibold text-emerald-100 underline decoration-emerald-300/40 underline-offset-4">
                 {leadWorkspaceLabel}
-              </Link>{" "}
-              to review the rest of the book or come back when new assignments or due follow-ups land.
+              </Link>
+              {selectedIndustry === "ALL"
+                ? " to review the rest of the book or come back when new assignments or due follow-ups land."
+                : " to review the rest of the book while you reset the focus."}
             </p>
           </div>
         </section>
@@ -932,7 +1020,7 @@ export function ShiftQueueView({
               })}
               {visibleQueueEntries.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/50 px-4 py-5 text-sm text-zinc-500">
-                  No leads are sitting in this lane right now. Switch filters or keep clearing the board.
+                  No leads are sitting in this lane right now. Switch filters, change the industry focus, or keep clearing the board.
                 </div>
               ) : null}
             </div>

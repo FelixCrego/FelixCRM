@@ -20,6 +20,7 @@ type AssignmentUser = {
 
 type ShiftQueueSettingsResponse = {
   settings?: ShiftQueueSettings | null;
+  industries?: string[];
   error?: string;
 };
 
@@ -28,6 +29,7 @@ function createDraftFromPreset(presetId?: string | null): ShiftQueueSettings {
   return {
     minCallsPerShift: preset?.minCallsPerShift ?? 60,
     mix: preset?.mix ?? { FRESH: 55, FOLLOW_UP: 25, MONEY: 15, DEMO: 5 },
+    industry: null,
     presetId: preset?.id ?? null,
     updatedAt: null,
     updatedByUserId: null,
@@ -47,6 +49,7 @@ export function ShiftQueueSettingsManager() {
   const [selectedUserId, setSelectedUserId] = useState("");
   const [draftSettings, setDraftSettings] = useState<ShiftQueueSettings>(() => createDraftFromPreset("balanced-pipeline"));
   const [currentSettings, setCurrentSettings] = useState<ShiftQueueSettings | null>(null);
+  const [industryOptions, setIndustryOptions] = useState<string[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
   const [isLoadingSettings, setIsLoadingSettings] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -112,10 +115,12 @@ export function ShiftQueueSettingsManager() {
         if (!active) return;
 
         const nextSettings = payload?.settings ?? null;
+        setIndustryOptions(Array.isArray(payload?.industries) ? payload.industries : []);
         setCurrentSettings(nextSettings);
         setDraftSettings(nextSettings ?? createDraftFromPreset("balanced-pipeline"));
       } catch {
         if (!active) return;
+        setIndustryOptions([]);
         setCurrentSettings(null);
         setDraftSettings(createDraftFromPreset("balanced-pipeline"));
       } finally {
@@ -143,7 +148,10 @@ export function ShiftQueueSettingsManager() {
   const canSave = Boolean(selectedUserId) && mixTotal === 100 && draftSettings.minCallsPerShift >= 10 && !isSaving;
 
   function handlePresetApply(presetId: string) {
-    setDraftSettings(createDraftFromPreset(presetId));
+    setDraftSettings((current) => ({
+      ...createDraftFromPreset(presetId),
+      industry: current.industry ?? null,
+    }));
     setMessage("");
   }
 
@@ -261,7 +269,7 @@ export function ShiftQueueSettingsManager() {
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="space-y-4 rounded-3xl border border-zinc-800 bg-zinc-950/60 p-4">
-          <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_180px_minmax(0,1fr)]">
             <label className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
               <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
                 <Users className="h-4 w-4" />
@@ -298,6 +306,31 @@ export function ShiftQueueSettingsManager() {
                 }
                 className="mt-3 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-lg font-semibold text-white outline-none"
               />
+            </label>
+
+            <label className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+              <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                <Target className="h-4 w-4" />
+                Industry Focus
+              </span>
+              <select
+                value={draftSettings.industry ?? "ALL"}
+                onChange={(event) =>
+                  setDraftSettings((current) => ({
+                    ...current,
+                    industry: event.target.value === "ALL" ? null : event.target.value,
+                  }))
+                }
+                className="mt-3 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none"
+              >
+                <option value="ALL">All industries</option>
+                {industryOptions.map((industry) => (
+                  <option key={industry} value={industry}>
+                    {industry}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs text-zinc-500">Lock the queue to a single business type when you want this rep specialized.</p>
             </label>
           </div>
 
@@ -394,6 +427,7 @@ export function ShiftQueueSettingsManager() {
             <ul className="mt-3 space-y-2 text-sm text-zinc-300">
               <li>Reps get a clear minimum call number for the shift.</li>
               <li>The queue pushes the most under-hit lane to the top automatically.</li>
+              <li>{draftSettings.industry ? `Only ${draftSettings.industry} leads will show in the live queue.` : "All assigned industries stay available until a focus is set."}</li>
               <li>Progress clears only after the lead is actually worked and dispositioned.</li>
             </ul>
           </div>
