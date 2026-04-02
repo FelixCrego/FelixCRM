@@ -780,17 +780,6 @@ function getCallAnalysisState(record: CallIntelRecord | null): CallAnalysisState
   };
 }
 
-const FALLBACK_LEAD: LeadRecord = {
-  id: "fallback-lead",
-  business_name: "Demo Business",
-  status: "New",
-  phone: "No phone on file",
-  website: "No website on file",
-  city: "Unknown location",
-  email: "No email on file",
-  deployed_url: "",
-};
-
 function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord[] {
   const payloadContacts = leadRecord?.source_payload?.contacts ?? leadRecord?.sourcePayload?.contacts ?? leadRecord?.contacts;
 
@@ -876,6 +865,7 @@ export default function LeadExecutionPage() {
 
   const [status, setStatus] = useState<FetchStatus>("loading");
   const [lead, setLead] = useState<LeadRecord | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [orderedLeadIds, setOrderedLeadIds] = useState<string[]>([]);
 
   const [researchLoading, setResearchLoading] = useState(false);
@@ -1195,80 +1185,98 @@ export default function LeadExecutionPage() {
 
     async function loadLead() {
       setStatus("loading");
+      setLoadError("");
 
       try {
         if (!leadId) {
-          setLead(FALLBACK_LEAD);
-          setLeadExecutionStatus("New");
-          setStatus("ready");
-          return;
+          throw new Error("Lead id is missing.");
         }
 
-        const response = await fetch("/api/leads", {
+        const leadResponse = await fetch(`/api/leads/${encodeURIComponent(leadId)}`, {
           method: "GET",
           headers: { Accept: "application/json" },
           cache: "no-store",
         });
 
-        const payload = (await response.json().catch(() => null)) as { leads?: LeadRecord[]; error?: string } | null;
+        const leadPayload = (await leadResponse.json().catch(() => null)) as { lead?: LeadRecord; error?: string } | null;
 
-        if (!response.ok) {
-          throw new Error(payload?.error || "Unable to load lead.");
+        if (!leadResponse.ok || !leadPayload?.lead) {
+          throw new Error(leadPayload?.error || "Unable to load lead.");
         }
 
-        const leadList = Array.isArray(payload?.leads) ? payload.leads : [];
-        setOrderedLeadIds(leadList.map((candidate) => candidate.id).filter(Boolean));
-        const data = leadList.find((candidate) => candidate?.id === leadId) ?? null;
+        const data = leadPayload.lead;
+        let nextOrderedLeadIds: string[] = [];
+
+        try {
+          const response = await fetch("/api/leads", {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+          const payload = (await response.json().catch(() => null)) as { leads?: LeadRecord[] } | null;
+          if (response.ok && Array.isArray(payload?.leads)) {
+            nextOrderedLeadIds = payload.leads.map((candidate) => candidate.id).filter(Boolean);
+          }
+        } catch {
+          // Adjacent lead navigation is optional. Keep the current workspace loaded.
+        }
 
         if (!alive) return;
 
-        if (data) {
-          setLead(data);
-          setLeadContacts(normalizeLeadContacts(data));
-          const existingResearch =
-            data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? data.aiResearchSummary ?? "";
-          setResearchInsight(existingResearch);
-          setResearchError("");
-          const existingDemoBooking = data.source_payload?.demoBooking ?? data.sourcePayload?.demoBooking;
-          if (existingDemoBooking?.date) setSelectedMeetingDay(existingDemoBooking.date);
-          if (existingDemoBooking?.time) setSelectedMeetingTime(existingDemoBooking.time);
-          if (existingDemoBooking?.meetLink) setMeetingLink(existingDemoBooking.meetLink);
+        setOrderedLeadIds(nextOrderedLeadIds);
+        setLead(data);
+        setLeadContacts(normalizeLeadContacts(data));
+        const existingResearch =
+          data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? data.aiResearchSummary ?? "";
+        setResearchInsight(existingResearch);
+        setResearchError("");
+        const existingDemoBooking = data.source_payload?.demoBooking ?? data.sourcePayload?.demoBooking;
+        setSelectedMeetingDay(existingDemoBooking?.date ?? "");
+        setSelectedMeetingTime(existingDemoBooking?.time ?? "");
+        setMeetingLink(existingDemoBooking?.meetLink ?? "");
 
-          const resolvedStatus = typeof data.status === "string" ? data.status : "";
-          const leadIsClosed =
-            resolvedStatus.toUpperCase() === "CLOSED" ||
-            typeof data.closedAt === "string" ||
-            typeof data.closed_at === "string" ||
-            typeof data.closedDealValue === "number" ||
-            typeof data.closed_deal_value === "number";
-          if (leadIsClosed) {
-            setLeadExecutionStatus("Closed Won");
-          } else if (
-            resolvedStatus === "New" ||
-            resolvedStatus === "Pitched" ||
-            resolvedStatus === "Demo Booked" ||
-            resolvedStatus === "Awaiting Approval" ||
-            resolvedStatus === "Payment Pending" ||
-            resolvedStatus === "Closed Won"
-          ) {
-            setLeadExecutionStatus(resolvedStatus);
-          } else if (hasBookedDemo(data)) {
-            setLeadExecutionStatus("Demo Booked");
-          }
-
-          setStatus("ready");
-          return;
+        const resolvedStatus = typeof data.status === "string" ? data.status : "";
+        const leadIsClosed =
+          resolvedStatus.toUpperCase() === "CLOSED" ||
+          typeof data.closedAt === "string" ||
+          typeof data.closed_at === "string" ||
+          typeof data.closedDealValue === "number" ||
+          typeof data.closed_deal_value === "number";
+        if (leadIsClosed) {
+          setLeadExecutionStatus("Closed Won");
+        } else if (
+          resolvedStatus === "New" ||
+          resolvedStatus === "Pitched" ||
+          resolvedStatus === "Demo Booked" ||
+          resolvedStatus === "Awaiting Approval" ||
+          resolvedStatus === "Payment Pending" ||
+          resolvedStatus === "Closed Won"
+        ) {
+          setLeadExecutionStatus(resolvedStatus);
+        } else if (hasBookedDemo(data)) {
+          setLeadExecutionStatus("Demo Booked");
+        } else {
+          setLeadExecutionStatus("New");
         }
-      } catch {
-        // Fall back silently for any fetch error.
+        setStatus("ready");
+        return;
+      } catch (error) {
+        // Surface the load failure instead of swapping in demo data.
+        if (!alive) return;
+
+        setLead(null);
+        setOrderedLeadIds([]);
+        setLeadContacts([]);
+        setResearchInsight("");
+        setResearchError("");
+        setSelectedMeetingDay("");
+        setSelectedMeetingTime("");
+        setMeetingLink("");
+        setLeadExecutionStatus("New");
+        setLoadError(error instanceof Error ? error.message : "Unable to load this lead workspace.");
+        setStatus("error");
+        return;
       }
-
-      if (!alive) return;
-
-      setLead(FALLBACK_LEAD);
-      setLeadContacts(normalizeLeadContacts(FALLBACK_LEAD));
-      setLeadExecutionStatus("New");
-      setStatus("ready");
     }
 
     loadLead();
@@ -2722,6 +2730,36 @@ export default function LeadExecutionPage() {
     setCustomTimeInput("");
   };
   if (status === "loading") return <LeadWorkspaceSkeleton />;
+
+  if (status === "error") {
+    return (
+      <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
+        <div className="mx-auto max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+          <p className="text-xs uppercase tracking-[0.18em] text-rose-300">Workspace Unavailable</p>
+          <h1 className="mt-2 text-2xl font-semibold text-zinc-100">This lead could not be loaded.</h1>
+          <p className="mt-3 text-sm text-zinc-400">{loadError || "The requested lead is unavailable or you no longer have access to it."}</p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/leads")}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm text-zinc-200 transition hover:border-zinc-500"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back to Leads
+            </button>
+            <button
+              type="button"
+              onClick={() => router.refresh()}
+              className="inline-flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-100 transition hover:bg-blue-500/15"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!lead) return <LeadWorkspaceSkeleton />;
 
