@@ -1,6 +1,7 @@
 import { dedupeKey } from "@/lib/utils";
 import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
+import { normalizeUserRole } from "@/lib/role-utils";
 import { normalizeShiftQueueSettings, type ShiftQueueSettings } from "@/lib/shift-queue";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -226,13 +227,11 @@ export async function listLeadAssignmentUsers(): Promise<LeadAssignmentUser[]> {
             : email
               ? prettyNameFromEmail(email)
               : user.id;
-      const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
       const role =
-        metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP"
-          ? (metadataRole as UserRole)
-          : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
-            ? "SUPER_ADMIN"
-            : "REP";
+        normalizeUserRole(metadata.role) ??
+        (email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
+          ? "SUPER_ADMIN"
+          : "REP");
 
       return {
         id: user.id,
@@ -345,13 +344,11 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
             : email
               ? prettyNameFromEmail(email)
               : user.id;
-      const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
       const role =
-        metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP"
-          ? (metadataRole as UserRole)
-          : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
-            ? "SUPER_ADMIN"
-            : "REP";
+        normalizeUserRole(metadata.role) ??
+        (email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
+          ? "SUPER_ADMIN"
+          : "REP");
       const bannedUntil = typeof user.banned_until === "string" ? user.banned_until : null;
       const emailConfirmedAt =
         typeof user.email_confirmed_at === "string"
@@ -571,14 +568,14 @@ export async function resendManagedUserInvite(userId: string) {
         : email
           ? prettyNameFromEmail(email)
           : "";
-  const role = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "REP";
+  const role = normalizeUserRole(metadata.role) ?? "REP";
 
   if (!email) throw new Error("User email not found.");
 
   await inviteManagedUser({
     email,
     name: name || email,
-    role: role === "SUPER_ADMIN" || role === "MANAGER" || role === "TEAM_LEAD" ? (role as UserRole) : "REP",
+    role,
     commissionRate: parseCommissionRateValue(metadata.commissionRate),
   });
 }
@@ -719,16 +716,15 @@ export async function getEffectiveUserRole(userId: string, email?: string | null
   }
 
   const profile = await getProfile(userId).catch(() => null);
-  if (profile?.role && profile.role !== "REP") return profile.role;
+  const profileRole = normalizeUserRole(profile?.role);
+  if (profileRole && profileRole !== "REP") return profileRole;
 
   const authUser = await getAuthAdminUserById(userId).catch(() => null);
   const metadata = authUser?.user_metadata && typeof authUser.user_metadata === "object" ? authUser.user_metadata : {};
-  const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
-  if (metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP") {
-    return metadataRole as UserRole;
-  }
+  const metadataRole = normalizeUserRole(metadata.role);
+  if (metadataRole) return metadataRole;
 
-  return profile?.role ?? "REP";
+  return profileRole ?? "REP";
 }
 
 function buildUrl(table: string, query?: Record<string, string>) {
@@ -1264,7 +1260,7 @@ export async function getProfile(userId: string) {
     toneOfVoice: (user.toneOfVoice ?? "CONSULTATIVE") as ToneOfVoice,
     calendarLink: user.calendarLink ?? "",
     onboardingCompleted: user.onboardingCompleted,
-    role: (user.role ?? "REP") as UserRole,
+    role: normalizeUserRole(user.role) ?? "REP",
   };
 }
 

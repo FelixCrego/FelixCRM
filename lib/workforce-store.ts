@@ -1,4 +1,5 @@
 import { prettyNameFromEmail } from "@/lib/store";
+import { normalizeUserRole } from "@/lib/role-utils";
 import type { UserRole } from "@/lib/types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -110,10 +111,7 @@ function parseBoolean(value: unknown, fallback = false) {
 }
 
 function parseRole(value: unknown): UserRole {
-  if (value === "SUPER_ADMIN" || value === "MANAGER" || value === "TEAM_LEAD" || value === "REP") {
-    return value;
-  }
-  return "REP";
+  return normalizeUserRole(value) ?? "REP";
 }
 
 function pickDisplayName(user: AuthAdminUser & { id: string }, fallbackEmail?: string | null) {
