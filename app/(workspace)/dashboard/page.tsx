@@ -26,6 +26,16 @@ import {
 } from "@/lib/lead-note-channels";
 import { buildManagerActionPlan, type PredictorInputs } from "@/lib/manager-action-engine";
 
+type DashboardDailyAverageWindow = {
+  key: "3d" | "7d" | "30d";
+  label: string;
+  shortLabel: string;
+  days: number;
+  dialsPerDay: number;
+  demosPerDay: number;
+  contactRate: number;
+};
+
 type DashboardMetrics = {
   generatedAt: string;
   viewerRole: string;
@@ -163,6 +173,7 @@ type DashboardMetrics = {
       contactRateStatus: "on_track" | "at_risk" | "off_track";
       demosStatus: "on_track" | "at_risk" | "off_track";
       paceGapLabel: string;
+      dailyAverages: DashboardDailyAverageWindow[];
     }>;
     repCallDrilldowns: Array<{
       userId: string;
@@ -280,6 +291,10 @@ function formatPercent(value: number) {
   return `${Math.round(value)}%`;
 }
 
+function formatDecimal(value: number) {
+  return `${Math.round(value * 10) / 10}`;
+}
+
 function formatDateTime(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "Unknown time";
@@ -393,6 +408,22 @@ function MetricStatusBadge({
       <span className="text-zinc-300">{label}</span>
       <span className="text-current">{getMetricStatusText(status)}</span>
     </span>
+  );
+}
+
+function DailyAverageStrip({ windows }: { windows: DashboardDailyAverageWindow[] }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-3">
+      {windows.map((window) => (
+        <article key={window.key} className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2.5">
+          <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">{window.shortLabel}</p>
+          <p className="mt-1 text-sm font-semibold text-white">{formatDecimal(window.dialsPerDay)} dials/day</p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {formatDecimal(window.demosPerDay)} demos/day, {formatPercent(window.contactRate)} contact
+          </p>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -1469,6 +1500,9 @@ function ManagerDashboard({
                     <MetricStatusBadge label="Dials" status={rep.dialsStatus} />
                     <MetricStatusBadge label="Contact" status={rep.contactRateStatus} />
                     <MetricStatusBadge label="Demos" status={rep.demosStatus} />
+                  </div>
+                  <div className="mt-3">
+                    <DailyAverageStrip windows={rep.dailyAverages} />
                   </div>
                   <p className="mt-3 text-xs text-zinc-400">{buildScorecardPaceSummary(rep)}</p>
                   <p className="mt-3 text-xs font-medium uppercase tracking-[0.14em] text-blue-300">

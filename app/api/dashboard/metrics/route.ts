@@ -84,6 +84,18 @@ type DemoRow = {
   created_at?: string | null;
 };
 
+type DashboardDailyAverageWindowKey = "3d" | "7d" | "30d";
+
+type DashboardDailyAverageWindow = {
+  key: DashboardDailyAverageWindowKey;
+  label: string;
+  shortLabel: string;
+  days: number;
+  dialsPerDay: number;
+  demosPerDay: number;
+  contactRate: number;
+};
+
 type DashboardNotification = {
   id: string;
   title: string;
@@ -817,6 +829,53 @@ function buildRepHeadline(params: {
   return `Current pace is ${formatDecimal(params.callsPerHourToday)} calls per hour. Keep stacking quality connects.`;
 }
 
+const DAILY_AVERAGE_WINDOW_OPTIONS: ReadonlyArray<{
+  key: DashboardDailyAverageWindowKey;
+  label: string;
+  shortLabel: string;
+  days: number;
+}> = [
+  { key: "3d", label: "Last 3 Days", shortLabel: "3D Avg", days: 3 },
+  { key: "7d", label: "Last 7 Days", shortLabel: "7D Avg", days: 7 },
+  { key: "30d", label: "Last 30 Days", shortLabel: "30D Avg", days: 30 },
+];
+
+function buildDailyAverageWindow(params: {
+  key: DashboardDailyAverageWindowKey;
+  label: string;
+  shortLabel: string;
+  days: number;
+  calls: CallAnalyticsRow[];
+  demos: AttributedDemoRecord[];
+  now: Date;
+}): DashboardDailyAverageWindow {
+  const endDayStamp = getDayStampInTimeZone(params.now, DASHBOARD_TIME_ZONE);
+  const startDayStamp = endDayStamp - (params.days - 1);
+  const windowCalls = params.calls.filter((call) => {
+    const callAt = parseDate(call.created_at);
+    if (!callAt) return false;
+    const stamp = getDayStampInTimeZone(callAt, DASHBOARD_TIME_ZONE);
+    return stamp >= startDayStamp && stamp <= endDayStamp;
+  });
+  const windowDemos = params.demos.filter((demo) => {
+    const bookedAt = getDemoBookedAt(demo);
+    if (!bookedAt) return false;
+    const stamp = getDayStampInTimeZone(bookedAt, DASHBOARD_TIME_ZONE);
+    return stamp >= startDayStamp && stamp <= endDayStamp;
+  });
+  const windowConversations = windowCalls.filter(isConnectedCall);
+
+  return {
+    key: params.key,
+    label: params.label,
+    shortLabel: params.shortLabel,
+    days: params.days,
+    dialsPerDay: windowCalls.length / params.days,
+    demosPerDay: windowDemos.length / params.days,
+    contactRate: computeRate(windowConversations.length, windowCalls.length),
+  };
+}
+
 export async function GET() {
   try {
     const user = await getAuthenticatedUser();
@@ -1313,11 +1372,22 @@ export async function GET() {
     const scorecards = [...leaderboard]
       .map((row) => {
         const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
+        const ownedLeadIds = new Set(ownedLeads.map((lead) => lead.id));
+        const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
         const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
-        const demosBookedTotal = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId))).length;
+        const rowAttributedDemos = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId)));
+        const demosBookedTotal = rowAttributedDemos.length;
         const closesTotal = soldLeads.length;
         const demoToCloseRate = demosBookedTotal > 0 ? (closesTotal / demosBookedTotal) * 100 : 0;
         const workingRate = row.dialsToday > 0 ? (row.conversationsToday / row.dialsToday) * 100 : 0;
+        const dailyAverages = DAILY_AVERAGE_WINDOW_OPTIONS.map((window) =>
+          buildDailyAverageWindow({
+            ...window,
+            calls: ownedCalls,
+            demos: rowAttributedDemos,
+            now,
+          }),
+        );
         return {
           userId: row.userId,
           userName: row.userName,
@@ -1337,6 +1407,7 @@ export async function GET() {
           contactRateStatus: getPerformanceStatus(row.contactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct),
           demosStatus: getTodayPacedStatus(row.demosToday, row.expectedDemosByNow),
           paceGapLabel: `${formatSignedNumber(row.dialGapToday)} vs pace`,
+          dailyAverages,
         };
       })
       .slice(0, 6);
