@@ -1,6 +1,7 @@
 import { dedupeKey } from "@/lib/utils";
 import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
+import { normalizeShiftQueueSettings, type ShiftQueueSettings } from "@/lib/shift-queue";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -87,6 +88,13 @@ export type AssignableUser = {
   email: string | null;
   name: string;
   commissionRate: number | null;
+};
+
+export type LeadAssignmentUser = {
+  id: string;
+  email: string | null;
+  name: string;
+  role: UserRole;
 };
 
 export type ManagedUser = AssignableUser & {
@@ -202,6 +210,125 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function listLeadAssignmentUsers(): Promise<LeadAssignmentUser[]> {
+  const users = await listAuthAdminUsersRaw();
+  return users
+    .map((user) => {
+      const metadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
+      const email = typeof user.email === "string" && user.email.trim() ? user.email.trim().toLowerCase() : null;
+      const name =
+        typeof metadata.name === "string" && metadata.name.trim()
+          ? metadata.name.trim()
+          : typeof metadata.full_name === "string" && metadata.full_name.trim()
+            ? metadata.full_name.trim()
+            : email
+              ? prettyNameFromEmail(email)
+              : user.id;
+      const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
+      const role =
+        metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP"
+          ? (metadataRole as UserRole)
+          : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
+            ? "SUPER_ADMIN"
+            : "REP";
+
+      return {
+        id: user.id,
+        email,
+        name,
+        role,
+      } satisfies LeadAssignmentUser;
+    })
+    .filter((user) => user.role === "REP" || user.role === "TEAM_LEAD" || user.role === "MANAGER" || user.role === "SUPER_ADMIN")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function looksLikeSupabaseUserId(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+export async function isValidLeadAssignmentUserId(userId: string): Promise<boolean> {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) return false;
+
+  try {
+    const assignableUsers = await listLeadAssignmentUsers();
+    return assignableUsers.some((candidate) => candidate.id === normalizedUserId);
+  } catch (error) {
+    console.warn("[store] Lead assignment validation fell back after auth-admin lookup failed.", error);
+  }
+
+  const profileUser = await getSafeFirstUser(normalizedUserId).catch(() => null);
+  if (profileUser) return true;
+
+  return looksLikeSupabaseUserId(normalizedUserId);
+}
+
+export async function getShiftQueueSettings(userId: string): Promise<ShiftQueueSettings | null> {
+  const targetUser = await getAuthAdminUserById(userId).catch(() => null);
+  if (!targetUser) return null;
+
+  const metadata = targetUser.user_metadata && typeof targetUser.user_metadata === "object" ? targetUser.user_metadata : {};
+  return normalizeShiftQueueSettings(
+    (metadata as Record<string, unknown>).shiftQueueSettings ??
+    (metadata as Record<string, unknown>).shift_queue_settings ??
+    null,
+  );
+}
+
+export async function saveShiftQueueSettings(
+  targetUserId: string,
+  settings: ShiftQueueSettings | null,
+  actingUserId: string,
+) {
+  if (!hasDb) throw new Error("Supabase environment variables are required to save shift queue settings.");
+
+  const targetUser = await getAuthAdminUserById(targetUserId);
+  if (!targetUser) throw new Error("User not found.");
+
+  const metadata =
+    targetUser.user_metadata && typeof targetUser.user_metadata === "object"
+      ? { ...targetUser.user_metadata }
+      : {};
+
+  if (!settings) {
+    delete (metadata as Record<string, unknown>).shiftQueueSettings;
+    delete (metadata as Record<string, unknown>).shift_queue_settings;
+  } else {
+    (metadata as Record<string, unknown>).shiftQueueSettings = {
+      ...settings,
+      updatedAt: new Date().toISOString(),
+      updatedByUserId: actingUserId,
+    };
+    delete (metadata as Record<string, unknown>).shift_queue_settings;
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(targetUserId)}`, {
+    method: "PUT",
+    headers: {
+      apikey: supabaseServiceRoleKey as string,
+      Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      user_metadata: metadata,
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || "Failed to save shift queue settings.");
+  }
+
+  return settings
+    ? {
+        ...settings,
+        updatedAt: new Date().toISOString(),
+        updatedByUserId: actingUserId,
+      }
+    : null;
 }
 
 export async function listManagedUsers(): Promise<ManagedUser[]> {
@@ -1161,6 +1288,11 @@ export async function canUserViewAllLeads(userId: string, email?: string | null)
 }
 
 export async function canUserAccessAccountManagement(userId: string, email?: string | null) {
+  const role = await getEffectiveUserRole(userId, email);
+  return role === "MANAGER" || role === "SUPER_ADMIN";
+}
+
+export async function canUserAssignLeads(userId: string, email?: string | null) {
   const role = await getEffectiveUserRole(userId, email);
   return role === "MANAGER" || role === "SUPER_ADMIN";
 }

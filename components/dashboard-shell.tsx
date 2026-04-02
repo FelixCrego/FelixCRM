@@ -26,6 +26,7 @@ import {
   Menu,
   FolderKanban,
   Clock3,
+  Target,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -79,6 +80,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/shift-queue", label: "Shift Queue", icon: Target },
     { href: "/time-clock", label: "Time Clock", icon: Clock3 },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
@@ -91,6 +93,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/shift-queue", label: "Shift Queue", icon: Target },
     { href: "/time-clock", label: "Time Clock", icon: Clock3 },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
@@ -104,6 +107,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/shift-queue", label: "Shift Queue", icon: Target },
     { href: "/time-clock", label: "Payroll", icon: Clock3 },
     { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
@@ -122,6 +126,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/search", label: "Global Search", icon: Search },
     { href: "/scrape", label: "Scrape Leads", icon: Search },
     { href: "/my-leads", label: "My Leads", icon: Users },
+    { href: "/shift-queue", label: "Shift Queue", icon: Target },
     { href: "/time-clock", label: "Payroll", icon: Clock3 },
     { href: "/leads", label: "Lead Directory", icon: Users },
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
