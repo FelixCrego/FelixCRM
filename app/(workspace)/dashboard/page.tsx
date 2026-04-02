@@ -64,6 +64,7 @@ type DashboardMetrics = {
     };
     accountability: {
       expectedDialsByNow: number;
+      expectedDemosByNow: number;
       workdayLabel: string;
       dialsStatus: "on_track" | "at_risk" | "off_track";
       contactRateStatus: "on_track" | "at_risk" | "off_track";
@@ -962,7 +963,11 @@ function DailyTargets({ targets }: { targets: DashboardMetrics["rep"]["targets"]
       <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Daily Execution</h3>
       <div className="space-y-3">
         {targets.map((kpi) => {
-          const percentage = Math.min((kpi.completed / kpi.target) * 100, 100);
+          const percentage = kpi.target > 0
+            ? Math.min((kpi.completed / kpi.target) * 100, 100)
+            : kpi.completed > 0
+              ? 100
+              : 0;
           const isHit = kpi.status === "on_track";
           const toneStyles = {
             indigo: "bg-indigo-500",
@@ -1060,7 +1065,7 @@ function RepDashboard({
           <KpiCard
             label="Booked Demos Today"
             value={rep ? String(rep.kpis.demosToday) : "--"}
-            detail={rep ? `${formatPercent(rep.kpis.demoConversionRateToday)} conversion from connects` : "Loading"}
+            detail={rep ? `${Math.round(rep.accountability.expectedDemosByNow * 10) / 10} expected by now` : "Loading"}
             icon={Wallet}
           />
         </section>

@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import {
   SALES_DASHBOARD_DERIVED_TARGETS,
   SALES_DASHBOARD_TARGETS,
+  SALES_DASHBOARD_TARGETS_BY_HOUR,
   SALES_DASHBOARD_WORKDAY_HOURS,
 } from "@/lib/dashboard-targets";
 import { MANAGER_CALL_REVIEW_CHANNEL } from "@/lib/lead-note-channels";
@@ -58,6 +59,7 @@ type DashboardLeaderboardRow = {
   demosToday: number;
   demoConversionRateToday: number;
   expectedDialsByNow: number;
+  expectedDemosByNow: number;
   dialGapToday: number;
   talkMinutesToday: number;
   demosThisWeek: number;
@@ -704,6 +706,26 @@ function getPerformanceStatus(actual: number, target: number): DashboardPerforma
   return "off_track";
 }
 
+function getTodayExpectedTargetByNow(params: {
+  elapsedHours: number;
+  perHourTarget: number;
+  dailyTarget: number;
+}) {
+  return Math.max(0, Math.min(params.dailyTarget, params.elapsedHours * params.perHourTarget));
+}
+
+function getTodayPacedStatus(actual: number, expectedByNow: number): DashboardPerformanceStatus {
+  if (expectedByNow <= 0) {
+    return actual > 0 ? "on_track" : "at_risk";
+  }
+
+  if (expectedByNow < 1 && actual <= 0) {
+    return "at_risk";
+  }
+
+  return getPerformanceStatus(actual, expectedByNow);
+}
+
 function combineStatuses(statuses: DashboardPerformanceStatus[]) {
   if (statuses.includes("off_track")) return "off_track";
   if (statuses.includes("at_risk")) return "at_risk";
@@ -747,7 +769,7 @@ function isLeadDemoBookedToday(lead: Lead, now: Date) {
   return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
 }
 
-function buildNeedsAttentionReason(row: Pick<DashboardLeaderboardRow, "dialGapToday" | "dialsToday" | "contactRateToday" | "demosToday">) {
+function buildNeedsAttentionReason(row: Pick<DashboardLeaderboardRow, "dialGapToday" | "dialsToday" | "contactRateToday" | "demosToday" | "expectedDemosByNow">) {
   const issues: string[] = [];
 
   if (row.dialGapToday < 0) {
@@ -760,8 +782,8 @@ function buildNeedsAttentionReason(row: Pick<DashboardLeaderboardRow, "dialGapTo
     issues.push(`${formatPercent(row.contactRateToday)} contact rate`);
   }
 
-  if (row.demosToday < SALES_DASHBOARD_TARGETS.demosPerDay) {
-    issues.push(`${row.demosToday}/${SALES_DASHBOARD_TARGETS.demosPerDay} demos`);
+  if (getTodayPacedStatus(row.demosToday, row.expectedDemosByNow) === "off_track") {
+    issues.push(`${row.demosToday}/${formatDecimal(row.expectedDemosByNow)} demos by now`);
   }
 
   return issues.slice(0, 2).join("; ");
@@ -774,6 +796,7 @@ function buildRepHeadline(params: {
   callsPerHourToday: number;
   contactRateToday: number;
   demosToday: number;
+  expectedDemosByNow: number;
 }) {
   if (params.dialsStatus === "on_track" && params.contactStatus === "on_track" && params.demosStatus === "on_track") {
     return "On pace for 80 dials, 20% contact rate, and 4 booked demos.";
@@ -788,7 +811,7 @@ function buildRepHeadline(params: {
   }
 
   if (params.demosStatus !== "on_track") {
-    return `${params.demosToday} demo${params.demosToday === 1 ? "" : "s"} booked so far. Push harder on the close once the conversation lands.`;
+    return `${params.demosToday} demo${params.demosToday === 1 ? "" : "s"} booked so far. Pace by now is ${formatDecimal(params.expectedDemosByNow)}.`;
   }
 
   return `Current pace is ${formatDecimal(params.callsPerHourToday)} calls per hour. Keep stacking quality connects.`;
@@ -1000,7 +1023,12 @@ export async function GET() {
     const repDialPaceStatus = getPerformanceStatus(repCallsToday.length, workdayProgress.expectedDialsByNow);
     const repCallsPerHourStatus = getPerformanceStatus(repCallsPerHourToday, SALES_DASHBOARD_TARGETS.dialsPerHour);
     const repContactStatus = getPerformanceStatus(repContactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct);
-    const repDemosStatus = getPerformanceStatus(repDemosToday.length, SALES_DASHBOARD_TARGETS.demosPerDay);
+    const repExpectedDemosByNow = getTodayExpectedTargetByNow({
+      elapsedHours: workdayProgress.elapsedHours,
+      perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
+      dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
+    });
+    const repDemosStatus = getTodayPacedStatus(repDemosToday.length, repExpectedDemosByNow);
     const repDemoConversionStatus = getPerformanceStatus(
       repDemoConversionRateToday,
       SALES_DASHBOARD_DERIVED_TARGETS.demoConversionRatePct,
@@ -1152,6 +1180,11 @@ export async function GET() {
         demosToday: 0,
         demoConversionRateToday: 0,
         expectedDialsByNow: workdayProgress.expectedDialsByNow,
+        expectedDemosByNow: getTodayExpectedTargetByNow({
+          elapsedHours: workdayProgress.elapsedHours,
+          perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
+          dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
+        }),
         dialGapToday: 0,
         talkMinutesToday: 0,
         demosThisWeek: 0,
@@ -1177,6 +1210,11 @@ export async function GET() {
           demosToday: 0,
           demoConversionRateToday: 0,
           expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          expectedDemosByNow: getTodayExpectedTargetByNow({
+            elapsedHours: workdayProgress.elapsedHours,
+            perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
+            dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
+          }),
           dialGapToday: 0,
           talkMinutesToday: 0,
           demosThisWeek: 0,
@@ -1221,6 +1259,11 @@ export async function GET() {
       row.demosToday = demosToday.length;
       row.demoConversionRateToday = computeRate(demosToday.length, conversationsToday.length);
       row.expectedDialsByNow = workdayProgress.expectedDialsByNow;
+      row.expectedDemosByNow = getTodayExpectedTargetByNow({
+        elapsedHours: workdayProgress.elapsedHours,
+        perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
+        dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
+      });
       row.dialGapToday = row.dialsToday - row.expectedDialsByNow;
       row.talkMinutesToday = talkMinutesToday;
       row.demosThisWeek = demosThisWeek.length;
@@ -1236,7 +1279,7 @@ export async function GET() {
       row.overallStatus = combineStatuses([
         getPerformanceStatus(row.dialsToday, row.expectedDialsByNow),
         getPerformanceStatus(row.contactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct),
-        getPerformanceStatus(row.demosToday, SALES_DASHBOARD_TARGETS.demosPerDay),
+        getTodayPacedStatus(row.demosToday, row.expectedDemosByNow),
       ]);
       row.needsAttentionReason = buildNeedsAttentionReason(row);
     }
@@ -1485,6 +1528,7 @@ export async function GET() {
           callsPerHourToday: repCallsPerHourToday,
           contactRateToday: repContactRateToday,
           demosToday: repDemosToday.length,
+          expectedDemosByNow: repExpectedDemosByNow,
         }),
         scoreToday: repScoreToday,
         streakDays: repStreak,
@@ -1506,9 +1550,9 @@ export async function GET() {
           {
             label: "Dials Today",
             completed: repCallsToday.length,
-            target: SALES_DASHBOARD_TARGETS.dialsPerDay,
+            target: workdayProgress.expectedDialsByNow,
             valueLabel: String(repCallsToday.length),
-            targetLabel: String(SALES_DASHBOARD_TARGETS.dialsPerDay),
+            targetLabel: String(workdayProgress.expectedDialsByNow),
             detail: `${formatSignedNumber(repDialGapToday)} vs pace by now`,
             tone: "indigo",
             status: repDialPaceStatus,
@@ -1536,10 +1580,10 @@ export async function GET() {
           {
             label: "Booked Demos",
             completed: repDemosToday.length,
-            target: SALES_DASHBOARD_TARGETS.demosPerDay,
+            target: repExpectedDemosByNow,
             valueLabel: String(repDemosToday.length),
-            targetLabel: String(SALES_DASHBOARD_TARGETS.demosPerDay),
-            detail: `${formatPercent(repDemoConversionRateToday)} demo conversion from connects`,
+            targetLabel: formatDecimal(repExpectedDemosByNow),
+            detail: `${formatPercent(repDemoConversionRateToday)} conversion from connects; ${formatDecimal(repExpectedDemosByNow)} expected by now`,
             tone: "emerald",
             status: repDemosStatus,
           },
@@ -1551,6 +1595,7 @@ export async function GET() {
         },
         accountability: {
           expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          expectedDemosByNow: repExpectedDemosByNow,
           workdayLabel: workdayProgress.workdayLabel,
           dialsStatus: repDialPaceStatus,
           contactRateStatus: repContactStatus,
