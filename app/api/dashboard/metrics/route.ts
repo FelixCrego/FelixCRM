@@ -11,6 +11,7 @@ import { listLeadNotesWithMetadata } from "@/lib/lead-note-metadata";
 import { resolveLeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import { canUserViewAllLeads, getEffectiveUserRole, getReviewedDashboardNotificationIds, listLeads } from "@/lib/store";
 import type { Lead } from "@/lib/types";
+import { getWorkforceUser, listWorkforceUsers, type TimeClockEntry, type WorkforceUser } from "@/lib/workforce-store";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -149,6 +150,13 @@ type DashboardRepCallDrilldown = {
     hasAnalysis: boolean;
     hasBookedDemo: boolean;
   }>;
+};
+
+type DashboardWorkdayProgress = {
+  elapsedHours: number;
+  expectedDialsByNow: number;
+  workdayLabel: string;
+  source: "clocked" | "scheduled";
 };
 
 function getHeaders() {
@@ -750,7 +758,71 @@ function getStatusRank(status: DashboardPerformanceStatus) {
   return 0;
 }
 
-function getWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+function getTimeZoneOffsetMilliseconds(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const zonedTimestamp = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  return zonedTimestamp - date.getTime();
+}
+
+function getDayStartInTimeZone(dayStamp: number, timeZone = DASHBOARD_TIME_ZONE) {
+  const day = new Date(dayStamp * 86400000);
+  const baseTimestamp = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 0, 0, 0);
+  let offsetMilliseconds = getTimeZoneOffsetMilliseconds(new Date(baseTimestamp), timeZone);
+  let startOfDay = new Date(baseTimestamp - offsetMilliseconds);
+  const resolvedOffsetMilliseconds = getTimeZoneOffsetMilliseconds(startOfDay, timeZone);
+
+  if (resolvedOffsetMilliseconds !== offsetMilliseconds) {
+    offsetMilliseconds = resolvedOffsetMilliseconds;
+    startOfDay = new Date(baseTimestamp - offsetMilliseconds);
+  }
+
+  return startOfDay;
+}
+
+function getWorkedHoursToday(entries: TimeClockEntry[], date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const todayStamp = getDayStampInTimeZone(date, timeZone);
+  const dayStart = getDayStartInTimeZone(todayStamp, timeZone).getTime();
+  const nextDayStart = getDayStartInTimeZone(todayStamp + 1, timeZone).getTime();
+  let workedMilliseconds = 0;
+  let hasWorkedSegmentToday = false;
+
+  for (const entry of entries) {
+    const startedAt = parseDate(entry.clockInAt);
+    if (!startedAt) continue;
+
+    const endedAt = entry.clockOutAt ? parseDate(entry.clockOutAt) : date;
+    if (!endedAt) continue;
+
+    const segmentStart = Math.max(startedAt.getTime(), dayStart);
+    const segmentEnd = Math.min(endedAt.getTime(), nextDayStart, date.getTime());
+    if (segmentEnd <= segmentStart) continue;
+
+    hasWorkedSegmentToday = true;
+    workedMilliseconds += segmentEnd - segmentStart;
+  }
+
+  return hasWorkedSegmentToday ? workedMilliseconds / 3600000 : null;
+}
+
+function getScheduledWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE): DashboardWorkdayProgress {
   const { hour, minute } = getZonedClockParts(date, timeZone);
   const workdayStartMinutes = SALES_DASHBOARD_TARGETS.workdayStartHour * 60;
   const totalMinutes = SALES_DASHBOARD_WORKDAY_HOURS * 60;
@@ -765,8 +837,31 @@ function getWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
   return {
     elapsedHours,
     expectedDialsByNow,
-    workdayLabel: `${formatDecimal(elapsedHours)} / ${SALES_DASHBOARD_WORKDAY_HOURS}h`,
+    workdayLabel: `${formatDecimal(elapsedHours)} / ${SALES_DASHBOARD_WORKDAY_HOURS}h scheduled`,
+    source: "scheduled",
   };
+}
+
+function getClockedWorkdayProgress(entries: TimeClockEntry[], date: Date, timeZone = DASHBOARD_TIME_ZONE): DashboardWorkdayProgress | null {
+  const elapsedHours = getWorkedHoursToday(entries, date, timeZone);
+  if (elapsedHours === null) return null;
+
+  const expectedDialsByNow = Math.min(
+    SALES_DASHBOARD_TARGETS.dialsPerDay,
+    Math.round(elapsedHours * SALES_DASHBOARD_TARGETS.dialsPerHour),
+  );
+
+  return {
+    elapsedHours,
+    expectedDialsByNow,
+    workdayLabel: `${formatDecimal(elapsedHours)}h clocked`,
+    source: "clocked",
+  };
+}
+
+function resolveWorkdayProgress(workforceUser: WorkforceUser | null | undefined, date: Date, fallback: DashboardWorkdayProgress) {
+  if (!workforceUser) return fallback;
+  return getClockedWorkdayProgress(workforceUser.entries, date) ?? fallback;
 }
 
 function isLeadDemoBookedThisWeek(lead: Lead, now: Date) {
@@ -884,12 +979,23 @@ export async function GET() {
     }
 
     const now = new Date();
-    const workdayProgress = getWorkdayProgress(now);
+    const scheduledWorkdayProgress = getScheduledWorkdayProgress(now);
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
     const includeAllUpcomingDemos = includeAll || viewerRole === "TEAM_LEAD";
+    const workforceUsersPromise = includeAll
+      ? listWorkforceUsers().catch((error) => {
+          console.error("Failed to load workforce users for dashboard pacing.", error);
+          return [] as WorkforceUser[];
+        })
+      : getWorkforceUser(user.id)
+          .then((viewer) => [viewer])
+          .catch((error) => {
+            console.error("Failed to load viewer workforce record for dashboard pacing.", error);
+            return [] as WorkforceUser[];
+          });
 
-    const [visibleLeads, tableUsersById, authUserDirectory, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds] = await Promise.all([
+    const [visibleLeads, tableUsersById, authUserDirectory, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds, workforceUsers] = await Promise.all([
       listLeads(user.id, { includeAll }),
       listUsersById(),
       listAuthUsersById(),
@@ -897,10 +1003,12 @@ export async function GET() {
       listDemoRows({ includeAll: includeAllUpcomingDemos, userId: user.id, userEmail: user.email }),
       viewerRole === "TEAM_LEAD" ? listLeads(user.id, { includeAll: true }) : Promise.resolve([] as Lead[]),
       getReviewedDashboardNotificationIds(user.id),
+      workforceUsersPromise,
     ]);
 
     const usersById = new Map<string, string>(authUserDirectory.namesById);
     const userEmailsById = new Map<string, string>(authUserDirectory.emailsById);
+    const workforceUsersById = new Map<string, WorkforceUser>(workforceUsers.map((employee) => [employee.id, employee]));
     for (const [id, name] of tableUsersById.entries()) {
       usersById.set(id, name);
     }
@@ -1067,6 +1175,7 @@ export async function GET() {
       const closedAt = parseDate(lead.closedAt);
       return closedAt ? isSameDayInTimeZone(closedAt, now) : false;
     });
+    const repWorkdayProgress = resolveWorkdayProgress(workforceUsersById.get(user.id), now, scheduledWorkdayProgress);
     const repRevenueThisMonth = sum(repClosedThisMonth.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0)));
     const repLiveSites = repLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
     const repScoreToday = computeScore({
@@ -1076,14 +1185,14 @@ export async function GET() {
       closes: repClosedToday.length,
     });
     const repStreak = computeStreak(calls, visibleLeads, now, user.id, repLeadIds);
-    const repCallsPerHourToday = workdayProgress.elapsedHours > 0 ? repCallsToday.length / workdayProgress.elapsedHours : 0;
+    const repCallsPerHourToday = repWorkdayProgress.elapsedHours > 0 ? repCallsToday.length / repWorkdayProgress.elapsedHours : 0;
     const repContactRateToday = computeRate(repConversationsToday.length, repCallsToday.length);
     const repDemoConversionRateToday = computeRate(repDemosToday.length, repConversationsToday.length);
-    const repDialPaceStatus = getPerformanceStatus(repCallsToday.length, workdayProgress.expectedDialsByNow);
+    const repDialPaceStatus = getPerformanceStatus(repCallsToday.length, repWorkdayProgress.expectedDialsByNow);
     const repCallsPerHourStatus = getPerformanceStatus(repCallsPerHourToday, SALES_DASHBOARD_TARGETS.dialsPerHour);
     const repContactStatus = getPerformanceStatus(repContactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct);
     const repExpectedDemosByNow = getTodayExpectedTargetByNow({
-      elapsedHours: workdayProgress.elapsedHours,
+      elapsedHours: repWorkdayProgress.elapsedHours,
       perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
       dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
     });
@@ -1093,7 +1202,7 @@ export async function GET() {
       SALES_DASHBOARD_DERIVED_TARGETS.demoConversionRatePct,
     );
     const repOverallStatus = combineStatuses([repDialPaceStatus, repContactStatus, repDemosStatus]);
-    const repDialGapToday = repCallsToday.length - workdayProgress.expectedDialsByNow;
+    const repDialGapToday = repCallsToday.length - repWorkdayProgress.expectedDialsByNow;
 
     const focusLeads = repLeads
       .map((lead) => ({
@@ -1238,9 +1347,9 @@ export async function GET() {
         contactRateToday: 0,
         demosToday: 0,
         demoConversionRateToday: 0,
-        expectedDialsByNow: workdayProgress.expectedDialsByNow,
+        expectedDialsByNow: scheduledWorkdayProgress.expectedDialsByNow,
         expectedDemosByNow: getTodayExpectedTargetByNow({
-          elapsedHours: workdayProgress.elapsedHours,
+          elapsedHours: scheduledWorkdayProgress.elapsedHours,
           perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
           dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
         }),
@@ -1268,9 +1377,9 @@ export async function GET() {
           contactRateToday: 0,
           demosToday: 0,
           demoConversionRateToday: 0,
-          expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          expectedDialsByNow: scheduledWorkdayProgress.expectedDialsByNow,
           expectedDemosByNow: getTodayExpectedTargetByNow({
-            elapsedHours: workdayProgress.elapsedHours,
+            elapsedHours: scheduledWorkdayProgress.elapsedHours,
             perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
             dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
           }),
@@ -1309,17 +1418,18 @@ export async function GET() {
         const closedAt = parseDate(lead.closedAt);
         return closedAt ? isSameDayInTimeZone(closedAt, now) : false;
       });
+      const rowWorkdayProgress = resolveWorkdayProgress(workforceUsersById.get(row.userId), now, scheduledWorkdayProgress);
 
       row.userName = usersById.get(row.userId) ?? row.userName;
       row.dialsToday = callsToday.length;
-      row.callsPerHourToday = workdayProgress.elapsedHours > 0 ? callsToday.length / workdayProgress.elapsedHours : 0;
+      row.callsPerHourToday = rowWorkdayProgress.elapsedHours > 0 ? callsToday.length / rowWorkdayProgress.elapsedHours : 0;
       row.conversationsToday = conversationsToday.length;
       row.contactRateToday = computeRate(conversationsToday.length, callsToday.length);
       row.demosToday = demosToday.length;
       row.demoConversionRateToday = computeRate(demosToday.length, conversationsToday.length);
-      row.expectedDialsByNow = workdayProgress.expectedDialsByNow;
+      row.expectedDialsByNow = rowWorkdayProgress.expectedDialsByNow;
       row.expectedDemosByNow = getTodayExpectedTargetByNow({
-        elapsedHours: workdayProgress.elapsedHours,
+        elapsedHours: rowWorkdayProgress.elapsedHours,
         perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
         dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
       });
@@ -1624,9 +1734,9 @@ export async function GET() {
           {
             label: "Dials Today",
             completed: repCallsToday.length,
-            target: workdayProgress.expectedDialsByNow,
+            target: repWorkdayProgress.expectedDialsByNow,
             valueLabel: String(repCallsToday.length),
-            targetLabel: String(workdayProgress.expectedDialsByNow),
+            targetLabel: String(repWorkdayProgress.expectedDialsByNow),
             detail: `${formatSignedNumber(repDialGapToday)} vs pace by now`,
             tone: "indigo",
             status: repDialPaceStatus,
@@ -1637,7 +1747,7 @@ export async function GET() {
             target: SALES_DASHBOARD_TARGETS.dialsPerHour,
             valueLabel: formatDecimal(repCallsPerHourToday),
             targetLabel: String(SALES_DASHBOARD_TARGETS.dialsPerHour),
-            detail: `${workdayProgress.workdayLabel} worked today`,
+            detail: `Based on ${repWorkdayProgress.workdayLabel}`,
             tone: "indigo",
             status: repCallsPerHourStatus,
           },
@@ -1668,9 +1778,9 @@ export async function GET() {
           talkLabel: minutesLabel(repTalkSecondsToday),
         },
         accountability: {
-          expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          expectedDialsByNow: repWorkdayProgress.expectedDialsByNow,
           expectedDemosByNow: repExpectedDemosByNow,
-          workdayLabel: workdayProgress.workdayLabel,
+          workdayLabel: repWorkdayProgress.workdayLabel,
           dialsStatus: repDialPaceStatus,
           contactRateStatus: repContactStatus,
           demosStatus: repDemosStatus,

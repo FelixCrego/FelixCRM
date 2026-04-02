@@ -1147,7 +1147,7 @@ function RepDashboard({
           <KpiCard
             label="Calls / Hour"
             value={rep ? rep.kpis.callsPerHourToday.toFixed(1) : "--"}
-            detail="Target is 10 every hour"
+            detail="Target is 10 every clocked hour"
             icon={CalendarClock}
           />
           <KpiCard
@@ -1333,7 +1333,7 @@ function RepDashboard({
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Standards Board</p>
           <h4 className="mt-2 text-lg font-semibold text-white">Daily Accountability</h4>
           <div className="mt-3 space-y-2 text-sm text-zinc-300">
-            <p className="flex items-center justify-between"><span>Workday Progress</span><span>{rep?.accountability.workdayLabel ?? "--"}</span></p>
+            <p className="flex items-center justify-between"><span>Pacing Basis</span><span>{rep?.accountability.workdayLabel ?? "--"}</span></p>
             <p className="flex items-center justify-between"><span>Demo Conversion</span><span>{rep ? formatPercent(rep.kpis.demoConversionRateToday) : "--"}</span></p>
             <p className="flex items-center justify-between"><span>Talk Time</span><span>{rep ? `${rep.kpis.talkMinutesToday}m` : "--"}</span></p>
             <p className="flex items-center justify-between"><span>Revenue This Month</span><span>{rep ? formatCurrency(rep.kpis.revenueThisMonth) : "--"}</span></p>
@@ -1444,7 +1444,7 @@ function ManagerDashboard({
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Scorecards</h3>
-              <p className="mt-1 text-sm text-zinc-400">Daily pace, contact quality, demo output, and the exact reps that need coaching.</p>
+              <p className="mt-1 text-sm text-zinc-400">Daily pace, clocked-time calls per hour, contact quality, demo output, and the exact reps that need coaching.</p>
             </div>
             <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
               {metrics?.team.scorecards.length ?? 0} tracked
