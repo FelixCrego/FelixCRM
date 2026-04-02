@@ -370,7 +370,7 @@ export function ShiftQueueSettingsManager() {
             <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Queue Preview</p>
             <h3 className="mt-2 text-lg font-semibold text-white">How the rep will feel this live</h3>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              The rep sees a call target, lane progress bars, and a live "next push" signal. Under-target lanes float upward automatically.
+              The rep sees a call target, lane progress bars, and a live &quot;next push&quot; signal. Under-target lanes float upward automatically.
             </p>
           </div>
 
