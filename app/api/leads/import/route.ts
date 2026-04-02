@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth";
-import { createOrMergeLead } from "@/lib/store";
+import { getAuthenticatedUser } from "@/lib/auth";
+import { canUserAssignLeads, createOrMergeLead, isValidLeadAssignmentUserId } from "@/lib/store";
 
 type ImportLeadInput = {
   businessName?: unknown;
@@ -12,12 +12,32 @@ type ImportLeadInput = {
 
 export async function POST(request: Request) {
   try {
-    const userId = await getAuthenticatedUserId();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json()) as { leads?: ImportLeadInput[]; mergeDuplicates?: boolean };
+    const body = (await request.json()) as { leads?: ImportLeadInput[]; mergeDuplicates?: boolean; assigneeId?: string };
     if (!Array.isArray(body?.leads) || !body.leads.length) {
       return NextResponse.json({ error: "Leads array is required." }, { status: 400 });
+    }
+
+    const rawAssigneeId =
+      typeof body?.assigneeId === "string" && body.assigneeId.trim().length > 0
+        ? body.assigneeId.trim()
+        : undefined;
+
+    let resolvedOwnerId = user.id;
+
+    if (rawAssigneeId !== undefined) {
+      const canAssign = await canUserAssignLeads(user.id, user.email);
+      if (!canAssign) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+
+      const isValidAssignee = await isValidLeadAssignmentUserId(rawAssigneeId);
+      if (!isValidAssignee) {
+        return NextResponse.json({ error: "Invalid assignee." }, { status: 400 });
+      }
+      resolvedOwnerId = rawAssigneeId;
     }
 
     let createdCount = 0;
@@ -31,7 +51,7 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const result = await createOrMergeLead(userId, {
+      const result = await createOrMergeLead(resolvedOwnerId, {
         businessName,
         phone: typeof lead?.phone === "string" ? lead.phone.trim() || null : null,
         websiteUrl: typeof lead?.websiteUrl === "string" ? lead.websiteUrl.trim() || null : null,

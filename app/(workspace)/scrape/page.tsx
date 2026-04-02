@@ -39,6 +39,20 @@ type ParsedCsvLead = {
   sourceQuery?: string;
 };
 
+type AssignmentUser = {
+  id: string;
+  name: string;
+  email?: string | null;
+  role?: string;
+};
+
+const CURRENT_USER_ASSIGNMENT = "__current__";
+
+function resolveAssignmentOwnerId(selection: string, currentUserId: string | null) {
+  if (selection === CURRENT_USER_ASSIGNMENT) return currentUserId ?? undefined;
+  return selection;
+}
+
 function parseCsvRows(raw: string): string[][] {
   const rows: string[][] = [];
   let currentCell = "";
@@ -149,6 +163,9 @@ export default function ScrapePage() {
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
   const [isAddingLead, setIsAddingLead] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [canAssignLeads, setCanAssignLeads] = useState(false);
+  const [assignmentUsers, setAssignmentUsers] = useState<AssignmentUser[]>([]);
+  const [csvAssigneeSelection, setCsvAssigneeSelection] = useState(CURRENT_USER_ASSIGNMENT);
   const [currentPage, setCurrentPage] = useState(1);
   const [newLeadForm, setNewLeadForm] = useState({ businessName: "", phone: "", website: "" });
   const csvFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -195,6 +212,46 @@ export default function ScrapePage() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadAssignmentUsers() {
+      try {
+        const response = await fetch("/api/users/reps", { cache: "no-store" });
+        const payload = (await response.json().catch(() => null)) as { users?: AssignmentUser[] } | null;
+        if (!mounted) return;
+        if (!response.ok || !Array.isArray(payload?.users)) {
+          setCanAssignLeads(false);
+          setAssignmentUsers([]);
+          return;
+        }
+
+        setCanAssignLeads(true);
+        setAssignmentUsers(payload.users);
+      } catch {
+        if (!mounted) return;
+        setCanAssignLeads(false);
+        setAssignmentUsers([]);
+      }
+    }
+
+    void loadAssignmentUsers();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const assignmentOptions = useMemo(() => {
+    if (!canAssignLeads) return [];
+    return [
+      { value: CURRENT_USER_ASSIGNMENT, label: "Assign to Me" },
+      ...assignmentUsers.map((user) => ({
+        value: user.id,
+        label: user.email ? `${user.name} (${user.email})` : user.name,
+      })),
+    ];
+  }, [assignmentUsers, canAssignLeads]);
 
   async function handleScrape() {
     setIsScraping(true);
@@ -367,7 +424,10 @@ export default function ScrapePage() {
       const response = await fetch("/api/leads/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leads: leadsToImport }),
+        body: JSON.stringify({
+          leads: leadsToImport,
+          ...(canAssignLeads ? { assigneeId: resolveAssignmentOwnerId(csvAssigneeSelection, currentUserId) } : {}),
+        }),
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -397,7 +457,11 @@ export default function ScrapePage() {
     const response = await fetch("/api/leads/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ leads: leadsToImport, mergeDuplicates }),
+      body: JSON.stringify({
+        leads: leadsToImport,
+        mergeDuplicates,
+        ...(canAssignLeads ? { assigneeId: resolveAssignmentOwnerId(csvAssigneeSelection, currentUserId) } : {}),
+      }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error ?? "Failed to import CSV leads.");
@@ -434,9 +498,25 @@ export default function ScrapePage() {
   return (
     <div className="space-y-5 pb-24">
       <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <h2 className="text-xl font-semibold text-zinc-100">CRM Lead Scraper</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {canAssignLeads ? (
+              <label className="flex min-w-[220px] items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-300">
+                <span className="whitespace-nowrap text-zinc-500">CSV Assign</span>
+                <select
+                  value={csvAssigneeSelection}
+                  onChange={(event) => setCsvAssigneeSelection(event.target.value)}
+                  className="min-w-0 flex-1 bg-transparent text-zinc-100 outline-none"
+                >
+                  {assignmentOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <button
               type="button"
               onClick={() => {
