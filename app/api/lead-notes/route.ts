@@ -9,7 +9,7 @@ import {
   setLeadWorkspaceStatus,
 } from "@/lib/store";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { upsertCallAnalytics } from "@/lib/call-analytics-store";
+import { getCallAnalyticsByContactId, upsertCallAnalytics } from "@/lib/call-analytics-store";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 import { leadWorkspaceStatusFromDispositionChannel } from "@/lib/lead-workspace-status";
 import {
@@ -21,6 +21,32 @@ import {
 } from "@/lib/lead-note-channels";
 import { acknowledgeLeadNote, listLeadNotesWithMetadata, updateLeadNoteMetadata } from "@/lib/lead-note-metadata";
 import { getUserDisplayName } from "@/lib/workforce-store";
+
+const NON_CONTACT_DISPOSITIONS = new Set(["no_answer", "left_voicemail", "voicemail", "wrong_number"]);
+
+function mergeRawPayload(existing: unknown, patch: Record<string, unknown>) {
+  const base =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {};
+
+  return Object.entries(patch).reduce<Record<string, unknown>>((acc, [key, value]) => {
+    if (value === undefined || value === null || value === "") return acc;
+    acc[key] = value;
+    return acc;
+  }, { ...base });
+}
+
+function getDispositionContactOverride(normalizedChannel: string) {
+  if (!normalizedChannel.startsWith("disposition:")) return null;
+  const disposition = normalizedChannel.slice("disposition:".length).trim().replace(/\s+/g, "_");
+  if (!disposition) return null;
+
+  return {
+    disposition,
+    countsAsContact: !NON_CONTACT_DISPOSITIONS.has(disposition),
+  };
+}
 
 export async function GET(request: Request) {
   try {
@@ -63,6 +89,7 @@ export async function POST(request: Request) {
     const content = body?.content?.trim();
     const channel = body?.channel?.trim() || "notes";
     const normalizedChannel = channel.toLowerCase();
+    const dispositionContactOverride = getDispositionContactOverride(normalizedChannel);
 
     if (!leadId) return NextResponse.json({ error: "leadId is required" }, { status: 400 });
     if (!content) return NextResponse.json({ error: "content is required" }, { status: 400 });
@@ -115,12 +142,21 @@ export async function POST(request: Request) {
       }
     }
 
-    if (body?.contactId?.trim()) {
+    if (body?.contactId?.trim() && dispositionContactOverride) {
+      const contactId = body.contactId.trim();
       try {
+        const existingCall = await getCallAnalyticsByContactId(contactId).catch(() => null);
         await upsertCallAnalytics({
           lead_id: leadId,
-          contact_id: body.contactId.trim(),
+          contact_id: contactId,
           event_source: "crm-disposition",
+          raw_payload: mergeRawPayload(existingCall?.raw_payload, {
+            crm_disposition_channel: normalizedChannel,
+            crm_disposition: dispositionContactOverride.disposition,
+            crm_disposition_counts_as_contact: dispositionContactOverride.countsAsContact,
+            crm_disposition_updated_at: new Date().toISOString(),
+            crm_disposition_set_by_user_id: user.id,
+          }),
         });
       } catch (error) {
         console.warn("Unable to initialize call_analytics row from lead note:", error);

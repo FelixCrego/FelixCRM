@@ -44,6 +44,7 @@ type CallAnalyticsRow = {
   customer_talk_time_pct?: number | null;
   interruptions?: number | null;
   created_at?: string | null;
+  raw_payload?: unknown;
 };
 
 type DashboardLeaderboardRow = {
@@ -128,6 +129,7 @@ type DashboardRepCallDrilldown = {
     leadStatus: string;
     callAt: string;
     durationSeconds: number;
+    countsAsContact: boolean;
     sentimentLabel: string;
     hasRecording: boolean;
     hasAnalysis: boolean;
@@ -281,9 +283,28 @@ function normalizeEmail(value?: string | null) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+function parseCallRawPayload(rawPayload: unknown) {
+  if (rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)) {
+    return rawPayload as Record<string, unknown>;
+  }
+
+  if (typeof rawPayload === "string" && rawPayload.trim()) {
+    try {
+      const parsed = JSON.parse(rawPayload) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 async function listRecentCalls(limit = 1500) {
   const rows = await requestFirstWorkingTable<CallAnalyticsRow[]>(CALLS_TABLE_CANDIDATES, {
-    select: "contact_id,lead_id,duration_seconds,overall_sentiment,recording_url,recording_s3_uri,analysis_s3_uri,transcript_text,agent_talk_time_pct,customer_talk_time_pct,interruptions,created_at",
+    select: "contact_id,lead_id,duration_seconds,overall_sentiment,recording_url,recording_s3_uri,analysis_s3_uri,transcript_text,agent_talk_time_pct,customer_talk_time_pct,interruptions,created_at,raw_payload",
     order: "created_at.desc",
     limit: String(limit),
   });
@@ -525,7 +546,7 @@ function computeStreak(
     const key = dayKey(at);
     scoresByDay.set(key, (scoresByDay.get(key) ?? 0) + computeScore({
       dials: 1,
-      conversations: typeof call.duration_seconds === "number" && call.duration_seconds >= 45 ? 1 : 0,
+      conversations: isConnectedCall(call) ? 1 : 0,
       demos: 0,
       closes: 0,
     }));
@@ -603,6 +624,58 @@ function scoreLeadPriority(lead: Lead, now: Date) {
 function normalizeSentiment(value?: string | null) {
   if (!value) return "No sentiment yet";
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function getCallDurationSeconds(call: Pick<CallAnalyticsRow, "duration_seconds">) {
+  return typeof call.duration_seconds === "number" && Number.isFinite(call.duration_seconds)
+    ? Math.max(call.duration_seconds, 0)
+    : 0;
+}
+
+const NON_CONTACT_DISPOSITIONS = new Set(["no_answer", "left_voicemail", "voicemail", "wrong_number"]);
+
+function normalizeDispositionValue(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^disposition:/, "")
+    .replace(/[\s-]+/g, "_");
+}
+
+function getCallCountsAsContactOverride(call: Pick<CallAnalyticsRow, "raw_payload">) {
+  const rawPayload = parseCallRawPayload(call.raw_payload);
+  if (!rawPayload) return null;
+
+  if (typeof rawPayload.crm_disposition_counts_as_contact === "boolean") {
+    return rawPayload.crm_disposition_counts_as_contact;
+  }
+
+  const disposition = normalizeDispositionValue(
+    rawPayload.crm_disposition_channel ?? rawPayload.crm_disposition ?? rawPayload.disposition,
+  );
+  if (!disposition) return null;
+
+  return !NON_CONTACT_DISPOSITIONS.has(disposition);
+}
+
+function isConnectedCall(call: CallAnalyticsRow) {
+  const countsAsContactOverride = getCallCountsAsContactOverride(call);
+  if (countsAsContactOverride !== null) return countsAsContactOverride;
+
+  const durationSeconds = getCallDurationSeconds(call);
+  if (durationSeconds > 0) return true;
+
+  if (typeof call.customer_talk_time_pct === "number" && call.customer_talk_time_pct > 0) return true;
+  if (typeof call.agent_talk_time_pct === "number" && call.agent_talk_time_pct > 0) return true;
+  if (typeof call.interruptions === "number" && call.interruptions > 0) return true;
+  if (typeof call.overall_sentiment === "string" && call.overall_sentiment.trim()) return true;
+  if (typeof call.transcript_text === "string" && call.transcript_text.trim()) return true;
+  if (typeof call.analysis_s3_uri === "string" && call.analysis_s3_uri.trim()) return true;
+  if (typeof call.recording_s3_uri === "string" && call.recording_s3_uri.trim()) return true;
+  if (typeof call.recording_url === "string" && call.recording_url.trim()) return true;
+
+  return false;
 }
 
 function formatPercent(value: number) {
@@ -899,8 +972,8 @@ export async function GET() {
       const at = parseDate(call.created_at);
       return at ? isSameDayInTimeZone(at, now) : false;
     });
-    const repConversationsToday = repCallsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
-    const repTalkSecondsToday = sum(repCallsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0)));
+    const repConversationsToday = repCallsToday.filter(isConnectedCall);
+    const repTalkSecondsToday = sum(repCallsToday.map((call) => getCallDurationSeconds(call)));
     const repDemosThisWeek = repAttributedDemos.filter((demo) => isDemoBookedOnOrAfterWeekStart(demo, now));
     const repDemosToday = repAttributedDemos.filter((demo) => isDemoBookedSameDay(demo, now));
     const repClosedThisMonth = visibleLeads.filter((lead) => {
@@ -1127,8 +1200,8 @@ export async function GET() {
         const at = parseDate(call.created_at);
         return at ? isSameDayInTimeZone(at, now) : false;
       });
-      const conversationsToday = callsToday.filter((call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45);
-      const talkMinutesToday = Math.round(sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60);
+      const conversationsToday = callsToday.filter(isConnectedCall);
+      const talkMinutesToday = Math.round(sum(callsToday.map((call) => getCallDurationSeconds(call))) / 60);
       const demosThisWeek = rowAttributedDemos.filter((demo) => isDemoBookedOnOrAfterWeekStart(demo, now));
       const demosToday = rowAttributedDemos.filter((demo) => isDemoBookedSameDay(demo, now));
       const closedThisMonth = soldLeads.filter((lead) => {
@@ -1240,9 +1313,7 @@ export async function GET() {
         const at = parseDate(call.created_at);
         return at ? isSameDayInTimeZone(at, now) : false;
       });
-      const connectedToday = callsToday.filter(
-        (call) => typeof call.duration_seconds === "number" && call.duration_seconds >= 45,
-      );
+      const connectedToday = callsToday.filter(isConnectedCall);
       const recordedCalls = repCalls.filter((call) => Boolean(call.recording_s3_uri || call.recording_url));
       const recordedCallsToday = callsToday.filter((call) => Boolean(call.recording_s3_uri || call.recording_url));
       const bookedDemoCalls = repCalls.filter(
@@ -1252,7 +1323,7 @@ export async function GET() {
         (call) => typeof call.lead_id === "string" && bookedDemoLeadIds.has(call.lead_id),
       );
       const talkMinutesToday = Math.round(
-        sum(callsToday.map((call) => (typeof call.duration_seconds === "number" ? call.duration_seconds : 0))) / 60,
+        sum(callsToday.map((call) => getCallDurationSeconds(call))) / 60,
       );
 
       return {
@@ -1272,13 +1343,15 @@ export async function GET() {
           const hasRecording = Boolean(call.recording_s3_uri || call.recording_url);
           const hasAnalysis = Boolean(call.analysis_s3_uri || call.transcript_text || call.overall_sentiment);
           const hasBookedDemo = Boolean(lead?.demoBooking?.date) || bookedDemoLeadIds.has(leadId);
+          const countsAsContact = isConnectedCall(call);
           return {
             contactId: typeof call.contact_id === "string" ? call.contact_id : "",
             leadId,
             leadName: lead?.businessName ?? "Unknown Lead",
             leadStatus: lead ? getLeadStatusLabel(lead, now) : "Lead status unavailable",
             callAt: call.created_at ?? now.toISOString(),
-            durationSeconds: typeof call.duration_seconds === "number" ? call.duration_seconds : 0,
+            durationSeconds: getCallDurationSeconds(call),
+            countsAsContact,
             sentimentLabel: normalizeSentiment(call.overall_sentiment),
             hasRecording,
             hasAnalysis,

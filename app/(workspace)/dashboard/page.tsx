@@ -178,6 +178,7 @@ type DashboardMetrics = {
         leadStatus: string;
         callAt: string;
         durationSeconds: number;
+        countsAsContact: boolean;
         sentimentLabel: string;
         hasRecording: boolean;
         hasAnalysis: boolean;
@@ -310,6 +311,26 @@ function formatDurationSeconds(value: number) {
   const minutes = Math.floor(value / 60);
   const seconds = value % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function isConnectedRecentCall(
+  call: DashboardMetrics["team"]["repCallDrilldowns"][number]["recentCalls"][number],
+  resolvedDuration?: number,
+) {
+  if (typeof call.countsAsContact === "boolean") {
+    return call.countsAsContact;
+  }
+
+  const duration = typeof resolvedDuration === "number" && Number.isFinite(resolvedDuration)
+    ? Math.max(resolvedDuration, 0)
+    : typeof call.durationSeconds === "number" && Number.isFinite(call.durationSeconds)
+      ? Math.max(call.durationSeconds, 0)
+      : 0;
+
+  if (duration > 0) return true;
+  if (call.hasAnalysis) return true;
+  if (call.hasRecording) return true;
+  return call.sentimentLabel !== "No sentiment yet";
 }
 
 function getStatusMeta(status: "on_track" | "at_risk" | "off_track") {
@@ -511,11 +532,10 @@ function RepCallDrawer({
   const displayedTalkMinutesToday = Math.round(talkSecondsToday / 60);
   const displayedConnectedToday = drilldown.recentCalls.reduce((total, call) => {
     if (getNewYorkDayKey(call.callAt) !== todayKey) return total;
-    const duration = resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0;
-    return total + (duration >= 45 ? 1 : 0);
+    return total + (isConnectedRecentCall(call, resolvedDurations[call.contactId]) ? 1 : 0);
   }, 0);
   const filteredCalls = callFilter === "connected"
-    ? drilldown.recentCalls.filter((call) => (resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0) >= 45)
+    ? drilldown.recentCalls.filter((call) => isConnectedRecentCall(call, resolvedDurations[call.contactId]))
     : callFilter === "booked_demos"
       ? drilldown.recentCalls.filter((call) => call.hasBookedDemo)
       : drilldown.recentCalls;

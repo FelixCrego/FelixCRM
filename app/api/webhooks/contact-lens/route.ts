@@ -70,6 +70,22 @@ function mergeTranscriptJson(existing: unknown, incoming: unknown) {
   return merged;
 }
 
+function mergeRawPayload(existing: unknown, incoming: unknown) {
+  const existingPayload =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {};
+  const incomingPayload =
+    incoming && typeof incoming === "object" && !Array.isArray(incoming)
+      ? (incoming as Record<string, unknown>)
+      : {};
+
+  return {
+    ...existingPayload,
+    ...incomingPayload,
+  };
+}
+
 function transcriptJsonToText(value: unknown) {
   if (!Array.isArray(value) || !value.length) return null;
   return value
@@ -155,7 +171,7 @@ export async function POST(request: Request) {
       event_source: coalesceValue(resolvedPayload.eventSource, existing?.event_source),
       customer_phone: coalesceValue(resolvedPayload.customerPhone, existing?.customer_phone),
       source_event_time: coalesceValue(resolvedPayload.sourceEventTime, existing?.source_event_time),
-      raw_payload: resolvedPayload.rawPayload,
+      raw_payload: mergeRawPayload(existing?.raw_payload, resolvedPayload.rawPayload),
     });
 
     try {
