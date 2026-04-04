@@ -5,7 +5,6 @@ import { canUserAssignLeads, getShiftQueueSettings, listLeadAssignmentUsers, lis
 type ShiftQueuePageProps = {
   searchParams?: {
     rep?: string;
-    industry?: string;
   };
 };
 
@@ -27,8 +26,6 @@ export default async function ShiftQueuePage({ searchParams }: ShiftQueuePagePro
 
     const userLeads = await listLeads(selectedQueueOwnerId, { includeAll: false });
     const queueSettings = await getShiftQueueSettings(selectedQueueOwnerId).catch(() => null);
-    const requestedIndustry = typeof searchParams?.industry === "string" ? searchParams.industry.trim() : "";
-    const initialIndustry = requestedIndustry || queueSettings?.industry || null;
 
     return (
       <ShiftQueueView
@@ -39,7 +36,6 @@ export default async function ShiftQueuePage({ searchParams }: ShiftQueuePagePro
         queueSettings={queueSettings}
         canManageQueues={canManageQueues}
         selectableQueueOwners={selectableQueueOwners}
-        initialIndustry={initialIndustry}
       />
     );
   } catch (error) {

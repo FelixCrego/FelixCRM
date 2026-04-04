@@ -1,9 +1,8 @@
 import { dedupeKey } from "@/lib/utils";
 import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
-import { inferLeadSourceType, normalizeLeadSourceType, type LeadSourceType } from "@/lib/lead-source";
-import { normalizeUserRole } from "@/lib/role-utils";
 import { normalizeShiftQueueSettings, type ShiftQueueSettings } from "@/lib/shift-queue";
+import { getImportedFieldValue, normalizeImportedFieldKey, type LeadCsvImportedFields } from "@/lib/lead-csv";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -54,6 +53,58 @@ function parseJsonSafely<T>(value: string): T | null {
   }
 }
 
+function normalizeImportedFields(value: unknown): LeadCsvImportedFields {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<LeadCsvImportedFields>((accumulator, [key, rawValue]) => {
+    const label = key.trim();
+    const value = typeof rawValue === "string" ? rawValue.trim() : rawValue === null || rawValue === undefined ? "" : String(rawValue).trim();
+    if (!label || !value) return accumulator;
+    accumulator[label] = value;
+    return accumulator;
+  }, {});
+}
+
+function getImportedFieldsFromPayload(sourcePayload: Record<string, unknown>) {
+  return normalizeImportedFields(sourcePayload.importedFields ?? sourcePayload.imported_fields);
+}
+
+function getSourcePayloadString(sourcePayload: Record<string, unknown>, aliases: string[]) {
+  for (const alias of aliases) {
+    const value = sourcePayload[alias];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return getImportedFieldValue(getImportedFieldsFromPayload(sourcePayload), aliases);
+}
+
+function mergeImportedFields(existingPayload: Record<string, unknown>, incomingFields: LeadCsvImportedFields | null | undefined) {
+  const existingFields = getImportedFieldsFromPayload(existingPayload);
+  const nextFields = normalizeImportedFields(incomingFields);
+  if (!Object.keys(nextFields).length) return existingFields;
+
+  const merged = { ...existingFields };
+  const existingByNormalizedKey = new Map(
+    Object.entries(existingFields).map(([label, value]) => [normalizeImportedFieldKey(label), { label, value }]),
+  );
+
+  for (const [label, value] of Object.entries(nextFields)) {
+    const normalizedLabel = normalizeImportedFieldKey(label);
+    const existingEntry = existingByNormalizedKey.get(normalizedLabel);
+    if (!existingEntry || !existingEntry.value.trim()) {
+      if (existingEntry && existingEntry.label !== label) {
+        delete merged[existingEntry.label];
+      }
+      merged[label] = value;
+      existingByNormalizedKey.set(normalizedLabel, { label, value });
+    }
+  }
+
+  return merged;
+}
+
 function normalizeEmailAddress(value: string | null | undefined) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
@@ -64,13 +115,6 @@ function titleCaseWords(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
-}
-
-function normalizeIsoTimestamp(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
 }
 
 export function prettyNameFromEmail(email: string) {
@@ -235,11 +279,13 @@ export async function listLeadAssignmentUsers(): Promise<LeadAssignmentUser[]> {
             : email
               ? prettyNameFromEmail(email)
               : user.id;
+      const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
       const role =
-        normalizeUserRole(metadata.role) ??
-        (email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
-          ? "SUPER_ADMIN"
-          : "REP");
+        metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP"
+          ? (metadataRole as UserRole)
+          : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
+            ? "SUPER_ADMIN"
+            : "REP";
 
       return {
         id: user.id,
@@ -352,11 +398,13 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
             : email
               ? prettyNameFromEmail(email)
               : user.id;
+      const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
       const role =
-        normalizeUserRole(metadata.role) ??
-        (email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
-          ? "SUPER_ADMIN"
-          : "REP");
+        metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP"
+          ? (metadataRole as UserRole)
+          : email && GLOBAL_LEAD_VIEWER_EMAILS.has(email)
+            ? "SUPER_ADMIN"
+            : "REP";
       const bannedUntil = typeof user.banned_until === "string" ? user.banned_until : null;
       const emailConfirmedAt =
         typeof user.email_confirmed_at === "string"
@@ -576,14 +624,14 @@ export async function resendManagedUserInvite(userId: string) {
         : email
           ? prettyNameFromEmail(email)
           : "";
-  const role = normalizeUserRole(metadata.role) ?? "REP";
+  const role = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "REP";
 
   if (!email) throw new Error("User email not found.");
 
   await inviteManagedUser({
     email,
     name: name || email,
-    role,
+    role: role === "SUPER_ADMIN" || role === "MANAGER" || role === "TEAM_LEAD" ? (role as UserRole) : "REP",
     commissionRate: parseCommissionRateValue(metadata.commissionRate),
   });
 }
@@ -724,15 +772,16 @@ export async function getEffectiveUserRole(userId: string, email?: string | null
   }
 
   const profile = await getProfile(userId).catch(() => null);
-  const profileRole = normalizeUserRole(profile?.role);
-  if (profileRole && profileRole !== "REP") return profileRole;
+  if (profile?.role && profile.role !== "REP") return profile.role;
 
   const authUser = await getAuthAdminUserById(userId).catch(() => null);
   const metadata = authUser?.user_metadata && typeof authUser.user_metadata === "object" ? authUser.user_metadata : {};
-  const metadataRole = normalizeUserRole(metadata.role);
-  if (metadataRole) return metadataRole;
+  const metadataRole = typeof metadata.role === "string" ? metadata.role.trim().toUpperCase() : "";
+  if (metadataRole === "SUPER_ADMIN" || metadataRole === "MANAGER" || metadataRole === "TEAM_LEAD" || metadataRole === "REP") {
+    return metadataRole as UserRole;
+  }
 
-  return profileRole ?? "REP";
+  return profile?.role ?? "REP";
 }
 
 function buildUrl(table: string, query?: Record<string, string>) {
@@ -959,9 +1008,10 @@ function leadToMemory(lead: any): Lead {
   const sourcePayload =
     rawSourcePayload && typeof rawSourcePayload === "object"
       ? (rawSourcePayload as Record<string, unknown>)
-      : typeof rawSourcePayload === "string"
-        ? (parseJsonSafely<Record<string, unknown>>(rawSourcePayload) ?? {})
-        : {};
+        : typeof rawSourcePayload === "string"
+          ? (parseJsonSafely<Record<string, unknown>>(rawSourcePayload) ?? {})
+          : {};
+  const importedFields = getImportedFieldsFromPayload(sourcePayload);
   const contactsFromPayload = Array.isArray(sourcePayload.contacts)
     ? sourcePayload.contacts
         .filter((contact: unknown) => contact && typeof contact === "object")
@@ -1033,32 +1083,12 @@ function leadToMemory(lead: any): Lead {
       : accountManagementRaw && Array.isArray(accountManagementRaw.seo_tasks)
         ? accountManagementRaw.seo_tasks
         : [];
-  const sourceQuery =
-    typeof sourcePayload.sourceQuery === "string"
-      ? sourcePayload.sourceQuery
-      : typeof sourcePayload.source_query === "string"
-        ? sourcePayload.source_query
-        : null;
-  const sourceType =
-    normalizeLeadSourceType(sourcePayload.sourceType) ??
-    normalizeLeadSourceType(sourcePayload.source_type) ??
-    inferLeadSourceType({
-      sourceQuery,
-      businessType: lead.businessType ?? lead.business_type,
-      city: lead.city,
-    });
-  const createdAt =
-    normalizeIsoTimestamp(lead.createdAt) ??
-    normalizeIsoTimestamp(lead.created_at) ??
-    normalizeIsoTimestamp(lead.updatedAt) ??
-    normalizeIsoTimestamp(lead.updated_at);
 
   return {
     id: lead.id,
     businessName: lead.businessName ?? lead.business_name,
     city: lead.city,
     businessType: lead.businessType ?? lead.business_type,
-    createdAt,
     phone: lead.phone,
     email: lead.email,
     websiteUrl: lead.websiteUrl ?? lead.website_url,
@@ -1121,15 +1151,13 @@ function leadToMemory(lead: any): Lead {
       : Array.isArray(sourcePayload.social_links)
         ? sourcePayload.social_links
         : [],
-    aiResearchSummary:
-      typeof sourcePayload.aiResearchSummary === "string"
-        ? sourcePayload.aiResearchSummary
-        : typeof sourcePayload.ai_research_summary === "string"
-          ? sourcePayload.ai_research_summary
-          : null,
+    aiResearchSummary: getSourcePayloadString(sourcePayload, ["aiResearchSummary", "ai_research_summary"]),
+    leadQuality: getSourcePayloadString(sourcePayload, ["leadQuality", "lead_quality", "LeadQuality"]),
+    googleRating: getSourcePayloadString(sourcePayload, ["googleRating", "google_rating", "GoogleRating"]),
+    googleReviews: getSourcePayloadString(sourcePayload, ["googleReviews", "google_reviews", "GoogleReviews"]),
+    importedFields: Object.keys(importedFields).length ? importedFields : null,
     enrichment: normalizeLeadEnrichmentPayload(sourcePayload.enrichment, lead.businessName ?? lead.business_name, lead.phone),
-    sourceQuery,
-    sourceType,
+    sourceQuery: getSourcePayloadString(sourcePayload, ["sourceQuery", "source_query"]),
     contacts: contactsFromPayload,
     demoBooking:
       sourcePayload.demoBooking && typeof sourcePayload.demoBooking === "object"
@@ -1284,7 +1312,7 @@ export async function getProfile(userId: string) {
     toneOfVoice: (user.toneOfVoice ?? "CONSULTATIVE") as ToneOfVoice,
     calendarLink: user.calendarLink ?? "",
     onboardingCompleted: user.onboardingCompleted,
-    role: normalizeUserRole(user.role) ?? "REP",
+    role: (user.role ?? "REP") as UserRole,
   };
 }
 
@@ -1394,23 +1422,18 @@ type CreateLeadInput = {
   websiteUrl?: string | null;
   aiResearchSummary?: string | null;
   sourceQuery?: string | null;
-  sourceType?: LeadSourceType | null;
+  leadQuality?: string | null;
+  googleRating?: string | null;
+  googleReviews?: string | null;
+  importedFields?: LeadCsvImportedFields | null;
 };
 
-export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, options?: { mergeOnDuplicate?: boolean }) {
+export async function createOrMergeLead(ownerId: string | null, lead: CreateLeadInput, options?: { mergeOnDuplicate?: boolean }) {
   if (!hasDb) throw new Error("Supabase environment variables are required to insert leads.");
 
   const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
   const computedDedupeKey = dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain);
-  const resolvedSourceQuery = lead.sourceQuery ?? "manual_entry";
-  const resolvedSourceType =
-    normalizeLeadSourceType(lead.sourceType) ??
-    inferLeadSourceType({
-      sourceQuery: resolvedSourceQuery,
-      businessType: "Manual",
-      city: "Unknown",
-    }) ??
-    "ADDED";
+  const importedFields = normalizeImportedFields(lead.importedFields);
 
   try {
     const payload = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
@@ -1433,9 +1456,18 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             source_payload: {
               socialLinks: [],
               aiResearchSummary: lead.aiResearchSummary ?? null,
+              ai_research_summary: lead.aiResearchSummary ?? null,
+              leadQuality: lead.leadQuality ?? null,
+              lead_quality: lead.leadQuality ?? null,
+              googleRating: lead.googleRating ?? null,
+              google_rating: lead.googleRating ?? null,
+              googleReviews: lead.googleReviews ?? null,
+              google_reviews: lead.googleReviews ?? null,
+              importedFields,
+              imported_fields: importedFields,
               enrichment: null,
-              sourceQuery: resolvedSourceQuery,
-              sourceType: resolvedSourceType,
+              sourceQuery: lead.sourceQuery ?? "manual_entry",
+              source_query: lead.sourceQuery ?? "manual_entry",
             },
           }
         : {
@@ -1454,9 +1486,18 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             sourcePayload: {
               socialLinks: [],
               aiResearchSummary: lead.aiResearchSummary ?? null,
+              ai_research_summary: lead.aiResearchSummary ?? null,
+              leadQuality: lead.leadQuality ?? null,
+              lead_quality: lead.leadQuality ?? null,
+              googleRating: lead.googleRating ?? null,
+              google_rating: lead.googleRating ?? null,
+              googleReviews: lead.googleReviews ?? null,
+              google_reviews: lead.googleReviews ?? null,
+              importedFields,
+              imported_fields: importedFields,
               enrichment: null,
-              sourceQuery: resolvedSourceQuery,
-              sourceType: resolvedSourceType,
+              sourceQuery: lead.sourceQuery ?? "manual_entry",
+              source_query: lead.sourceQuery ?? "manual_entry",
             },
           }),
     }));
@@ -1482,15 +1523,12 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
       if (!existing) throw error;
 
       const existingPayload = existing[payloadColumn] && typeof existing[payloadColumn] === "object" ? existing[payloadColumn] as Record<string, unknown> : {};
-      const existingSourceQuery =
-        typeof existingPayload.sourceQuery === "string" && existingPayload.sourceQuery.trim()
-          ? existingPayload.sourceQuery
-          : typeof existingPayload.source_query === "string" && existingPayload.source_query.trim()
-            ? existingPayload.source_query
-            : null;
-      const existingSourceType =
-        normalizeLeadSourceType(existingPayload.sourceType) ??
-        normalizeLeadSourceType(existingPayload.source_type);
+      const mergedImportedFields = mergeImportedFields(existingPayload, importedFields);
+      const existingAiResearchSummary = getSourcePayloadString(existingPayload, ["aiResearchSummary", "ai_research_summary"]);
+      const existingSourceQuery = getSourcePayloadString(existingPayload, ["sourceQuery", "source_query"]);
+      const existingLeadQuality = getSourcePayloadString(existingPayload, ["leadQuality", "lead_quality", "LeadQuality"]);
+      const existingGoogleRating = getSourcePayloadString(existingPayload, ["googleRating", "google_rating", "GoogleRating"]);
+      const existingGoogleReviews = getSourcePayloadString(existingPayload, ["googleReviews", "google_reviews", "GoogleReviews"]);
       const patchPayload = isSnakeLeadsTable(table)
         ? {
             ...(existing.owner_id ? {} : { owner_id: ownerId }),
@@ -1498,11 +1536,18 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             website_url: existing.website_url ?? lead.websiteUrl ?? null,
             source_payload: {
               ...existingPayload,
-              aiResearchSummary: typeof existingPayload.aiResearchSummary === "string" && existingPayload.aiResearchSummary.trim()
-                ? existingPayload.aiResearchSummary
-                : lead.aiResearchSummary ?? null,
-              sourceQuery: existingSourceQuery ?? resolvedSourceQuery,
-              sourceType: existingSourceType ?? resolvedSourceType,
+              aiResearchSummary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
+              ai_research_summary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
+              sourceQuery: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
+              source_query: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
+              leadQuality: existingLeadQuality ?? lead.leadQuality ?? null,
+              lead_quality: existingLeadQuality ?? lead.leadQuality ?? null,
+              googleRating: existingGoogleRating ?? lead.googleRating ?? null,
+              google_rating: existingGoogleRating ?? lead.googleRating ?? null,
+              googleReviews: existingGoogleReviews ?? lead.googleReviews ?? null,
+              google_reviews: existingGoogleReviews ?? lead.googleReviews ?? null,
+              importedFields: mergedImportedFields,
+              imported_fields: mergedImportedFields,
             },
           }
         : {
@@ -1511,11 +1556,18 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             websiteUrl: existing.websiteUrl ?? lead.websiteUrl ?? null,
             sourcePayload: {
               ...existingPayload,
-              aiResearchSummary: typeof existingPayload.aiResearchSummary === "string" && existingPayload.aiResearchSummary.trim()
-                ? existingPayload.aiResearchSummary
-                : lead.aiResearchSummary ?? null,
-              sourceQuery: existingSourceQuery ?? resolvedSourceQuery,
-              sourceType: existingSourceType ?? resolvedSourceType,
+              aiResearchSummary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
+              ai_research_summary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
+              sourceQuery: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
+              source_query: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
+              leadQuality: existingLeadQuality ?? lead.leadQuality ?? null,
+              lead_quality: existingLeadQuality ?? lead.leadQuality ?? null,
+              googleRating: existingGoogleRating ?? lead.googleRating ?? null,
+              google_rating: existingGoogleRating ?? lead.googleRating ?? null,
+              googleReviews: existingGoogleReviews ?? lead.googleReviews ?? null,
+              google_reviews: existingGoogleReviews ?? lead.googleReviews ?? null,
+              importedFields: mergedImportedFields,
+              imported_fields: mergedImportedFields,
             },
           };
 
@@ -1535,7 +1587,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
   }
 }
 
-export async function createLead(ownerId: string, lead: CreateLeadInput) {
+export async function createLead(ownerId: string | null, lead: CreateLeadInput) {
   const result = await createOrMergeLead(ownerId, lead, { mergeOnDuplicate: false });
   return result.lead;
 }
@@ -1575,7 +1627,6 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
                 aiResearchSummary: lead.aiResearchSummary ?? null,
                 enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
-                sourceType: "SCRAPED",
               },
             }
           : {
@@ -1598,7 +1649,6 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
                 aiResearchSummary: lead.aiResearchSummary ?? null,
                 enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
-                sourceType: "SCRAPED",
               },
             }),
       }));
@@ -2243,6 +2293,45 @@ export async function claimLeads(leadIds: string[], ownerId: string) {
   return { claimed, alreadyOwnedByYou, claimedByOthers, missing };
 }
 
+export async function assignLeadOwners(leadIds: string[], ownerId: string | null) {
+  if (!leadIds.length) return { assigned: 0, missing: 0 };
+  if (!hasDb) throw new Error("Supabase environment variables are required to assign leads.");
+
+  const idFilter = `in.(${leadIds.join(",")})`;
+  const existing = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, undefined, {
+    select: "id",
+    id: idFilter,
+  }));
+
+  if (!existing.length) {
+    return { assigned: 0, missing: leadIds.length };
+  }
+
+  const existingIds = existing
+    .map((lead) => (typeof lead.id === "string" ? lead.id : ""))
+    .filter(Boolean);
+
+  const assignableIdFilter = `in.(${existingIds.join(",")})`;
+  const updatedAt = new Date().toISOString();
+  const rows = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(
+      isSnakeLeadsTable(table)
+        ? { owner_id: ownerId, updated_at: updatedAt }
+        : { ownerId, updatedAt },
+    ),
+  }, {
+    id: assignableIdFilter,
+    select: "id",
+  }));
+
+  return {
+    assigned: rows.length,
+    missing: leadIds.length - existing.length,
+  };
+}
+
 export async function deleteLeads(leadIds: string[], userId: string) {
   if (!leadIds.length) return { deleted: 0, forbidden: 0, missing: 0 };
   if (!hasDb) throw new Error("Supabase environment variables are required to delete leads.");
@@ -2340,8 +2429,17 @@ export async function requestLeadOwnershipTransfer(leadId: string, requesterId: 
 }
 
 export async function getLeadById(leadId: string, ownerId: string, options?: { includeAll?: boolean }) {
-  const leads = await listLeads(ownerId, options);
-  return leads.find((lead) => lead.id === leadId);
+  if (!hasDb) throw new Error("Supabase environment variables are required to load leads.");
+  const leads = await withLeadTableFallback((table) =>
+    supabaseRequest<any[]>(table, undefined, {
+      select: "*",
+      id: `eq.${leadId}`,
+      ...(options?.includeAll ? {} : { [isSnakeLeadsTable(table) ? "owner_id" : "ownerId"]: `eq.${ownerId}` }),
+      limit: "1",
+    }),
+  );
+  const lead = leads[0];
+  return lead ? leadToMemory(lead) : undefined;
 }
 
 function normalizeLeadNote(row: any): LeadNote {

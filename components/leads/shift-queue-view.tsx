@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Bot,
@@ -12,25 +12,27 @@ import {
   ChevronRight,
   Clock3,
   Flame,
+  Globe,
+  Loader2,
   Phone,
   PhoneOff,
   Sparkles,
   Target,
   Trophy,
+  Upload,
   Users,
   X,
   Zap,
 } from "lucide-react";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
 import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
-import { RECENT_LEAD_WINDOW_DAYS, getLeadSourceType, isRecentLead } from "@/lib/lead-source";
+import { parseLeadsFromCsv, type ParsedCsvLead } from "@/lib/lead-csv";
 import type { Lead } from "@/lib/types";
 import type { LeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import {
   buildShiftQueueEntries,
   buildShiftQueuePlanProgress,
   getShiftQueueLaneLabel,
-  getShiftQueueIndustryOptions,
   prioritizeShiftQueueEntries,
   SHIFT_QUEUE_LANES,
   type ShiftQueueEntry,
@@ -48,11 +50,9 @@ type ShiftQueueViewProps = {
   queueSettings?: ShiftQueueSettings | null;
   canManageQueues?: boolean;
   selectableQueueOwners?: QueueOwnerOption[];
-  initialIndustry?: string | null;
 };
 
 type QueueFilter = "ALL" | ShiftQueueLane;
-type LeadIntakeFilter = "ALL" | "RECENT_SCRAPED" | "RECENT_ADDED";
 type ScriptTab = "Scripts" | "Objections" | "Signals";
 type QueueOwnerOption = {
   id: string;
@@ -72,7 +72,30 @@ type PendingCallLink = {
   source: "shift-queue";
 };
 
+type PersistedImportedLeadBatch = {
+  importedAt?: string;
+  leadIds?: string[];
+};
+
+type MomentumTierState = {
+  label: string;
+  copy: string;
+  floor: number;
+  nextTarget: number | null;
+  rewardTitle: string;
+  rewardCopy: string;
+  badgeClass: string;
+  progressClass: string;
+};
+
+type OptimisticWorkedLead = {
+  leadId: string;
+  workedAt: string;
+  entry: ShiftQueueEntry;
+};
+
 const LEAD_WORKSPACE_SEED_KEY = "felix.leadWorkspaceSeed";
+const IMPORTED_SHIFT_QUEUE_BATCH_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 const queueFilterOptions: Array<{ value: QueueFilter; label: string }> = [
   { value: "ALL", label: "All Ready" },
@@ -80,12 +103,6 @@ const queueFilterOptions: Array<{ value: QueueFilter; label: string }> = [
   { value: "FOLLOW_UP", label: "Follow Ups" },
   { value: "FRESH", label: "Fresh Starts" },
   { value: "DEMO", label: "Demo Prep" },
-];
-
-const leadIntakeFilterOptions: Array<{ value: LeadIntakeFilter; label: string }> = [
-  { value: "ALL", label: "All lead sources" },
-  { value: "RECENT_SCRAPED", label: "Recently scraped" },
-  { value: "RECENT_ADDED", label: "Recently added" },
 ];
 
 const statusLabelMap: Record<LeadWorkspaceStatus, string> = {
@@ -189,6 +206,44 @@ function formatTimer(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatCsvImportSummary(payload: { createdCount?: number; mergedCount?: number; skippedCount?: number }) {
+  const createdCount = Number(payload.createdCount ?? 0);
+  const mergedCount = Number(payload.mergedCount ?? 0);
+  const skippedCount = Number(payload.skippedCount ?? 0);
+
+  return `Imported ${createdCount} lead${createdCount === 1 ? "" : "s"}.${mergedCount > 0 ? ` Merged ${mergedCount} duplicate${mergedCount === 1 ? "" : "s"}.` : ""}${skippedCount > 0 ? ` Skipped ${skippedCount} invalid row${skippedCount === 1 ? "" : "s"}.` : ""}`;
+}
+
+function formatLeadWebsiteLabel(websiteUrl?: string | null) {
+  if (typeof websiteUrl !== "string") return "";
+  return websiteUrl.trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, "");
+}
+
+function formatLeadWebsiteHref(websiteUrl?: string | null) {
+  if (typeof websiteUrl !== "string" || !websiteUrl.trim()) return "";
+  const trimmed = websiteUrl.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function formatLeadMetricValue(value?: string | null, fallback = "Not imported") {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  return value.trim();
+}
+
+function hasLeadResearchSummary(lead: Lead) {
+  return typeof lead.aiResearchSummary === "string" && lead.aiResearchSummary.trim().length > 0;
+}
+
+function normalizeImportedQueueEntry(entry: ShiftQueueEntry): ShiftQueueEntry {
+  if (!entry.touchedToday) return entry;
+
+  return {
+    ...entry,
+    touchedToday: false,
+    reason: "Recently imported into shift queue",
+  };
+}
+
 function buildQueueSmartScript(entry: ShiftQueueEntry): AIDynamicPlaybook {
   const laneSignal =
     entry.lane === "MONEY"
@@ -231,35 +286,55 @@ function getLanePoints(lane: ShiftQueueLane) {
   return 16;
 }
 
-function getMomentumTier(completedCount: number) {
+function getMomentumTier(completedCount: number): MomentumTierState {
   if (completedCount >= 18) {
     return {
       label: "On Fire",
-      copy: "Heavy touch volume. Keep the queue moving while the energy is high.",
+      copy: "Heavy touch volume. Ride the heat and keep closing out the highest-value calls while the board is moving fast.",
+      floor: 18,
       nextTarget: null,
+      rewardTitle: "Victory Lap",
+      rewardCopy: "The board is hot. Press the money calls and warm follow-ups before the pace cools off.",
+      badgeClass: "border-emerald-300/35 bg-emerald-300/15 text-emerald-50",
+      progressClass: "from-emerald-300 via-lime-300 to-amber-200",
     };
   }
 
   if (completedCount >= 10) {
     return {
       label: "Locked In",
-      copy: "Good pace. A few more quality touches turns this into a strong shift.",
+      copy: "The shift has real momentum now. Stack a few more quality clears and turn this into a top-tier board.",
+      floor: 10,
       nextTarget: 18,
+      rewardTitle: "On Fire",
+      rewardCopy: "Eight more worked leads puts you into the top pacing tier and turns the shift into a closer's board.",
+      badgeClass: "border-sky-300/35 bg-sky-300/15 text-sky-50",
+      progressClass: "from-sky-300 via-cyan-300 to-emerald-300",
     };
   }
 
   if (completedCount >= 5) {
     return {
       label: "Warmed Up",
-      copy: "The board is moving. Stay on the high-intent leads before momentum cools off.",
+      copy: "The board is moving. This is where reps either stall out or catch rhythm. Push through and lock in the next tier.",
+      floor: 5,
       nextTarget: 10,
+      rewardTitle: "Locked In",
+      rewardCopy: "Five more worked leads turns this from a warm start into a serious shift.",
+      badgeClass: "border-amber-300/35 bg-amber-300/15 text-amber-50",
+      progressClass: "from-amber-300 via-orange-300 to-sky-300",
     };
   }
 
   return {
     label: "Start Strong",
-    copy: "Clear the first few calls fast to get the shift rolling.",
+    copy: "The first few clears decide the tone of the shift. Build early traction and the board starts working for you.",
+    floor: 0,
     nextTarget: 5,
+    rewardTitle: "Warmed Up",
+    rewardCopy: "Get the first five worked leads on the board to spark momentum and open the next tier.",
+    badgeClass: "border-fuchsia-300/35 bg-fuchsia-300/15 text-fuchsia-50",
+    progressClass: "from-fuchsia-300 via-amber-300 to-orange-300",
   };
 }
 
@@ -272,7 +347,6 @@ export function ShiftQueueView({
   queueSettings = null,
   canManageQueues = false,
   selectableQueueOwners = [],
-  initialIndustry = null,
 }: ShiftQueueViewProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -287,11 +361,10 @@ export function ShiftQueueView({
     completeAfterCallWork,
     endActiveCall,
     retrySecondsRemaining,
+    retryStatusMessage,
     startOutboundCall,
   } = useAmazonConnect();
   const [selectedFilter, setSelectedFilter] = useState<QueueFilter>("ALL");
-  const [selectedLeadIntake, setSelectedLeadIntake] = useState<LeadIntakeFilter>("ALL");
-  const [selectedIndustry, setSelectedIndustry] = useState("ALL");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [dialingLeadId, setDialingLeadId] = useState<string | null>(null);
   const [activeQueueLeadId, setActiveQueueLeadId] = useState<string | null>(null);
@@ -305,12 +378,18 @@ export function ShiftQueueView({
   const [dispositionLeadId, setDispositionLeadId] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [scriptModalOpen, setScriptModalOpen] = useState(false);
+  const [researchModalOpen, setResearchModalOpen] = useState(false);
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [csvImportError, setCsvImportError] = useState<string | null>(null);
+  const [csvImportSuccess, setCsvImportSuccess] = useState<string | null>(null);
+  const [optimisticWorkedLeads, setOptimisticWorkedLeads] = useState<OptimisticWorkedLead[]>([]);
 
   const pendingCallLinkRef = useRef<PendingCallLink | null>(null);
   const linkedContactIdRef = useRef<string | null>(null);
   const promptedDispositionContactIdRef = useRef<string | null>(null);
   const previousCallStatusRef = useRef<"idle" | "connecting" | "connected" | "acw">("idle");
+  const csvFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const viewingManagedQueue = Boolean(queueOwnerId && currentUserId && queueOwnerId !== currentUserId);
   const canDialQueue = !viewingManagedQueue;
@@ -318,49 +397,77 @@ export function ShiftQueueView({
   const leadWorkspaceHref = viewingManagedQueue ? "/leads" : "/my-leads";
   const leadWorkspaceLabel = viewingManagedQueue ? "Lead Directory" : "My Leads";
   const storageKey = useMemo(() => `felix.shiftQueue.${queueOwnerId ?? currentUserId ?? "default"}`, [currentUserId, queueOwnerId]);
-  const industryOptions = useMemo(() => getShiftQueueIndustryOptions(leads ?? []), [leads]);
-  const resolvedInitialIndustry = useMemo(() => {
-    if (typeof initialIndustry !== "string") return "ALL";
-    const normalized = initialIndustry.trim();
-    if (!normalized) return "ALL";
-    return industryOptions.includes(normalized) ? normalized : "ALL";
-  }, [industryOptions, initialIndustry]);
-  const leadIntakeFilteredLeads = useMemo(() => {
-    return (leads ?? []).filter((lead) => {
-      if (selectedLeadIntake === "ALL") return true;
-      if (!isRecentLead(lead, RECENT_LEAD_WINDOW_DAYS)) return false;
+  const importedBatchStorageKey = useMemo(() => `felix.shiftQueue.imported.${queueOwnerId ?? currentUserId ?? "default"}`, [currentUserId, queueOwnerId]);
+  const [recentImportedLeadIds, setRecentImportedLeadIds] = useState<string[]>([]);
 
-      const leadSourceType = getLeadSourceType(lead);
-      if (selectedLeadIntake === "RECENT_SCRAPED") return leadSourceType === "SCRAPED";
-      return leadSourceType === "ADDED";
-    });
-  }, [leads, selectedLeadIntake]);
-  const industryFilteredLeads = useMemo(() => {
-    if (selectedIndustry === "ALL") return leadIntakeFilteredLeads;
-    return leadIntakeFilteredLeads.filter((lead) => lead.businessType?.trim() === selectedIndustry);
-  }, [leadIntakeFilteredLeads, selectedIndustry]);
+  const baseQueueEntries = useMemo(() => buildShiftQueueEntries(leads ?? []), [leads]);
+  const allTrackableEntries = useMemo(() => buildShiftQueueEntries(leads ?? [], { includeTouchedToday: true }), [leads]);
+  const allTrackableLeadIdSet = useMemo(() => new Set(allTrackableEntries.map((entry) => entry.lead.id)), [allTrackableEntries]);
+  const recentImportedLeadIdSet = useMemo(() => new Set(recentImportedLeadIds), [recentImportedLeadIds]);
+  const recentImportedEntries = useMemo(() => {
+    if (!recentImportedLeadIds.length) return [];
 
-  const baseQueueEntries = useMemo(() => buildShiftQueueEntries(industryFilteredLeads), [industryFilteredLeads]);
-  const allTrackableEntries = useMemo(
-    () => buildShiftQueueEntries(industryFilteredLeads, { includeTouchedToday: true }),
-    [industryFilteredLeads],
-  );
+    const entryById = new Map(allTrackableEntries.map((entry) => [entry.lead.id, entry]));
+    return recentImportedLeadIds
+      .map((leadId) => entryById.get(leadId))
+      .filter((entry): entry is ShiftQueueEntry => Boolean(entry))
+      .map((entry) => normalizeImportedQueueEntry(entry));
+  }, [allTrackableEntries, recentImportedLeadIds]);
+  const queueEntriesForPlanning = useMemo(() => {
+    if (!recentImportedEntries.length) return baseQueueEntries;
 
-  const completedTodayEntries = useMemo(
+    const baseQueueEntryIds = new Set(baseQueueEntries.map((entry) => entry.lead.id));
+    const injectedImportedEntries = recentImportedEntries.filter((entry) => !baseQueueEntryIds.has(entry.lead.id));
+    return [...injectedImportedEntries, ...baseQueueEntries];
+  }, [baseQueueEntries, recentImportedEntries]);
+  const serverCompletedTodayEntries = useMemo(
     () =>
       allTrackableEntries
-        .filter((entry) => entry.touchedToday)
+        .filter((entry) => entry.touchedToday && !recentImportedLeadIdSet.has(entry.lead.id))
         .sort((left, right) => new Date(right.lead.updatedAt ?? "").getTime() - new Date(left.lead.updatedAt ?? "").getTime()),
-    [allTrackableEntries],
+    [allTrackableEntries, recentImportedLeadIdSet],
   );
+  const completedTodayEntries = useMemo(() => {
+    const mergedEntries = new Map<string, ShiftQueueEntry>();
+
+    for (const workedLead of optimisticWorkedLeads) {
+      mergedEntries.set(workedLead.leadId, {
+        ...workedLead.entry,
+        touchedToday: true,
+        lead: {
+          ...workedLead.entry.lead,
+          updatedAt: workedLead.workedAt,
+        },
+      });
+    }
+
+    for (const entry of serverCompletedTodayEntries) {
+      if (!mergedEntries.has(entry.lead.id)) {
+        mergedEntries.set(entry.lead.id, entry);
+      }
+    }
+
+    return [...mergedEntries.values()].sort(
+      (left, right) => new Date(right.lead.updatedAt ?? "").getTime() - new Date(left.lead.updatedAt ?? "").getTime(),
+    );
+  }, [optimisticWorkedLeads, serverCompletedTodayEntries]);
   const queuePlanProgress = useMemo<ShiftQueuePlanProgress | null>(
-    () => (queueSettings ? buildShiftQueuePlanProgress(queueSettings, completedTodayEntries, baseQueueEntries) : null),
-    [baseQueueEntries, completedTodayEntries, queueSettings],
+    () => (queueSettings ? buildShiftQueuePlanProgress(queueSettings, completedTodayEntries, queueEntriesForPlanning) : null),
+    [completedTodayEntries, queueEntriesForPlanning, queueSettings],
   );
-  const queueEntries = useMemo(
-    () => prioritizeShiftQueueEntries(baseQueueEntries, queuePlanProgress),
-    [baseQueueEntries, queuePlanProgress],
-  );
+  const queueEntries = useMemo(() => {
+    const prioritizedEntries = prioritizeShiftQueueEntries(queueEntriesForPlanning, queuePlanProgress);
+    if (!recentImportedEntries.length) return prioritizedEntries;
+
+    const prioritizedById = new Map(prioritizedEntries.map((entry) => [entry.lead.id, entry]));
+    const importedLeadIds = new Set(recentImportedEntries.map((entry) => entry.lead.id));
+    const importedOrderedEntries = recentImportedEntries
+      .map((entry) => prioritizedById.get(entry.lead.id) ?? entry)
+      .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.lead.id === entry.lead.id) === index);
+    const remainingEntries = prioritizedEntries.filter((entry) => !importedLeadIds.has(entry.lead.id));
+
+    return [...importedOrderedEntries, ...remainingEntries];
+  }, [queueEntriesForPlanning, queuePlanProgress, recentImportedEntries]);
 
   const visibleQueueEntries = useMemo(() => {
     if (selectedFilter === "ALL") return queueEntries;
@@ -368,52 +475,84 @@ export function ShiftQueueView({
   }, [queueEntries, selectedFilter]);
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      const parsed = raw
-        ? (JSON.parse(raw) as { filter?: QueueFilter; leadIntake?: LeadIntakeFilter | null; industry?: string | null; selectedLeadId?: string | null } | null)
-        : null;
-
-      if (parsed?.filter && queueFilterOptions.some((option) => option.value === parsed.filter)) {
-        setSelectedFilter(parsed.filter);
-      } else {
-        setSelectedFilter("ALL");
-      }
-      if (parsed?.leadIntake && leadIntakeFilterOptions.some((option) => option.value === parsed.leadIntake)) {
-        setSelectedLeadIntake(parsed.leadIntake);
-      } else {
-        setSelectedLeadIntake("ALL");
-      }
-      if (typeof parsed?.selectedLeadId === "string") {
-        setSelectedLeadId(parsed.selectedLeadId);
-      } else {
-        setSelectedLeadId(null);
-      }
-
-      const nextIndustry =
-        typeof parsed?.industry === "string" && industryOptions.includes(parsed.industry)
-          ? parsed.industry
-          : resolvedInitialIndustry;
-      setSelectedIndustry(nextIndustry);
-    } catch {
-      // Ignore malformed queue preferences.
-      setSelectedFilter("ALL");
-      setSelectedLeadIntake("ALL");
-      setSelectedLeadId(null);
-      setSelectedIndustry(resolvedInitialIndustry);
-    }
-  }, [industryOptions, resolvedInitialIndustry, storageKey]);
+    setOptimisticWorkedLeads([]);
+  }, [storageKey]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        storageKey,
-        JSON.stringify({ filter: selectedFilter, leadIntake: selectedLeadIntake, industry: selectedIndustry, selectedLeadId }),
-      );
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as { filter?: QueueFilter; selectedLeadId?: string | null } | null;
+      if (parsed?.filter && queueFilterOptions.some((option) => option.value === parsed.filter)) {
+        setSelectedFilter(parsed.filter);
+      }
+      if (typeof parsed?.selectedLeadId === "string") {
+        setSelectedLeadId(parsed.selectedLeadId);
+      }
+    } catch {
+      // Ignore malformed queue preferences.
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(importedBatchStorageKey);
+      if (!raw) {
+        setRecentImportedLeadIds([]);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as PersistedImportedLeadBatch | null;
+      const importedAtMs = new Date(parsed?.importedAt ?? "").getTime();
+      const normalizedLeadIds = Array.isArray(parsed?.leadIds) ? parsed.leadIds.map((value) => String(value)).filter(Boolean) : [];
+
+      if (!normalizedLeadIds.length || Number.isNaN(importedAtMs) || Date.now() - importedAtMs > IMPORTED_SHIFT_QUEUE_BATCH_WINDOW_MS) {
+        window.localStorage.removeItem(importedBatchStorageKey);
+        setRecentImportedLeadIds([]);
+        return;
+      }
+
+      setRecentImportedLeadIds(normalizedLeadIds);
+    } catch {
+      setRecentImportedLeadIds([]);
+    }
+  }, [importedBatchStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({ filter: selectedFilter, selectedLeadId }));
     } catch {
       // Ignore storage failures.
     }
-  }, [selectedFilter, selectedLeadIntake, selectedIndustry, selectedLeadId, storageKey]);
+  }, [selectedFilter, selectedLeadId, storageKey]);
+
+  useEffect(() => {
+    if (!recentImportedLeadIds.length) return;
+
+    const activeLeadIds = new Set(queueEntries.map((entry) => entry.lead.id));
+    const nextImportedLeadIds = recentImportedLeadIds.filter((leadId) => {
+      if (!allTrackableLeadIdSet.has(leadId)) {
+        return true;
+      }
+      return activeLeadIds.has(leadId);
+    });
+    if (nextImportedLeadIds.length === recentImportedLeadIds.length) return;
+
+    setRecentImportedLeadIds(nextImportedLeadIds);
+    try {
+      if (nextImportedLeadIds.length > 0) {
+        window.localStorage.setItem(importedBatchStorageKey, JSON.stringify({
+          importedAt: new Date().toISOString(),
+          leadIds: nextImportedLeadIds,
+        }));
+      } else {
+        window.localStorage.removeItem(importedBatchStorageKey);
+      }
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [allTrackableLeadIdSet, importedBatchStorageKey, queueEntries, recentImportedLeadIds]);
 
   useEffect(() => {
     if (visibleQueueEntries.length === 0) {
@@ -540,6 +679,8 @@ export function ShiftQueueView({
   );
   const scriptEntry = activeQueueEntry ?? focusedEntry;
   const smartPlaybook = useMemo(() => (scriptEntry ? buildQueueSmartScript(scriptEntry) : null), [scriptEntry]);
+  const researchEntry = displayEntry;
+  const researchSummary = researchEntry?.lead.aiResearchSummary?.trim() ?? "";
   const focusSurface = displayEntry ? getLaneSurface(displayEntry) : getLaneSurface("FRESH");
 
   const queueCountsByFilter = useMemo(
@@ -558,19 +699,32 @@ export function ShiftQueueView({
   const queueClearPercent = totalWorkload > 0 ? Math.round((completedTodayCount / totalWorkload) * 100) : 100;
   const momentumPoints = completedTodayEntries.reduce((sum, entry) => sum + getLanePoints(entry.lane), 0);
   const momentumTier = getMomentumTier(completedTodayCount);
-  const nextTargetDistance = momentumTier.nextTarget ? Math.max(momentumTier.nextTarget - completedTodayCount, 0) : 0;
   const queueFocusLane = queuePlanProgress?.focusLane ?? null;
   const queueFocusLaneLabel = queueFocusLane ? getShiftQueueLaneLabel(queueFocusLane) : null;
   const queueFocusRemaining = queueFocusLane ? queuePlanProgress?.remainingCountsByLane[queueFocusLane] ?? 0 : 0;
   const queueCallsRemaining = queuePlanProgress?.remainingCalls ?? 0;
-  const intakeWindowLabel = `last ${RECENT_LEAD_WINDOW_DAYS} days`;
-  const leadIntakeSummary =
-    selectedLeadIntake === "ALL"
-      ? "Show every callable lead source in this queue."
-      : selectedLeadIntake === "RECENT_SCRAPED"
-        ? `Only leads scraped into the CRM in the ${intakeWindowLabel} are feeding this board.`
-        : `Only leads added manually or by CSV in the ${intakeWindowLabel} are feeding this board.`;
-  const hasFocusedQueue = selectedIndustry !== "ALL" || selectedLeadIntake !== "ALL";
+  const nextTargetDistance = momentumTier.nextTarget ? Math.max(momentumTier.nextTarget - completedTodayCount, 0) : 0;
+  const momentumTierCeiling = momentumTier.nextTarget ?? Math.max(momentumTier.floor + 8, Math.min(queuePlanProgress?.settings.minCallsPerShift ?? 28, 28));
+  const momentumTierProgressPercent =
+    momentumTierCeiling > momentumTier.floor
+      ? Math.min(100, Math.max(0, Math.round(((completedTodayCount - momentumTier.floor) / (momentumTierCeiling - momentumTier.floor)) * 100)))
+      : 100;
+  const recentMomentumWindowCount = completedTodayEntries.filter((entry) => {
+    const updatedAtMs = new Date(entry.lead.updatedAt ?? "").getTime();
+    return Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs <= 90 * 60 * 1000;
+  }).length;
+  const recentMomentumCopy =
+    recentMomentumWindowCount >= 5
+      ? "Hot streak is live. Keep dialing while the board is responding."
+      : recentMomentumWindowCount >= 3
+        ? "Good pace. A couple more clears in this window turns it into a real run."
+        : "Momentum is still available. Clear the next few calls quickly to light the board up.";
+  const momentumMissionTitle = queueFocusLane && queueFocusRemaining > 0 ? `Mission: ${queueFocusLaneLabel}` : "Mission: Keep The Board Moving";
+  const momentumMissionCopy = queueFocusLane && queueFocusRemaining > 0
+    ? `Clear ${Math.min(queueFocusRemaining, 3)} more ${queueFocusLaneLabel?.toLowerCase()} call${Math.min(queueFocusRemaining, 3) === 1 ? "" : "s"} to stay ahead of the manager-set mix.`
+    : queueCallsRemaining > 0
+      ? `Clear ${Math.min(queueCallsRemaining, 3)} more worked lead${Math.min(queueCallsRemaining, 3) === 1 ? "" : "s"} to keep climbing this shift.`
+      : "Minimum target is already hit. Stay on the highest-intent calls and run up the score.";
   const queueCoachSummary = queuePlanProgress
     ? queueFocusLane && queueFocusRemaining > 0
       ? `${queueFocusRemaining} more ${queueFocusLaneLabel?.toLowerCase()} call${queueFocusRemaining === 1 ? "" : "s"} to stay on the manager-set mix.`
@@ -578,6 +732,7 @@ export function ShiftQueueView({
         ? `${queueCallsRemaining} more worked lead${queueCallsRemaining === 1 ? "" : "s"} to hit the shift minimum.`
         : "Shift minimum hit. Keep clearing high-intent leads if the board still has room."
     : null;
+  const csvImportTargetLabel = queueOwnerName?.trim() || (viewingManagedQueue ? "selected rep" : "your queue");
   const isInAfterCallWork = callStatus === "acw";
   const isCallInProgress = callStatus === "connecting" || callStatus === "connected";
   const isDialing = callStatus === "connecting";
@@ -592,12 +747,12 @@ export function ShiftQueueView({
     ? "Finish the current live call before starting another one."
     : !ccpReady
     ? "Amazon Connect is still loading in this tab."
-    : !agentReadyForOutbound
-      ? agentStateLabel
-        ? `Amazon Connect is currently ${agentStateLabel}.`
-        : "Amazon Connect is not ready for outbound dialing."
+      : !agentReadyForOutbound
+        ? agentStateLabel
+          ? `Amazon Connect is currently ${agentStateLabel}.`
+          : "Amazon Connect is not ready for outbound dialing."
       : retrySecondsRemaining > 0
-        ? `Amazon Connect is throttled for ${retrySecondsRemaining}s.`
+        ? retryStatusMessage
         : null;
 
   function openRelativeLead(offset: -1 | 1) {
@@ -606,6 +761,27 @@ export function ShiftQueueView({
     const nextIndex = currentIndex + offset;
     if (nextIndex < 0 || nextIndex >= visibleQueueEntries.length) return;
     setSelectedLeadId(visibleQueueEntries[nextIndex]?.lead.id ?? null);
+  }
+
+  function getNextQueueLeadId(currentLeadId: string) {
+    if (!visibleQueueEntries.length) return null;
+
+    const currentIndex = visibleQueueEntries.findIndex((entry) => entry.lead.id === currentLeadId);
+    if (currentIndex < 0) {
+      return visibleQueueEntries.find((entry) => entry.lead.id !== currentLeadId)?.lead.id ?? null;
+    }
+
+    for (let index = currentIndex + 1; index < visibleQueueEntries.length; index += 1) {
+      const nextLeadId = visibleQueueEntries[index]?.lead.id ?? null;
+      if (nextLeadId && nextLeadId !== currentLeadId) return nextLeadId;
+    }
+
+    for (let index = 0; index < currentIndex; index += 1) {
+      const nextLeadId = visibleQueueEntries[index]?.lead.id ?? null;
+      if (nextLeadId && nextLeadId !== currentLeadId) return nextLeadId;
+    }
+
+    return null;
   }
 
   function handleDialLead(entry: ShiftQueueEntry) {
@@ -625,7 +801,7 @@ export function ShiftQueueView({
     };
     setLinkError(null);
     setDialingLeadId(entry.lead.id);
-    startOutboundCall(formattedNumber);
+    void startOutboundCall(formattedNumber);
   }
 
   async function handleCompleteAcw() {
@@ -642,6 +818,7 @@ export function ShiftQueueView({
     const dispositionContactId = activeContactId ?? currentContactId;
     if (!canDialQueue || !selectedDisposition || !dispositionEntry?.lead.id || !dispositionContactId) return;
 
+    const nextLeadId = getNextQueueLeadId(dispositionEntry.lead.id);
     setSavingDisposition(true);
     setDispositionError(null);
 
@@ -670,6 +847,8 @@ export function ShiftQueueView({
         return;
       }
 
+      rememberWorkedLead(dispositionEntry);
+      forgetImportedLeadFromBatch(dispositionEntry.lead.id);
       setShowDisposition(false);
       setSelectedDisposition("");
       setDispositionSummary("");
@@ -677,7 +856,9 @@ export function ShiftQueueView({
       setDispositionError(null);
       setCurrentContactId(null);
       setActiveQueueLeadId(null);
+      setSelectedLeadId(nextLeadId);
       promptedDispositionContactIdRef.current = null;
+      router.refresh();
     } catch (error) {
       setDispositionError(error instanceof Error ? error.message : "Unable to save disposition.");
     } finally {
@@ -720,31 +901,146 @@ export function ShiftQueueView({
     router.replace(nextHref);
   }
 
-  function handleIndustryChange(nextIndustry: string) {
-    const normalizedNextIndustry = nextIndustry.trim();
-    const safeIndustry = normalizedNextIndustry && industryOptions.includes(normalizedNextIndustry) ? normalizedNextIndustry : "ALL";
-    setSelectedIndustry(safeIndustry);
-    setSelectedLeadId(null);
+  function rememberImportedLeadBatch(leadIds: string[]) {
+    const normalizedLeadIds = Array.from(new Set(leadIds.map((value) => String(value)).filter(Boolean)));
+    setRecentImportedLeadIds(normalizedLeadIds);
 
-    if (!pathname || typeof window === "undefined") return;
-
-    const params = new URLSearchParams(window.location.search);
-    if (safeIndustry === "ALL") {
-      params.delete("industry");
-    } else {
-      params.set("industry", safeIndustry);
+    try {
+      if (normalizedLeadIds.length > 0) {
+        window.localStorage.setItem(importedBatchStorageKey, JSON.stringify({
+          importedAt: new Date().toISOString(),
+          leadIds: normalizedLeadIds,
+        }));
+      } else {
+        window.localStorage.removeItem(importedBatchStorageKey);
+      }
+    } catch {
+      // Ignore storage failures.
     }
-
-    const nextHref = params.toString() ? `${pathname}?${params.toString()}` : pathname;
-    router.replace(nextHref);
   }
 
-  function handleLeadIntakeChange(nextLeadIntake: string) {
-    const safeLeadIntake = leadIntakeFilterOptions.some((option) => option.value === nextLeadIntake)
-      ? (nextLeadIntake as LeadIntakeFilter)
-      : "ALL";
-    setSelectedLeadIntake(safeLeadIntake);
-    setSelectedLeadId(null);
+  function forgetImportedLeadFromBatch(leadId: string) {
+    const normalizedLeadId = String(leadId).trim();
+    if (!normalizedLeadId) return;
+
+    setRecentImportedLeadIds((current) => {
+      const nextLeadIds = current.filter((value) => value !== normalizedLeadId);
+      try {
+        if (nextLeadIds.length > 0) {
+          window.localStorage.setItem(importedBatchStorageKey, JSON.stringify({
+            importedAt: new Date().toISOString(),
+            leadIds: nextLeadIds,
+          }));
+        } else {
+          window.localStorage.removeItem(importedBatchStorageKey);
+        }
+      } catch {
+        // Ignore storage failures.
+      }
+      return nextLeadIds;
+    });
+  }
+
+  function rememberWorkedLead(entry: ShiftQueueEntry) {
+    const normalizedLeadId = String(entry.lead.id ?? "").trim();
+    if (!normalizedLeadId) return;
+
+    const workedAt = new Date().toISOString();
+    setOptimisticWorkedLeads((current) => [
+      {
+        leadId: normalizedLeadId,
+        workedAt,
+        entry: {
+          ...entry,
+          touchedToday: true,
+          lead: {
+            ...entry.lead,
+            updatedAt: workedAt,
+          },
+        },
+      },
+      ...current.filter((workedLead) => workedLead.leadId !== normalizedLeadId),
+    ]);
+  }
+
+  async function requestCsvImport(leadsToImport: ParsedCsvLead[], mergeDuplicates: boolean) {
+    const assigneeId = canManageQueues ? queueOwnerId ?? currentUserId ?? undefined : undefined;
+    const response = await fetch("/api/leads/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leads: leadsToImport,
+        mergeDuplicates,
+        ...(assigneeId ? { assigneeId } : {}),
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as {
+      createdCount?: number;
+      mergedCount?: number;
+      skippedCount?: number;
+      importedLeadIds?: string[];
+      error?: string;
+      requiresMergeConfirmation?: boolean;
+    } | null;
+
+    return { response, payload };
+  }
+
+  async function importCsvLeads(leadsToImport: ParsedCsvLead[], mergeDuplicates: boolean) {
+    const { response, payload } = await requestCsvImport(leadsToImport, mergeDuplicates);
+    if (!response.ok) {
+      throw new Error(payload?.error ?? "Failed to import CSV leads.");
+    }
+
+    setCsvImportError(null);
+    setCsvImportSuccess(`${formatCsvImportSummary(payload ?? {})} Added to ${csvImportTargetLabel}.`);
+    rememberImportedLeadBatch(Array.isArray(payload?.importedLeadIds) ? payload.importedLeadIds : []);
+    setSelectedLeadId(Array.isArray(payload?.importedLeadIds) && payload.importedLeadIds[0] ? String(payload.importedLeadIds[0]) : null);
+    setSelectedFilter("ALL");
+    router.refresh();
+  }
+
+  async function handleCsvFileUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setIsImportingCsv(true);
+    setCsvImportError(null);
+    setCsvImportSuccess(null);
+
+    try {
+      const csvText = await file.text();
+      const leadsToImport = parseLeadsFromCsv(csvText);
+      if (!leadsToImport.length) {
+        throw new Error("No valid leads found in CSV. Required column: business name. Optional columns: phone, website, Deep AI analysis, and source query.");
+      }
+
+      const { response, payload } = await requestCsvImport(leadsToImport, false);
+      if (!response.ok) {
+        if (response.status === 409 && payload?.requiresMergeConfirmation) {
+          const shouldMerge = window.confirm(typeof payload.error === "string" ? payload.error : "Duplicate leads found. Merge duplicates and continue import?");
+          if (shouldMerge) {
+            await importCsvLeads(leadsToImport, true);
+          }
+          return;
+        }
+
+        throw new Error(payload?.error ?? "Failed to import CSV leads.");
+      }
+
+      setCsvImportError(null);
+      setCsvImportSuccess(`${formatCsvImportSummary(payload ?? {})} Added to ${csvImportTargetLabel}.`);
+      rememberImportedLeadBatch(Array.isArray(payload?.importedLeadIds) ? payload.importedLeadIds : []);
+      setSelectedLeadId(Array.isArray(payload?.importedLeadIds) && payload.importedLeadIds[0] ? String(payload.importedLeadIds[0]) : null);
+      setSelectedFilter("ALL");
+      router.refresh();
+    } catch (error) {
+      setCsvImportError(error instanceof Error ? error.message : "Failed to import CSV leads.");
+    } finally {
+      setIsImportingCsv(false);
+    }
   }
 
   return (
@@ -850,95 +1146,147 @@ export function ShiftQueueView({
             ) : null}
 
             <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
-              <label className="block">
-                <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-400">
-                  <Target className="h-4 w-4" />
-                  Industry Focus
-                </span>
-                <select
-                  value={selectedIndustry}
-                  onChange={(event) => handleIndustryChange(event.target.value)}
-                  className="mt-3 w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Queue Import</p>
+                  <p className="mt-2 text-sm font-semibold text-white">Import CSV leads into {csvImportTargetLabel}.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => csvFileInputRef.current?.click()}
+                  disabled={isImportingCsv}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-100 transition hover:border-zinc-500 disabled:opacity-60"
                 >
-                  <option value="ALL">All industries</option>
-                  {industryOptions.map((industry) => (
-                    <option key={industry} value={industry}>
-                      {industry}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  {isImportingCsv ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  {isImportingCsv ? "Importing..." : "Import CSV"}
+                </button>
+                <input
+                  ref={csvFileInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={handleCsvFileUpload}
+                />
+              </div>
               <p className="mt-3 text-xs leading-5 text-zinc-400">
-                {selectedIndustry === "ALL"
-                  ? "Show every callable lead in this queue."
-                  : `Only ${selectedIndustry} leads are feeding this board right now.`}
+                Required column: business name. Every other CSV column is preserved on the lead workspace, including LeadQuality, GoogleRating, GoogleReviews, and AI research fields.
               </p>
-              {queueSettings?.industry ? (
-                <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-sky-200/80">
-                  Blueprint default: {queueSettings.industry}
-                </p>
-              ) : null}
+              <p className="mt-2 text-xs leading-5 text-zinc-500">
+                {canManageQueues
+                  ? "Imports follow the rep selected in the queue owner dropdown above."
+                  : "Imports go straight into your queue and will show up here after refresh."}
+              </p>
+              {csvImportSuccess ? <p className="mt-3 text-sm text-emerald-200">{csvImportSuccess}</p> : null}
+              {csvImportError ? <p className="mt-3 text-sm text-rose-300">{csvImportError}</p> : null}
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
-              <label className="block">
-                <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-zinc-400">
-                  <Clock3 className="h-4 w-4" />
-                  Lead Intake
-                </span>
-                <select
-                  value={selectedLeadIntake}
-                  onChange={(event) => handleLeadIntakeChange(event.target.value)}
-                  className="mt-3 w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none"
-                >
-                  {leadIntakeFilterOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="mt-3 text-xs leading-5 text-zinc-400">{leadIntakeSummary}</p>
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-black/20 p-4 backdrop-blur">
+            <div className="rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.14),transparent_42%),linear-gradient(150deg,rgba(15,14,22,0.96),rgba(10,12,22,0.94))] p-4 backdrop-blur">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-400">Momentum Tier</p>
-                  <p className="mt-2 flex items-center gap-2 text-2xl font-semibold text-white">
-                    <Flame className="h-5 w-5 text-orange-300" />
-                    {momentumTier.label}
-                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em]", momentumTier.badgeClass)}>
+                      <Flame className="h-3.5 w-3.5" />
+                      {momentumTier.label}
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-zinc-200">
+                      {completedTodayCount} worked today
+                    </span>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-right">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Points</p>
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-right">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Points Banked</p>
                   <p className="mt-1 text-xl font-semibold text-amber-100">{momentumPoints}</p>
                 </div>
               </div>
-              <p className="mt-3 text-sm text-zinc-300">{momentumTier.copy}</p>
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between text-xs uppercase tracking-[0.16em] text-zinc-500">
-                  <span>Queue Clear</span>
-                  <span>{queueClearPercent}%</span>
+              <p className="mt-3 text-sm leading-6 text-zinc-300">{momentumTier.copy}</p>
+
+              <div className="mt-4 rounded-3xl border border-white/10 bg-black/25 p-4">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Tier Meter</p>
+                    <p className="mt-2 text-3xl font-semibold text-white">
+                      {momentumTier.nextTarget ? `${completedTodayCount}/${momentumTier.nextTarget}` : `${completedTodayCount}`}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-zinc-400">
+                      {momentumTier.nextTarget
+                        ? `${nextTargetDistance} more worked lead${nextTargetDistance === 1 ? "" : "s"} to unlock ${momentumTier.rewardTitle}.`
+                        : `${Math.max(momentumTierCeiling - completedTodayCount, 0)} more worked lead${Math.max(momentumTierCeiling - completedTodayCount, 0) === 1 ? "" : "s"} to finish the victory lap.`}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-right">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Queue Clear</p>
+                    <p className="mt-1 text-lg font-semibold text-white">{queueClearPercent}%</p>
+                  </div>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full rounded-full bg-gradient-to-r from-amber-300 via-orange-300 to-sky-300" style={{ width: `${queueClearPercent}%` }} />
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/10">
+                  <div className={cn("h-full rounded-full bg-gradient-to-r transition-all", momentumTier.progressClass)} style={{ width: `${momentumTierProgressPercent}%` }} />
                 </div>
-                {momentumTier.nextTarget ? (
-                  <p className="text-xs text-zinc-400">{nextTargetDistance} more worked leads to reach the next tier.</p>
-                ) : (
-                  <p className="text-xs text-zinc-400">Top pacing tier for today.</p>
-                )}
+                <div className="mt-2 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+                  <span>{momentumTier.floor} clears</span>
+                  <span>{momentumTier.nextTarget ?? momentumTierCeiling} target</span>
+                </div>
               </div>
-              {queuePlanProgress ? (
-                <div className="mt-4 rounded-2xl border border-sky-300/15 bg-sky-300/10 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-sky-100/75">Coach Mode</p>
-                  <p className="mt-2 text-sm font-semibold text-white">
-                    {completedTodayCount} / {queuePlanProgress.settings.minCallsPerShift} worked this shift
-                  </p>
-                  <p className="mt-2 text-xs leading-5 text-sky-50/80">{queueCoachSummary}</p>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-amber-100/80">Next Unlock</p>
+                  <p className="mt-2 text-sm font-semibold text-white">{momentumTier.rewardTitle}</p>
+                  <p className="mt-1 text-xs leading-5 text-amber-50/80">{momentumTier.rewardCopy}</p>
                 </div>
-              ) : null}
+                <div className="rounded-2xl border border-sky-300/20 bg-sky-300/10 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-sky-100/80">Hot Streak</p>
+                  <p className="mt-2 text-sm font-semibold text-white">{recentMomentumWindowCount} worked in the last 90 min</p>
+                  <p className="mt-1 text-xs leading-5 text-sky-50/80">{recentMomentumCopy}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-emerald-100/80">{momentumMissionTitle}</p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {queuePlanProgress ? `${completedTodayCount} / ${queuePlanProgress.settings.minCallsPerShift} worked this shift` : "Current shift mission"}
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-emerald-50/80">{momentumMissionCopy}</p>
+                  </div>
+                  <Trophy className="h-5 w-5 shrink-0 text-emerald-200" />
+                </div>
+                {queuePlanProgress ? <p className="mt-3 text-xs leading-5 text-emerald-50/70">{queueCoachSummary}</p> : null}
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {queueFocusLane && queueCountsByFilter[queueFocusLane] > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFilter(queueFocusLane)}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-300/12 px-3 py-2 text-xs font-semibold text-emerald-50 transition hover:bg-emerald-300/18"
+                  >
+                    <Zap className="h-3.5 w-3.5" />
+                    Push {queueFocusLaneLabel}
+                  </button>
+                ) : null}
+                {queueCountsByFilter.MONEY > 0 && selectedFilter !== "MONEY" ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFilter("MONEY")}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/12 px-3 py-2 text-xs font-semibold text-amber-50 transition hover:bg-amber-300/18"
+                  >
+                    <Target className="h-3.5 w-3.5" />
+                    Chase Money Moves
+                  </button>
+                ) : null}
+                {selectedFilter !== "ALL" ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFilter("ALL")}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Show Full Board
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -987,23 +1335,17 @@ export function ShiftQueueView({
 
       {queueEntries.length === 0 ? (
         <section className="rounded-[28px] border border-emerald-300/20 bg-[radial-gradient(circle_at_top,rgba(52,211,153,0.18),transparent_42%),linear-gradient(145deg,rgba(9,20,16,0.98),rgba(8,16,20,0.96))] p-8 text-center">
-            <div className="mx-auto max-w-xl">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-emerald-100">
-                <CheckCircle2 className="h-7 w-7" />
-              </div>
-              <h2 className="mt-4 text-2xl font-semibold text-white">
-                {!hasFocusedQueue ? "Queue is clear." : "No leads match this queue focus right now."}
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-zinc-300">
-                {!hasFocusedQueue
-                  ? "There are no callable leads left that still need a same-day touch. Use "
-                  : "There are no callable leads left that still need a same-day touch for the current industry or lead-intake filters. Change the filters or use "}
+          <div className="mx-auto max-w-xl">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-emerald-100">
+              <CheckCircle2 className="h-7 w-7" />
+            </div>
+            <h2 className="mt-4 text-2xl font-semibold text-white">Queue is clear.</h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-300">
+              There are no callable leads left that still need a same-day touch. Use{" "}
               <Link href={leadWorkspaceHref} className="font-semibold text-emerald-100 underline decoration-emerald-300/40 underline-offset-4">
                 {leadWorkspaceLabel}
-              </Link>
-              {!hasFocusedQueue
-                ? " to review the rest of the book or come back when new assignments or due follow-ups land."
-                : " while you reset the queue focus."}
+              </Link>{" "}
+              to review the rest of the book or come back when new assignments or due follow-ups land.
             </p>
           </div>
         </section>
@@ -1073,6 +1415,29 @@ export function ShiftQueueView({
                         <p className="mt-1 text-xs text-zinc-400">
                           {entry.lead.businessType || "Unknown industry"} - {entry.lead.city || "Unknown city"}
                         </p>
+                        {formatLeadWebsiteLabel(entry.lead.websiteUrl) ? (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+                            <Globe className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{formatLeadWebsiteLabel(entry.lead.websiteUrl)}</span>
+                          </p>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {entry.lead.leadQuality ? (
+                            <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[10px] font-semibold text-amber-100">
+                              Quality: {formatLeadMetricValue(entry.lead.leadQuality)}
+                            </span>
+                          ) : null}
+                          {entry.lead.googleRating ? (
+                            <span className="rounded-full border border-sky-300/20 bg-sky-300/10 px-2 py-0.5 text-[10px] font-semibold text-sky-100">
+                              Rating: {formatLeadMetricValue(entry.lead.googleRating)}
+                            </span>
+                          ) : null}
+                          {entry.lead.googleReviews ? (
+                            <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-100">
+                              Reviews: {formatLeadMetricValue(entry.lead.googleReviews)}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                       <span className="text-xs font-semibold text-zinc-500">P{entry.priority}</span>
                     </div>
@@ -1085,7 +1450,7 @@ export function ShiftQueueView({
               })}
               {visibleQueueEntries.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/50 px-4 py-5 text-sm text-zinc-500">
-                  No leads are sitting in this lane right now. Switch the lane, lead-intake filter, or industry focus, or keep clearing the board.
+                  No leads are sitting in this lane right now. Switch filters or keep clearing the board.
                 </div>
               ) : null}
             </div>
@@ -1113,6 +1478,17 @@ export function ShiftQueueView({
                     <p className="mt-2 text-sm text-zinc-300">
                       {displayEntry.lead.businessType || "Unknown industry"} - {displayEntry.lead.city || "Unknown city"}
                     </p>
+                    {formatLeadWebsiteLabel(displayEntry.lead.websiteUrl) ? (
+                      <a
+                        href={formatLeadWebsiteHref(displayEntry.lead.websiteUrl)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-zinc-200 transition hover:border-white/20 hover:text-white"
+                      >
+                        <Globe className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                        <span className="truncate">{formatLeadWebsiteLabel(displayEntry.lead.websiteUrl)}</span>
+                      </a>
+                    ) : null}
                     <p className="mt-4 max-w-2xl text-[15px] leading-7 text-zinc-100">{displayEntry.reason}</p>
                   </div>
 
@@ -1139,7 +1515,7 @@ export function ShiftQueueView({
                   <div className={cn("h-full bg-gradient-to-r", focusSurface.line)} />
                 </div>
 
-                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                   {showLiveCallCard ? (
                     <div className="rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4 backdrop-blur">
                       <div className="flex items-start justify-between gap-3">
@@ -1237,6 +1613,17 @@ export function ShiftQueueView({
                     </p>
                     <p className="mt-2 text-xs text-zinc-400">Demo-booked leads stay visible here until prep or confirmation is done today.</p>
                   </div>
+                  <div className="rounded-3xl border border-amber-300/15 bg-amber-300/10 p-4 backdrop-blur">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-amber-100/75">Lead Quality</p>
+                    <p className="mt-2 text-sm font-semibold text-white">{formatLeadMetricValue(displayEntry.lead.leadQuality)}</p>
+                    <p className="mt-2 text-xs text-amber-50/75">Imported from the CSV row and kept on the workspace for rep context.</p>
+                  </div>
+                  <div className="rounded-3xl border border-sky-300/15 bg-sky-300/10 p-4 backdrop-blur">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-sky-100/75">Google Snapshot</p>
+                    <p className="mt-2 text-sm font-semibold text-white">Rating {formatLeadMetricValue(displayEntry.lead.googleRating)}</p>
+                    <p className="mt-1 text-xs text-sky-50/80">Reviews {formatLeadMetricValue(displayEntry.lead.googleReviews)}</p>
+                    <p className="mt-2 text-xs text-sky-50/70">Google rating and review volume stay visible directly in the queue.</p>
+                  </div>
                 </div>
 
                 <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -1247,6 +1634,15 @@ export function ShiftQueueView({
                   >
                     <Bot className="h-4 w-4" />
                     Smart Script
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResearchModalOpen(true)}
+                    disabled={!hasLeadResearchSummary(displayEntry.lead)}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-4 py-2.5 text-sm font-semibold text-amber-50 transition hover:bg-amber-300/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    AI Research
                   </button>
                   <button
                     type="button"
@@ -1392,6 +1788,12 @@ export function ShiftQueueView({
                           <p className="mt-1 text-xs text-zinc-500">
                             {entry.lead.businessType || "Unknown industry"} - {entry.lead.city || "Unknown city"}
                           </p>
+                          {formatLeadWebsiteLabel(entry.lead.websiteUrl) ? (
+                            <p className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+                              <Globe className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{formatLeadWebsiteLabel(entry.lead.websiteUrl)}</span>
+                            </p>
+                          ) : null}
                         </div>
                         <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-300">
                           {getShiftQueueLaneLabel(entry.lane)}
@@ -1557,6 +1959,45 @@ export function ShiftQueueView({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {researchModalOpen && researchEntry && researchSummary ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="max-h-[88vh] w-full max-w-4xl overflow-hidden rounded-[30px] border border-amber-300/20 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.12),transparent_40%),linear-gradient(145deg,rgba(24,18,10,0.98),rgba(12,11,9,0.98))] shadow-[0_30px_100px_rgba(0,0,0,0.45)]">
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
+              <div className="max-w-3xl">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-amber-200/75">AI Research Summary</p>
+                <h2 className="mt-2 text-2xl font-semibold text-white">{researchEntry.lead.businessName}</h2>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-[11px] font-semibold text-amber-50">
+                    LeadQuality: {formatLeadMetricValue(researchEntry.lead.leadQuality)}
+                  </span>
+                  <span className="rounded-full border border-sky-300/20 bg-sky-300/10 px-3 py-1 text-[11px] font-semibold text-sky-50">
+                    GoogleRating: {formatLeadMetricValue(researchEntry.lead.googleRating)}
+                  </span>
+                  <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-[11px] font-semibold text-emerald-50">
+                    GoogleReviews: {formatLeadMetricValue(researchEntry.lead.googleReviews)}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResearchModalOpen(false)}
+                className="rounded-2xl border border-white/10 bg-white/5 p-2 text-zinc-300 transition hover:bg-white/10 hover:text-white"
+                aria-label="Close AI research summary"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(88vh-8rem)] overflow-y-auto px-5 py-5 md:px-6">
+              <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">Imported Summary</p>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-100">{researchSummary}</p>
+              </div>
             </div>
           </div>
         </div>

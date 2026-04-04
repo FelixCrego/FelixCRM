@@ -151,9 +151,9 @@ export async function POST(request: Request) {
           contact_id: contactId,
           event_source: "crm-disposition",
           raw_payload: mergeRawPayload(existingCall?.raw_payload, {
-            crm_disposition_channel: normalizedChannel,
-            crm_disposition: dispositionContactOverride.disposition,
-            crm_disposition_counts_as_contact: dispositionContactOverride.countsAsContact,
+            crm_disposition_channel: dispositionContactOverride ? normalizedChannel : null,
+            crm_disposition: dispositionContactOverride?.disposition ?? null,
+            crm_disposition_counts_as_contact: dispositionContactOverride?.countsAsContact ?? null,
             crm_disposition_updated_at: new Date().toISOString(),
             crm_disposition_set_by_user_id: user.id,
           }),
