@@ -1,6 +1,7 @@
 import { dedupeKey } from "@/lib/utils";
 import type { Lead, LeadEnrichmentPayload, LeadResearchStructuredPayload, Script, ToneOfVoice, UserRole } from "@/lib/types";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
+import { inferLeadSourceType, normalizeLeadSourceType, type LeadSourceType } from "@/lib/lead-source";
 import { normalizeShiftQueueSettings, type ShiftQueueSettings } from "@/lib/shift-queue";
 import { getImportedFieldValue, normalizeImportedFieldKey, type LeadCsvImportedFields } from "@/lib/lead-csv";
 
@@ -1089,6 +1090,10 @@ function leadToMemory(lead: any): Lead {
     businessName: lead.businessName ?? lead.business_name,
     city: lead.city,
     businessType: lead.businessType ?? lead.business_type,
+    createdAt:
+      (typeof lead.createdAt === "string" ? lead.createdAt : null) ??
+      (typeof lead.created_at === "string" ? lead.created_at : null) ??
+      new Date(lead.updatedAt ?? lead.updated_at).toISOString(),
     phone: lead.phone,
     email: lead.email,
     websiteUrl: lead.websiteUrl ?? lead.website_url,
@@ -1158,6 +1163,14 @@ function leadToMemory(lead: any): Lead {
     importedFields: Object.keys(importedFields).length ? importedFields : null,
     enrichment: normalizeLeadEnrichmentPayload(sourcePayload.enrichment, lead.businessName ?? lead.business_name, lead.phone),
     sourceQuery: getSourcePayloadString(sourcePayload, ["sourceQuery", "source_query"]),
+    sourceType:
+      normalizeLeadSourceType(sourcePayload.sourceType) ??
+      normalizeLeadSourceType(sourcePayload.source_type) ??
+      inferLeadSourceType({
+        sourceQuery: getSourcePayloadString(sourcePayload, ["sourceQuery", "source_query"]),
+        businessType: lead.businessType ?? lead.business_type,
+        city: lead.city,
+      }),
     contacts: contactsFromPayload,
     demoBooking:
       sourcePayload.demoBooking && typeof sourcePayload.demoBooking === "object"
@@ -1422,6 +1435,7 @@ type CreateLeadInput = {
   websiteUrl?: string | null;
   aiResearchSummary?: string | null;
   sourceQuery?: string | null;
+  sourceType?: LeadSourceType | null;
   leadQuality?: string | null;
   googleRating?: string | null;
   googleReviews?: string | null;
@@ -1434,6 +1448,14 @@ export async function createOrMergeLead(ownerId: string | null, lead: CreateLead
   const domain = lead.websiteUrl?.replace(/^https?:\/\//, "") ?? "";
   const computedDedupeKey = dedupeKey(lead.businessName, "Unknown", "Manual", lead.phone ?? "", domain);
   const importedFields = normalizeImportedFields(lead.importedFields);
+  const resolvedSourceQuery = lead.sourceQuery ?? "manual_entry";
+  const resolvedSourceType =
+    normalizeLeadSourceType(lead.sourceType) ??
+    inferLeadSourceType({
+      sourceQuery: resolvedSourceQuery,
+      businessType: "Manual",
+      city: "Unknown",
+    });
 
   try {
     const payload = await withLeadTableFallback((table) => supabaseRequest<any[]>(table, {
@@ -1466,8 +1488,10 @@ export async function createOrMergeLead(ownerId: string | null, lead: CreateLead
               importedFields,
               imported_fields: importedFields,
               enrichment: null,
-              sourceQuery: lead.sourceQuery ?? "manual_entry",
-              source_query: lead.sourceQuery ?? "manual_entry",
+              sourceQuery: resolvedSourceQuery,
+              source_query: resolvedSourceQuery,
+              sourceType: resolvedSourceType,
+              source_type: resolvedSourceType,
             },
           }
         : {
@@ -1496,8 +1520,10 @@ export async function createOrMergeLead(ownerId: string | null, lead: CreateLead
               importedFields,
               imported_fields: importedFields,
               enrichment: null,
-              sourceQuery: lead.sourceQuery ?? "manual_entry",
-              source_query: lead.sourceQuery ?? "manual_entry",
+              sourceQuery: resolvedSourceQuery,
+              source_query: resolvedSourceQuery,
+              sourceType: resolvedSourceType,
+              source_type: resolvedSourceType,
             },
           }),
     }));
@@ -1526,6 +1552,9 @@ export async function createOrMergeLead(ownerId: string | null, lead: CreateLead
       const mergedImportedFields = mergeImportedFields(existingPayload, importedFields);
       const existingAiResearchSummary = getSourcePayloadString(existingPayload, ["aiResearchSummary", "ai_research_summary"]);
       const existingSourceQuery = getSourcePayloadString(existingPayload, ["sourceQuery", "source_query"]);
+      const existingSourceType =
+        normalizeLeadSourceType(existingPayload.sourceType) ??
+        normalizeLeadSourceType(existingPayload.source_type);
       const existingLeadQuality = getSourcePayloadString(existingPayload, ["leadQuality", "lead_quality", "LeadQuality"]);
       const existingGoogleRating = getSourcePayloadString(existingPayload, ["googleRating", "google_rating", "GoogleRating"]);
       const existingGoogleReviews = getSourcePayloadString(existingPayload, ["googleReviews", "google_reviews", "GoogleReviews"]);
@@ -1538,8 +1567,10 @@ export async function createOrMergeLead(ownerId: string | null, lead: CreateLead
               ...existingPayload,
               aiResearchSummary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
               ai_research_summary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
-              sourceQuery: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
-              source_query: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
+              sourceQuery: existingSourceQuery ?? resolvedSourceQuery,
+              source_query: existingSourceQuery ?? resolvedSourceQuery,
+              sourceType: existingSourceType ?? resolvedSourceType,
+              source_type: existingSourceType ?? resolvedSourceType,
               leadQuality: existingLeadQuality ?? lead.leadQuality ?? null,
               lead_quality: existingLeadQuality ?? lead.leadQuality ?? null,
               googleRating: existingGoogleRating ?? lead.googleRating ?? null,
@@ -1558,8 +1589,10 @@ export async function createOrMergeLead(ownerId: string | null, lead: CreateLead
               ...existingPayload,
               aiResearchSummary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
               ai_research_summary: existingAiResearchSummary ?? lead.aiResearchSummary ?? null,
-              sourceQuery: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
-              source_query: existingSourceQuery ?? lead.sourceQuery ?? "csv_import",
+              sourceQuery: existingSourceQuery ?? resolvedSourceQuery,
+              source_query: existingSourceQuery ?? resolvedSourceQuery,
+              sourceType: existingSourceType ?? resolvedSourceType,
+              source_type: existingSourceType ?? resolvedSourceType,
               leadQuality: existingLeadQuality ?? lead.leadQuality ?? null,
               lead_quality: existingLeadQuality ?? lead.leadQuality ?? null,
               googleRating: existingGoogleRating ?? lead.googleRating ?? null,
@@ -1627,6 +1660,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
                 aiResearchSummary: lead.aiResearchSummary ?? null,
                 enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
+                sourceType: "SCRAPED",
               },
             }
           : {
@@ -1649,6 +1683,7 @@ export async function insertLeads(ownerId: string, leads: Omit<Lead, "id" | "upd
                 aiResearchSummary: lead.aiResearchSummary ?? null,
                 enrichment: lead.enrichment ?? null,
                 sourceQuery: lead.sourceQuery ?? null,
+                sourceType: "SCRAPED",
               },
             }),
       }));
