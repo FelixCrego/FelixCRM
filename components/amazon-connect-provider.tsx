@@ -4,6 +4,26 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { usePathname, useRouter } from "next/navigation";
 import Script from "next/script";
 
+type ConnectActionCallbacks = {
+  success?: () => void;
+  failure?: (error: unknown) => void;
+};
+
+type ConnectConnection = {
+  destroy?: (callbacks?: ConnectActionCallbacks) => void;
+  sendDigits?: (digits: string, callbacks?: ConnectActionCallbacks) => void;
+  getEndpoint?: () => { phoneNumber?: string };
+  getType?: () => string;
+  isActive?: () => boolean;
+  isConnected?: () => boolean;
+  isConnecting?: () => boolean;
+};
+
+type ConnectAgentState = {
+  name?: string;
+  type?: string;
+};
+
 type ConnectContact = {
   isInbound?: () => boolean;
   isConnected?: () => boolean;
@@ -23,26 +43,6 @@ type ConnectContact = {
   getSingleActiveThirdPartyConnection?: () => ConnectConnection | null;
   getAgentConnection?: () => ConnectConnection | null;
   clear?: (callbacks?: ConnectActionCallbacks) => void;
-};
-
-type ConnectActionCallbacks = {
-  success?: () => void;
-  failure?: (error: unknown) => void;
-};
-
-type ConnectConnection = {
-  destroy?: (callbacks?: ConnectActionCallbacks) => void;
-  sendDigits?: (digits: string, callbacks?: ConnectActionCallbacks) => void;
-  getEndpoint?: () => { phoneNumber?: string };
-  getType?: () => string;
-  isActive?: () => boolean;
-  isConnected?: () => boolean;
-  isConnecting?: () => boolean;
-};
-
-type ConnectAgentState = {
-  name?: string;
-  type?: string;
 };
 
 type ConnectAgent = {
@@ -82,8 +82,7 @@ type AmazonConnectContextValue = {
   agentStateLabel: string | null;
   agentReadyForOutbound: boolean;
   retrySecondsRemaining: number;
-  retryStatusMessage: string | null;
-  startOutboundCall: (dialNumber: string) => Promise<void>;
+  startOutboundCall: (dialNumber: string) => void;
   endActiveCall: () => void;
   sendCallDigit: (digit: string) => void;
   completeAfterCallWork: () => Promise<boolean>;
@@ -93,25 +92,6 @@ const AmazonConnectContext = createContext<AmazonConnectContextValue | null>(nul
 
 const CCP_URL = "https://felix-outbound.my.connect.aws/ccp-v2";
 const STREAMS_SCRIPT = "https://cdn.jsdelivr.net/npm/amazon-connect-streams/release/connect-streams-min.js";
-const CCP_TAB_ID_STORAGE_KEY = "felixcrm_ccp_tab_id";
-const CCP_TAB_LOCK_KEY = "felixcrm_ccp_tab_lock";
-const CCP_TAB_LOCK_HEARTBEAT_MS = 15_000;
-const CCP_TAB_LOCK_TTL_MS = 45_000;
-
-type CcpTabLockRecord = {
-  tabId: string;
-  expiresAt: number;
-};
-
-type DialGuardReason = "PACE" | "THROTTLED";
-
-type DialGuardPayload = {
-  ok?: boolean;
-  allowed?: boolean;
-  blockedUntil?: string | null;
-  reason?: DialGuardReason | null;
-  waitMs?: number;
-};
 
 function normalizePhone(value: string) {
   return value.replace(/\D/g, "").slice(-10);
@@ -230,68 +210,6 @@ function getDestroyableConnections(contact: ConnectContact | null | undefined) {
   return uniqueCandidates;
 }
 
-function getConnectOperationErrorMessage(error: unknown, fallbackMessage: string) {
-  const details = getConnectErrorDetails(error);
-  return details.message || fallbackMessage;
-}
-
-function isAgentReadyState(agentState: ConnectAgentState | null | undefined) {
-  const normalizedType = typeof agentState?.type === "string" ? agentState.type.trim().toLowerCase() : "";
-  if (normalizedType) {
-    if (normalizedType === "routable") return true;
-    if (["not_routable", "offline", "error"].includes(normalizedType)) return false;
-  }
-
-  const normalizedLabel = getAgentStateLabel(agentState)?.toLowerCase() ?? "";
-  if (!normalizedLabel) return true;
-
-  if (
-    normalizedLabel.includes("after call work") ||
-    normalizedLabel === "acw" ||
-    normalizedLabel.includes("offline") ||
-    normalizedLabel.includes("not routable") ||
-    normalizedLabel.includes("error")
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-function createTabId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `felixcrm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function readSoftphoneTabLock() {
-  if (typeof window === "undefined") return null;
-
-  const raw = window.localStorage.getItem(CCP_TAB_LOCK_KEY);
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<CcpTabLockRecord>;
-    if (typeof parsed.tabId !== "string" || typeof parsed.expiresAt !== "number") {
-      return null;
-    }
-
-    return {
-      tabId: parsed.tabId,
-      expiresAt: parsed.expiresAt,
-    } satisfies CcpTabLockRecord;
-  } catch {
-    return null;
-  }
-}
-
-function writeSoftphoneTabLock(lock: CcpTabLockRecord) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(CCP_TAB_LOCK_KEY, JSON.stringify(lock));
-}
-
 function getConnectErrorDetails(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -338,6 +256,11 @@ function getConnectErrorDetails(error: unknown) {
   return { type: null, message: null };
 }
 
+function getConnectOperationErrorMessage(error: unknown, fallbackMessage: string) {
+  const details = getConnectErrorDetails(error);
+  return details.message || fallbackMessage;
+}
+
 function getConnectErrorMessage(error: unknown) {
   const details = getConnectErrorDetails(error);
   const normalizedType = details.type?.toLowerCase() ?? "";
@@ -355,20 +278,30 @@ function isThrottledConnectError(error: unknown) {
   const normalizedType = details.type?.toLowerCase() ?? "";
   const normalizedMessage = details.message?.toLowerCase() ?? "";
 
-  return (
-    normalizedType.includes("throttl") ||
-    normalizedMessage.includes("call throttled") ||
-    normalizedMessage.includes("throttled")
-  );
+  return normalizedType.includes("throttl") || normalizedMessage.includes("call throttled") || normalizedMessage.includes("throttled");
 }
 
-function getRetryStatusMessage(secondsRemaining: number, reason: DialGuardReason | null) {
-  const waitSeconds = Math.max(secondsRemaining, 1);
-  if (reason === "PACE") {
-    return `Another rep just grabbed the outbound lane. Wait ${waitSeconds}s before the next dial so the team does not stack calls into the same throttle window.`;
+function isAgentReadyState(agentState: ConnectAgentState | null | undefined) {
+  const normalizedType = typeof agentState?.type === "string" ? agentState.type.trim().toLowerCase() : "";
+  if (normalizedType) {
+    if (normalizedType === "routable") return true;
+    if (["not_routable", "offline", "error"].includes(normalizedType)) return false;
   }
 
-  return `Amazon Connect throttled outbound voice. Wait ${waitSeconds}s before the next team attempt.`;
+  const normalizedLabel = getAgentStateLabel(agentState)?.toLowerCase() ?? "";
+  if (!normalizedLabel) return true;
+
+  if (
+    normalizedLabel.includes("after call work") ||
+    normalizedLabel === "acw" ||
+    normalizedLabel.includes("offline") ||
+    normalizedLabel.includes("not routable") ||
+    normalizedLabel.includes("error")
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export function AmazonConnectProvider({ children }: { children: React.ReactNode }) {
@@ -380,7 +313,6 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   const activeContactIdRef = useRef<string | null>(null);
   const observedContactsRef = useRef(new WeakSet<object>());
   const subscribedAgentRef = useRef<ConnectAgent | null>(null);
-  const tabIdRef = useRef<string | null>(null);
   const [agent, setAgent] = useState<ConnectAgent | null>(null);
   const [callActive, setCallActive] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
@@ -391,29 +323,10 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   const [callError, setCallError] = useState<string | null>(null);
   const [agentStateLabel, setAgentStateLabel] = useState<string | null>(null);
   const [agentReadyForOutbound, setAgentReadyForOutbound] = useState(true);
-  const [localRetryBlockedUntil, setLocalRetryBlockedUntil] = useState<number | null>(null);
-  const [localRetryReason, setLocalRetryReason] = useState<DialGuardReason | null>(null);
-  const [teamRetryBlockedUntil, setTeamRetryBlockedUntil] = useState<number | null>(null);
-  const [teamRetryReason, setTeamRetryReason] = useState<DialGuardReason | null>(null);
+  const [retryBlockedUntil, setRetryBlockedUntil] = useState<number | null>(null);
   const [retrySecondsRemaining, setRetrySecondsRemaining] = useState(0);
   const [incomingCall, setIncomingCall] = useState<IncomingCall>({ active: false, number: "", contactObj: null });
   const [scriptReady, setScriptReady] = useState(false);
-  const [tabHasSoftphoneControl, setTabHasSoftphoneControl] = useState(false);
-
-  const effectiveRetryState = useMemo(() => {
-    const localUntil = localRetryBlockedUntil ?? 0;
-    const teamUntil = teamRetryBlockedUntil ?? 0;
-    if (localUntil <= 0 && teamUntil <= 0) {
-      return { blockedUntil: null as number | null, reason: null as DialGuardReason | null };
-    }
-
-    return localUntil >= teamUntil
-      ? { blockedUntil: localRetryBlockedUntil, reason: localRetryReason }
-      : { blockedUntil: teamRetryBlockedUntil, reason: teamRetryReason };
-  }, [localRetryBlockedUntil, localRetryReason, teamRetryBlockedUntil, teamRetryReason]);
-
-  const retryStatusMessage =
-    retrySecondsRemaining > 0 ? getRetryStatusMessage(retrySecondsRemaining, effectiveRetryState.reason) : null;
 
   useEffect(() => {
     if (!callActive) return;
@@ -426,28 +339,15 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   }, [callActive]);
 
   useEffect(() => {
-    if (!effectiveRetryState.blockedUntil) {
+    if (!retryBlockedUntil) {
       setRetrySecondsRemaining(0);
       return;
     }
 
     const syncRemaining = () => {
-      const blockedUntil = effectiveRetryState.blockedUntil;
-      if (!blockedUntil) {
-        setRetrySecondsRemaining(0);
-        return;
-      }
-
-      const remainingMs = blockedUntil - Date.now();
+      const remainingMs = retryBlockedUntil - Date.now();
       if (remainingMs <= 0) {
-        if (localRetryBlockedUntil && localRetryBlockedUntil <= Date.now()) {
-          setLocalRetryBlockedUntil(null);
-          setLocalRetryReason(null);
-        }
-        if (teamRetryBlockedUntil && teamRetryBlockedUntil <= Date.now()) {
-          setTeamRetryBlockedUntil(null);
-          setTeamRetryReason(null);
-        }
+        setRetryBlockedUntil(null);
         setRetrySecondsRemaining(0);
         return;
       }
@@ -458,65 +358,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     syncRemaining();
     const timerId = window.setInterval(syncRemaining, 1000);
     return () => window.clearInterval(timerId);
-  }, [effectiveRetryState.blockedUntil, localRetryBlockedUntil, teamRetryBlockedUntil]);
-
-  const applyTeamRetryState = useCallback((payload: DialGuardPayload | null | undefined) => {
-    if (!payload?.blockedUntil) {
-      setTeamRetryBlockedUntil(null);
-      setTeamRetryReason(null);
-      return;
-    }
-
-    const blockedUntil = new Date(payload.blockedUntil).getTime();
-    if (!Number.isFinite(blockedUntil) || blockedUntil <= Date.now()) {
-      setTeamRetryBlockedUntil(null);
-      setTeamRetryReason(null);
-      return;
-    }
-
-    setTeamRetryBlockedUntil(blockedUntil);
-    setTeamRetryReason(payload.reason === "PACE" || payload.reason === "THROTTLED" ? payload.reason : null);
-  }, []);
-
-  const refreshTeamDialGuard = useCallback(async () => {
-    const response = await fetch("/api/connect/outbound-guard", {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    }).catch(() => null);
-
-    if (!response?.ok) return;
-    const payload = (await response.json().catch(() => null)) as DialGuardPayload | null;
-    applyTeamRetryState(payload);
-  }, [applyTeamRetryState]);
-
-  const reserveTeamDialSlot = useCallback(async () => {
-    const response = await fetch("/api/connect/outbound-guard", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "reserve" }),
-    }).catch(() => null);
-
-    if (!response?.ok) return null;
-    const payload = (await response.json().catch(() => null)) as DialGuardPayload | null;
-    applyTeamRetryState(payload);
-    return payload;
-  }, [applyTeamRetryState]);
-
-  const reportTeamThrottle = useCallback(async () => {
-    const response = await fetch("/api/connect/outbound-guard", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "throttle" }),
-    }).catch(() => null);
-
-    if (!response?.ok) return null;
-    const payload = (await response.json().catch(() => null)) as DialGuardPayload | null;
-    applyTeamRetryState(payload);
-    return payload;
-  }, [applyTeamRetryState]);
+  }, [retryBlockedUntil]);
 
   const updateActiveContactId = useCallback((contactId: string | null) => {
     activeContactIdRef.current = contactId;
@@ -583,63 +425,6 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     clearTrackedContact();
     setCallStatus("idle");
   }, [clearLiveCallState, clearTrackedContact]);
-
-  const blockSoftphoneInThisTab = useCallback(() => {
-    if (isInitialized.current) return;
-
-    setAgent(null);
-    setCcpReady(false);
-    setConnectionStatus("blocked");
-    setCallError(null);
-    setCallStatus("idle");
-  }, []);
-
-  const releaseSoftphoneTabControl = useCallback(() => {
-    if (typeof window === "undefined") return;
-
-    const tabId = tabIdRef.current;
-    const currentLock = readSoftphoneTabLock();
-    if (tabId && currentLock?.tabId === tabId) {
-      window.localStorage.removeItem(CCP_TAB_LOCK_KEY);
-    }
-  }, []);
-
-  const syncSoftphoneTabControl = useCallback(
-    (preferTakeover = false) => {
-      if (typeof window === "undefined") return false;
-
-      const existingTabId = window.sessionStorage.getItem(CCP_TAB_ID_STORAGE_KEY);
-      if (!tabIdRef.current) {
-        tabIdRef.current = existingTabId || createTabId();
-      }
-      if (!existingTabId) {
-        window.sessionStorage.setItem(CCP_TAB_ID_STORAGE_KEY, tabIdRef.current);
-      }
-
-      const tabId = tabIdRef.current;
-      const currentLock = readSoftphoneTabLock();
-      const now = Date.now();
-      const canTakeControl = !currentLock || currentLock.expiresAt <= now || currentLock.tabId === tabId;
-      const shouldTakeControl = canTakeControl && (preferTakeover || document.visibilityState === "visible" || currentLock?.tabId === tabId);
-
-      if (shouldTakeControl) {
-        writeSoftphoneTabLock({
-          tabId,
-          expiresAt: now + CCP_TAB_LOCK_TTL_MS,
-        });
-        setTabHasSoftphoneControl(true);
-        if (!isInitialized.current) {
-          setConnectionStatus("loading");
-        }
-        return true;
-      }
-
-      setTabHasSoftphoneControl(false);
-      blockSoftphoneInThisTab();
-      return false;
-    },
-    [blockSoftphoneInThisTab],
-  );
 
   const syncAgentState = useCallback((nextAgentState: ConnectAgentState | null | undefined) => {
     setAgentStateLabel(getAgentStateLabel(nextAgentState));
@@ -764,51 +549,6 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     }
   }, [incomingCall.active, incomingCall.number, pathname]);
 
-  useEffect(() => {
-    const ownsSoftphone = syncSoftphoneTabControl(true);
-    if (!ownsSoftphone) {
-      blockSoftphoneInThisTab();
-    }
-
-    const intervalId = window.setInterval(() => {
-      if (tabHasSoftphoneControl) {
-        void syncSoftphoneTabControl(true);
-        return;
-      }
-
-      if (document.visibilityState === "visible") {
-        void syncSoftphoneTabControl(true);
-      }
-    }, CCP_TAB_LOCK_HEARTBEAT_MS);
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void syncSoftphoneTabControl(true);
-      }
-    };
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key !== CCP_TAB_LOCK_KEY) return;
-      void syncSoftphoneTabControl(false);
-    };
-
-    const handlePageHide = () => {
-      releaseSoftphoneTabControl();
-    };
-
-    window.addEventListener("storage", handleStorage);
-    window.addEventListener("pagehide", handlePageHide);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("storage", handleStorage);
-      window.removeEventListener("pagehide", handlePageHide);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      releaseSoftphoneTabControl();
-    };
-  }, [blockSoftphoneInThisTab, releaseSoftphoneTabControl, syncSoftphoneTabControl, tabHasSoftphoneControl]);
-
   const initializeStreams = useCallback(() => {
     if (isInitialized.current) return;
 
@@ -852,11 +592,10 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     });
 
     windowWithConnect.connect.contact?.((contact) => {
+      attachContactListeners(contact);
       if (!contact.isInbound?.()) return;
 
-      attachContactListeners(contact);
       setCallError(null);
-      setCallStatus("connecting");
       const incomingNumber = contact.getConnections?.()[0]?.getEndpoint?.().phoneNumber || "Unknown number";
       setIncomingCall({ active: true, number: incomingNumber, contactObj: contact });
       handleScreenPop(incomingNumber);
@@ -875,20 +614,9 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   }, []);
 
   useEffect(() => {
-    if (!scriptReady || !tabHasSoftphoneControl) return;
+    if (!scriptReady) return;
     initializeStreams();
-  }, [initializeStreams, scriptReady, tabHasSoftphoneControl]);
-
-  useEffect(() => {
-    if (!tabHasSoftphoneControl) return;
-
-    void refreshTeamDialGuard();
-    const intervalId = window.setInterval(() => {
-      void refreshTeamDialGuard();
-    }, 4_000);
-
-    return () => window.clearInterval(intervalId);
-  }, [refreshTeamDialGuard, tabHasSoftphoneControl]);
+  }, [initializeStreams, scriptReady]);
 
   useEffect(() => {
     if (callStatus === "idle") return;
@@ -901,14 +629,14 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
   }, [callStatus, getLatestTrackedContact, syncTrackedContactStatus]);
 
   const startOutboundCall = useCallback(
-    async (dialNumber: string) => {
+    (dialNumber: string) => {
       if (!agent || !dialNumber) return;
       const blockingAgentContact = agent
         .getContacts?.()
         ?.find((contact) => !isClearedContact(contact) && getContactId(contact) !== activeContactIdRef.current);
 
-      if (effectiveRetryState.blockedUntil && effectiveRetryState.blockedUntil > Date.now()) {
-        setCallError(getRetryStatusMessage(Math.max(retrySecondsRemaining, 1), effectiveRetryState.reason));
+      if (retryBlockedUntil && retryBlockedUntil > Date.now()) {
+        setCallError(`Amazon Connect is rate-limiting outbound calls right now. Wait ${Math.max(retrySecondsRemaining, 1)}s, then try again.`);
         return;
       }
 
@@ -944,15 +672,6 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       clearLiveCallState();
       setCallError(null);
       setCallStatus("connecting");
-
-      const dialReservation = await reserveTeamDialSlot();
-      if (dialReservation && dialReservation.allowed === false) {
-        resetCallState();
-        const secondsRemaining = Math.max(Math.ceil((dialReservation.waitMs ?? 0) / 1000), 1);
-        setCallError(getRetryStatusMessage(secondsRemaining, dialReservation.reason ?? null));
-        return;
-      }
-
       agent.connect?.(endpoint, {
         success: (contact) => {
           attachContactListeners(contact);
@@ -962,9 +681,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
         failure: (error) => {
           resetCallState();
           if (isThrottledConnectError(error)) {
-            setLocalRetryBlockedUntil(Date.now() + 30_000);
-            setLocalRetryReason("THROTTLED");
-            void reportTeamThrottle();
+            setRetryBlockedUntil(Date.now() + 30_000);
           }
           setCallError(getConnectErrorMessage(error));
         },
@@ -977,13 +694,10 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       attachContactListeners,
       clearLiveCallState,
       clearTrackedContact,
-      effectiveRetryState.blockedUntil,
-      effectiveRetryState.reason,
       markContactConnecting,
       resetCallState,
+      retryBlockedUntil,
       retrySecondsRemaining,
-      reportTeamThrottle,
-      reserveTeamDialSlot,
       syncTrackedContactStatus,
       updateActiveContactId,
     ],
@@ -1031,26 +745,29 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
     tryDestroyConnection(0);
   }, [getLatestTrackedContact, resetCallState, syncTrackedContactStatus]);
 
-  const sendCallDigit = useCallback((digit: string) => {
-    const contact = getLatestTrackedContact();
-    const targetConnection = getNonAgentConnection(contact);
-    if (!targetConnection?.sendDigits) {
-      setCallError("Amazon Connect does not have an active call leg ready for keypad tones.");
-      return;
-    }
+  const sendCallDigit = useCallback(
+    (digit: string) => {
+      const contact = getLatestTrackedContact();
+      const targetConnection = getNonAgentConnection(contact);
+      if (!targetConnection?.sendDigits) {
+        setCallError("Amazon Connect does not have an active call leg ready for keypad tones.");
+        return;
+      }
 
-    setCallError(null);
-    targetConnection.sendDigits(digit, {
-      failure: (error) => {
-        setCallError(
-          getConnectOperationErrorMessage(
-            error,
-            "Amazon Connect rejected that keypad tone. Try again while the live call is still connected.",
-          ),
-        );
-      },
-    });
-  }, [getLatestTrackedContact]);
+      setCallError(null);
+      targetConnection.sendDigits(digit, {
+        failure: (error) => {
+          setCallError(
+            getConnectOperationErrorMessage(
+              error,
+              "Amazon Connect rejected that keypad tone. Try again while the live call is still connected.",
+            ),
+          );
+        },
+      });
+    },
+    [getLatestTrackedContact],
+  );
 
   const completeAfterCallWork = useCallback(() => {
     const waitForClearToFinish = (attemptsRemaining: number): Promise<boolean> =>
@@ -1129,9 +846,7 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
             }, 250);
           },
           failure: (error) => {
-            setCallError(
-              getConnectOperationErrorMessage(error, "Amazon Connect could not clear after-call work for this contact."),
-            );
+            setCallError(getConnectOperationErrorMessage(error, "Amazon Connect could not clear after-call work for this contact."));
             resolve(false);
           },
         });
@@ -1161,7 +876,6 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       agentStateLabel,
       agentReadyForOutbound,
       retrySecondsRemaining,
-      retryStatusMessage,
       startOutboundCall,
       endActiveCall,
       sendCallDigit,
@@ -1175,14 +889,13 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       callError,
       callSeconds,
       ccpReady,
+      completeAfterCallWork,
       connectionStatus,
       callStatus,
       endActiveCall,
       retrySecondsRemaining,
-      retryStatusMessage,
       sendCallDigit,
       startOutboundCall,
-      completeAfterCallWork,
     ],
   );
 

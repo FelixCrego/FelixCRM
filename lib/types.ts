@@ -66,20 +66,6 @@ export type LeadAccountManagementProfile = {
   } | null;
 };
 
-export type LeadMarketingAttribution = {
-  clientId?: string | null;
-  customerId?: string | null;
-  gclid?: string | null;
-  service?: string | null;
-  leadValue?: number | null;
-  landingPage?: string | null;
-  utmSource?: string | null;
-  utmMedium?: string | null;
-  utmCampaign?: string | null;
-  utmTerm?: string | null;
-  utmContent?: string | null;
-};
-
 export type Lead = {
   id: string;
   businessName: string;
@@ -92,10 +78,6 @@ export type Lead = {
   websiteStatus?: string | null;
   socialLinks?: string[];
   aiResearchSummary?: string | null;
-  leadQuality?: string | null;
-  googleRating?: string | null;
-  googleReviews?: string | null;
-  importedFields?: Record<string, string> | null;
   enrichment?: LeadEnrichmentPayload | null;
   sourceQuery?: string | null;
   sourceType?: "SCRAPED" | "ADDED" | null;
@@ -146,7 +128,6 @@ export type Lead = {
   closedAt?: string | null;
   stripeCheckoutLink?: string | null;
   accountManagement?: LeadAccountManagementProfile | null;
-  marketingAttribution?: LeadMarketingAttribution | null;
   transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
   updatedAt: string;
 };

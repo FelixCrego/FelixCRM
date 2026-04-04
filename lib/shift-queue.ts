@@ -6,6 +6,7 @@ export type ShiftQueueMix = Record<ShiftQueueLane, number>;
 export type ShiftQueueSettings = {
   minCallsPerShift: number;
   mix: ShiftQueueMix;
+  industry?: string | null;
   presetId?: string | null;
   updatedAt?: string | null;
   updatedByUserId?: string | null;
@@ -111,6 +112,22 @@ function getPresetById(presetId?: string | null) {
   return SHIFT_QUEUE_PRESETS.find((preset) => preset.id === presetId) ?? null;
 }
 
+export function normalizeShiftQueueIndustry(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.toUpperCase() === "ALL") return null;
+  return normalized;
+}
+
+export function getShiftQueueIndustryOptions(leads: Lead[]) {
+  const uniqueIndustries = new Set(
+    leads
+      .map((lead) => (typeof lead.businessType === "string" ? lead.businessType.trim() : ""))
+      .filter(Boolean),
+  );
+  return Array.from(uniqueIndustries).sort((left, right) => left.localeCompare(right));
+}
+
 function normalizeMixTotals(input: ShiftQueueMix) {
   const total = SHIFT_QUEUE_LANES.reduce((sum, lane) => sum + input[lane], 0);
   if (total <= 0) return { ...DEFAULT_SHIFT_QUEUE_MIX };
@@ -179,6 +196,7 @@ export function normalizeShiftQueueSettings(value: unknown): ShiftQueueSettings 
   return {
     minCallsPerShift: Number.isFinite(minCallsRaw) ? clamp(Math.round(minCallsRaw), 10, 250) : DEFAULT_SHIFT_QUEUE_MIN_CALLS,
     mix: normalizeShiftQueueMix(input.mix ?? preset?.mix ?? DEFAULT_SHIFT_QUEUE_MIX),
+    industry: normalizeShiftQueueIndustry(input.industry),
     presetId: typeof input.presetId === "string" && input.presetId.trim() ? input.presetId.trim() : preset?.id ?? null,
     updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : null,
     updatedByUserId: typeof input.updatedByUserId === "string" ? input.updatedByUserId : null,

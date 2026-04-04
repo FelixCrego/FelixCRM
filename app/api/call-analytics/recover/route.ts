@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getCallAnalyticsByContactId, upsertCallAnalytics } from "@/lib/call-analytics-store";
+import { canUserViewAllLeads, getLeadById } from "@/lib/store";
 import { hydrateCallAnalyticsPayload, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 import type { ContactLensWebhookPayload } from "@/lib/contact-lens";
 
@@ -24,47 +25,22 @@ type HydratedAnalytics = Partial<
   >
 >;
 
-function normalizeOptionalString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function mergeRawPayload(existing: unknown, patch: Record<string, unknown>) {
-  const base =
-    existing && typeof existing === "object" && !Array.isArray(existing)
-      ? (existing as Record<string, unknown>)
-      : {};
-
-  return Object.entries(patch).reduce<Record<string, unknown>>(
-    (acc, [key, value]) => {
-      if (value === undefined || value === null || value === "") return acc;
-      acc[key] = value;
-      return acc;
-    },
-    { ...base },
-  );
-}
-
 export async function POST(request: Request) {
   try {
     const user = await getAuthenticatedUser();
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json().catch(() => ({}))) as {
-      leadId?: string;
-      contactId?: string;
-      source?: string;
-      repId?: string;
-      leadOwnerId?: string;
-    };
+    const body = (await request.json().catch(() => ({}))) as { leadId?: string; contactId?: string };
     const leadId = typeof body.leadId === "string" ? body.leadId.trim() : "";
     const contactId = typeof body.contactId === "string" ? body.contactId.trim() : "";
-    const source = normalizeOptionalString(body.source) ?? "crm";
-    const repId = normalizeOptionalString(body.repId) ?? user.id;
-    const leadOwnerId = normalizeOptionalString(body.leadOwnerId);
 
     if (!leadId || !contactId) {
       return NextResponse.json({ error: "leadId and contactId are required." }, { status: 400 });
     }
+
+    const includeAll = await canUserViewAllLeads(user.id, user.email);
+    const lead = await getLeadById(leadId, user.id, { includeAll });
+    if (!lead) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
 
     const existing = await getCallAnalyticsByContactId(contactId).catch(() => null);
     const recoveredRecording: RecoveredRecording = await hydrateRecordingPayloadFromS3(contactId).catch(() => ({}));
@@ -95,16 +71,7 @@ export async function POST(request: Request) {
       interruptions: hydrated.interruptions ?? existing?.interruptions ?? null,
       event_source: hydrated.eventSource ?? recoveredRecording.eventSource ?? existing?.event_source ?? "crm-contact-recover",
       source_event_time: hydrated.sourceEventTime ?? recoveredRecording.sourceEventTime ?? existing?.source_event_time ?? null,
-      raw_payload: mergeRawPayload(existing?.raw_payload, {
-        lead_id: leadId,
-        contact_id: contactId,
-        event_source: "crm-contact-recover",
-        crm_source: source,
-        recovered_at: new Date().toISOString(),
-        linked_by_user_id: user.id,
-        rep_id: repId,
-        lead_owner_id: leadOwnerId,
-      }),
+      raw_payload: existing?.raw_payload ?? { lead_id: leadId, contact_id: contactId, event_source: "crm-contact-recover" },
     });
 
     return NextResponse.json({

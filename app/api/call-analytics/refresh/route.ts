@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { canUserViewAllLeads, getLeadById } from "@/lib/store";
 import { getCallAnalyticsByLeadId, upsertCallAnalytics } from "@/lib/call-analytics-store";
 import { hydrateCallAnalyticsPayload, hydrateRecordingPayloadFromS3 } from "@/lib/contact-lens-artifacts";
 import type { ContactLensWebhookPayload } from "@/lib/contact-lens";
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
     const leadId = typeof body.leadId === "string" ? body.leadId.trim() : "";
     const contactId = typeof body.contactId === "string" ? body.contactId.trim() : "";
     if (!leadId) return NextResponse.json({ error: "leadId is required." }, { status: 400 });
+
+    const includeAll = await canUserViewAllLeads(user.id, user.email);
+    const lead = await getLeadById(leadId, user.id, { includeAll });
+    if (!lead) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
 
     const rows = await getCallAnalyticsByLeadId(leadId, 25);
     let hydratedCount = 0;
