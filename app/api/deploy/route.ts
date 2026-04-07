@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { canUserManageAllLeads, getLeadById, setLeadDeployment } from "@/lib/store";
+import { canUserViewAllLeads, getLeadById, setLeadDeployment } from "@/lib/store";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { buildTemplateConfig, TEMPLATE_CONFIG_VERSION, type TemplateConfig } from "@/lib/template-config";
 
@@ -21,6 +21,7 @@ function normalizeRepoSlug(value: string | undefined): { owner: string; repo: st
 const TEMPLATE_REPO_MAP: Record<string, string> = {
   "garage-door": process.env.VERCEL_TEMPLATE_REPO || "FelixCrego/TemplateDetailer",
   "new-template": process.env.VERCEL_TEMPLATE_REPO_NEW_TEMPLATE || "FelixCrego/TemplateDetailer",
+  "med-spa": process.env.VERCEL_TEMPLATE_REPO_MED_SPA || "FelixCrego/TemplateMedSpa",
 };
 
 function resolveTemplateRepo(templateId: string | undefined): { templateId: string; repo: { owner: string; repo: string } | null } {
@@ -183,9 +184,16 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig, galler
     ["businessName", businessName],
     ["text", businessName],
     ["shortText", businessName],
+    ["category", config.business.category],
+    ["websiteUrl", config.business.websiteUrl],
     ["headline", config.content.hero.headline],
     ["subheadline", config.content.hero.subheadline],
     ["ctaLabel", config.content.hero.ctaLabel],
+    ["address", config.content.contact.address],
+    ["hours", config.content.contact.hours],
+    ["formCta", config.content.contact.formCta],
+    ["googleBusinessProfile", config.links.googleBusinessProfile],
+    ["summary", config.research.summary],
     ["logoUrl", config.branding.logoUrl],
     ["logo", config.branding.logoUrl],
     ["heroImageUrl", config.branding.heroImageUrl],
@@ -194,6 +202,7 @@ function applySiteConfigOverrides(source: string, config: TemplateConfig, galler
     ["defaultImageUrl", config.branding.featureImageUrl || config.branding.heroImageUrl],
     ["primaryColor", config.branding.primaryColor],
     ["secondaryColor", config.branding.secondaryColor],
+    ["themeVariant", config.branding.themeVariant],
   ];
 
   for (const [key, value] of stringOverrides) {
@@ -465,7 +474,7 @@ export async function POST(request: Request) {
     const leadId = String(body.leadId ?? "");
     if (!leadId) return NextResponse.json({ error: "leadId required" }, { status: 400 });
 
-    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserManageAllLeads(user.id, user.email) });
+    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserViewAllLeads(user.id, user.email) });
     if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
     await setLeadDeployment(leadId, { siteStatus: "BUILDING" });

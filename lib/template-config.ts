@@ -2,6 +2,8 @@ import type { Lead } from "@/lib/types";
 
 export const TEMPLATE_CONFIG_VERSION = "1.1.0";
 
+export type ThemeVariant = "classic" | "modern";
+
 type Primitive = string | number | boolean | null;
 type JsonValue = Primitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -65,6 +67,7 @@ export type TemplateConfig = {
     galleryImages: string[];
     primaryColor: string;
     secondaryColor: string;
+    themeVariant: ThemeVariant;
   };
   content: {
     hero: {
@@ -103,6 +106,10 @@ type TemplateConfigOverrides = Partial<TemplateConfig> & {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function normalizeThemeVariant(value: unknown): ThemeVariant {
+  return asString(value).trim().toLowerCase() === "modern" ? "modern" : "classic";
 }
 
 function sanitizeServiceBlocks(value: unknown): TemplateConfig["content"]["serviceBlocks"] {
@@ -453,6 +460,7 @@ export async function buildTemplateConfig(lead: Lead, overrides: unknown): Promi
       galleryImages: [],
       primaryColor: firstNonEmptyString([primaryEnrichmentColor, "#0f172a"]),
       secondaryColor: firstNonEmptyString([secondaryEnrichmentColor, primaryEnrichmentColor, "#2563eb"]),
+      themeVariant: "classic",
     },
     content: {
       hero: {
@@ -512,6 +520,7 @@ export async function buildTemplateConfig(lead: Lead, overrides: unknown): Promi
         : defaultConfig.branding.galleryImages,
       primaryColor: asString(brandingOverrides.primaryColor) || defaultConfig.branding.primaryColor,
       secondaryColor: asString(brandingOverrides.secondaryColor) || defaultConfig.branding.secondaryColor,
+      themeVariant: normalizeThemeVariant(brandingOverrides.themeVariant || defaultConfig.branding.themeVariant),
     },
     content: {
       ...defaultConfig.content,

@@ -116,6 +116,14 @@ const BRANDING_IMAGE_SLOTS = [
   "After Image 1",
 ] as const;
 
+const TEMPLATE_OPTIONS = [
+  { id: "new-template", label: "MobileDetailer" },
+  { id: "garage-door", label: "Garage Door" },
+  { id: "med-spa", label: "Med Spa" },
+] as const;
+
+type DeployTemplateId = (typeof TEMPLATE_OPTIONS)[number]["id"];
+
 type LeadContactRecord = {
   id: string;
   name: string;
@@ -882,7 +890,7 @@ export default function LeadExecutionPage() {
   const [brandingGalleryImages, setBrandingGalleryImages] = useState<string[]>(() => Array(BRANDING_IMAGE_SLOTS.length).fill(""));
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
   const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<"garage-door" | "new-template">("new-template");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<DeployTemplateId>("new-template");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
   const [callIntelHistory, setCallIntelHistory] = useState<CallIntelRecord[]>([]);
@@ -3156,11 +3164,14 @@ export default function LeadExecutionPage() {
                 <span className="block">Select Template</span>
                 <select
                   value={selectedTemplateId}
-                  onChange={(event) => setSelectedTemplateId(event.target.value as "garage-door" | "new-template")}
+                  onChange={(event) => setSelectedTemplateId(event.target.value as DeployTemplateId)}
                   className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none"
                 >
-                  <option value="new-template">MobileDetailer</option>
-                  <option value="garage-door">Garage Door</option>
+                  {TEMPLATE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -3215,7 +3226,9 @@ export default function LeadExecutionPage() {
               <label className="space-y-1">
                 <span className="block">Template image slots</span>
                 <span className="block text-[11px] text-indigo-200/80">
-                  These uploads map directly to the MobileDetailer template placeholders used in service cards and before/after sections.
+                  {selectedTemplateId === "med-spa"
+                    ? "These image slots feed the Med Spa gallery, treatment cards, product cards, and service visuals."
+                    : "These uploads map directly to the template placeholders used in service cards and before/after sections."}
                 </span>
                 <div className="mt-2 grid grid-cols-1 gap-2">
                   {BRANDING_IMAGE_SLOTS.map((label, index) => (
