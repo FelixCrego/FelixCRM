@@ -11,7 +11,7 @@ type Demo = {
   lead_name: string;
   selected_date: string;
   selected_time: string;
-  meet_link: string;
+  meet_link?: string | null;
 };
 
 type LeadApiRecord = {
@@ -19,6 +19,7 @@ type LeadApiRecord = {
   businessName?: string | null;
   business_name?: string | null;
   status?: string | null;
+  demoBooking?: PersistedBookedDemo | null;
   sourcePayload?: Record<string, unknown> | null;
   source_payload?: Record<string, unknown> | null;
 };
@@ -26,7 +27,12 @@ type LeadApiRecord = {
 type PersistedBookedDemo = {
   date?: string;
   time?: string;
+  selected_date?: string;
+  selected_time?: string;
   meetLink?: string;
+  meet_link?: string;
+  bookedAt?: string;
+  booked_at?: string;
 };
 
 const DEMO_CACHE_KEY = "felix:pending-upcoming-demos";
@@ -92,7 +98,7 @@ function normalizeDemo(value: unknown): Demo | null {
   const meetLink = typeof raw.meet_link === "string" ? raw.meet_link.trim() : "";
   const leadName = typeof raw.lead_name === "string" && raw.lead_name.trim() ? raw.lead_name.trim() : "Unknown Lead";
 
-  if (!selectedDate || !selectedTime || !meetLink || !isValidDateString(selectedDate)) return null;
+  if (!selectedDate || !selectedTime || !isValidDateString(selectedDate)) return null;
   if (selectedDate < getTodayKey()) return null;
 
   const rawLeadId = typeof raw.lead_id === "string" ? raw.lead_id.trim() : "";
@@ -105,7 +111,7 @@ function normalizeDemo(value: unknown): Demo | null {
     lead_name: leadName,
     selected_date: selectedDate,
     selected_time: selectedTime,
-    meet_link: meetLink,
+    meet_link: meetLink || null,
   };
 }
 
@@ -117,15 +123,30 @@ function resolveBookedDemoFromLead(lead: LeadApiRecord): Demo | null {
   if ((lead.status || "").toUpperCase() === "CLOSED") return null;
 
   const sourcePayload = (lead.sourcePayload ?? lead.source_payload ?? {}) as Record<string, unknown>;
-  const demoBooking = (sourcePayload.demoBooking ?? sourcePayload.demo_booking ?? null) as PersistedBookedDemo | null;
+  const demoBooking = (lead.demoBooking ?? sourcePayload.demoBooking ?? sourcePayload.demo_booking ?? null) as PersistedBookedDemo | null;
 
   if (!demoBooking) return null;
 
-  const date = typeof demoBooking.date === "string" ? demoBooking.date.trim() : "";
-  const time = typeof demoBooking.time === "string" ? demoBooking.time.trim() : "";
-  const meetLink = typeof demoBooking.meetLink === "string" ? demoBooking.meetLink.trim() : "";
+  const date =
+    typeof demoBooking.date === "string"
+      ? demoBooking.date.trim()
+      : typeof demoBooking.selected_date === "string"
+        ? demoBooking.selected_date.trim()
+        : "";
+  const time =
+    typeof demoBooking.time === "string"
+      ? demoBooking.time.trim()
+      : typeof demoBooking.selected_time === "string"
+        ? demoBooking.selected_time.trim()
+        : "";
+  const meetLink =
+    typeof demoBooking.meetLink === "string"
+      ? demoBooking.meetLink.trim()
+      : typeof demoBooking.meet_link === "string"
+        ? demoBooking.meet_link.trim()
+        : "";
 
-  if (!date || !time || !meetLink || !isValidDateString(date)) return null;
+  if (!date || !time || !isValidDateString(date)) return null;
   if (date < getTodayKey()) return null;
 
   const leadName =
@@ -139,7 +160,7 @@ function resolveBookedDemoFromLead(lead: LeadApiRecord): Demo | null {
     lead_name: leadName,
     selected_date: date,
     selected_time: time,
-    meet_link: meetLink,
+    meet_link: meetLink || null,
   };
 }
 
@@ -389,15 +410,23 @@ export default function DemosPage() {
                       Open Lead
                     </Link>
                   ) : null}
-                  <a
-                    href={demo.meet_link.startsWith("http") ? demo.meet_link : `https://${demo.meet_link}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full rounded-lg bg-indigo-600 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-indigo-700"
-                  >
-                    Launch Workspace &amp; Meet
-                  </a>
-                  <p className="text-xs text-zinc-400">Opens the Google Meet link for this scheduled demo.</p>
+                  {demo.meet_link ? (
+                    <a
+                      href={demo.meet_link.startsWith("http") ? demo.meet_link : `https://${demo.meet_link}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full rounded-lg bg-indigo-600 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-indigo-700"
+                    >
+                      Launch Workspace &amp; Meet
+                    </a>
+                  ) : (
+                    <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-center text-sm font-semibold text-amber-100">
+                      Meet Link Pending
+                    </div>
+                  )}
+                  <p className="text-xs text-zinc-400">
+                    {demo.meet_link ? "Opens the Google Meet link for this scheduled demo." : "This booking is scheduled, but no meet link is attached yet."}
+                  </p>
                 </div>
               </div>
             </article>
