@@ -1391,6 +1391,7 @@ export async function listClaimableLeads(limit = 100) {
 type CreateLeadInput = {
   businessName: string;
   phone?: string | null;
+  email?: string | null;
   websiteUrl?: string | null;
   aiResearchSummary?: string | null;
   sourceQuery?: string | null;
@@ -1422,6 +1423,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             city: "Unknown",
             business_type: "Manual",
             phone: lead.phone ?? null,
+            email: lead.email ?? null,
             website_url: lead.websiteUrl ?? null,
             normalized_name: lead.businessName.toLowerCase(),
             normalized_phone: lead.phone?.replace(/\D/g, "") ?? null,
@@ -1443,6 +1445,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
             city: "Unknown",
             businessType: "Manual",
             phone: lead.phone ?? null,
+            email: lead.email ?? null,
             websiteUrl: lead.websiteUrl ?? null,
             normalizedName: lead.businessName.toLowerCase(),
             normalizedPhone: lead.phone?.replace(/\D/g, "") ?? null,
@@ -1495,6 +1498,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
         ? {
             ...(existing.owner_id ? {} : { owner_id: ownerId }),
             phone: existing.phone ?? lead.phone ?? null,
+            email: existing.email ?? lead.email ?? null,
             website_url: existing.website_url ?? lead.websiteUrl ?? null,
             source_payload: {
               ...existingPayload,
@@ -1508,6 +1512,7 @@ export async function createOrMergeLead(ownerId: string, lead: CreateLeadInput, 
         : {
             ...(existing.ownerId ? {} : { ownerId }),
             phone: existing.phone ?? lead.phone ?? null,
+            email: existing.email ?? lead.email ?? null,
             websiteUrl: existing.websiteUrl ?? lead.websiteUrl ?? null,
             sourcePayload: {
               ...existingPayload,

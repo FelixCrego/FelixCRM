@@ -34,6 +34,7 @@ type Lead = {
 type ParsedCsvLead = {
   businessName: string;
   phone?: string;
+  email?: string;
   websiteUrl?: string;
   aiResearchSummary?: string;
   sourceQuery?: string;
@@ -108,18 +109,20 @@ function parseLeadsFromCsv(raw: string): ParsedCsvLead[] {
 
   const businessNameIndex = normalizedHeaders.findIndex((header) => ["businessname", "name", "company", "business"].includes(header));
   const phoneIndex = normalizedHeaders.findIndex((header) => ["phone", "phonenumber", "telephone"].includes(header));
+  const emailIndex = normalizedHeaders.findIndex((header) => ["email", "emailaddress", "contactemail", "businessemail", "owneremail"].includes(header));
   const websiteIndex = normalizedHeaders.findIndex((header) => ["website", "websiteurl", "url", "domain"].includes(header));
   const aiResearchSummaryIndex = normalizedHeaders.findIndex((header) => ["airesearchsummary", "deepaianalysis", "aianalysis", "analysis", "summary", "researchsummary"].includes(header));
   const sourceQueryIndex = normalizedHeaders.findIndex((header) => ["sourcequery", "source", "query", "searchquery", "sourceprompt"].includes(header));
 
   if (businessNameIndex < 0) {
-    throw new Error("CSV must include a business name column (businessName, name, company, or business). Optional columns: phone, website, Deep AI analysis, and source query.");
+    throw new Error("CSV must include a business name column (businessName, name, company, or business). Optional columns: phone, email, website, Deep AI analysis, and source query.");
   }
 
   return dataRows
     .map((row) => ({
       businessName: row[businessNameIndex]?.trim() || "",
       phone: phoneIndex >= 0 ? row[phoneIndex]?.trim() || "" : "",
+      email: emailIndex >= 0 ? row[emailIndex]?.trim() || "" : "",
       websiteUrl: websiteIndex >= 0 ? row[websiteIndex]?.trim() || "" : "",
       aiResearchSummary: aiResearchSummaryIndex >= 0 ? row[aiResearchSummaryIndex]?.trim() || "" : "",
       sourceQuery: sourceQueryIndex >= 0 ? row[sourceQueryIndex]?.trim() || "" : "",
@@ -419,7 +422,7 @@ export default function ScrapePage() {
     try {
       const csvText = await file.text();
       const leadsToImport = parseLeadsFromCsv(csvText);
-      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.\nRequired column: business name. Optional columns: phone, website, Deep AI analysis, and source query.");
+      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.\nRequired column: business name. Optional columns: phone, email, website, Deep AI analysis, and source query.");
 
       const response = await fetch("/api/leads/import", {
         method: "POST",

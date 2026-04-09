@@ -5,6 +5,7 @@ import { canUserAssignLeads, createOrMergeLead, isValidLeadAssignmentUserId } fr
 type ImportLeadInput = {
   businessName?: unknown;
   phone?: unknown;
+  email?: unknown;
   websiteUrl?: unknown;
   aiResearchSummary?: unknown;
   sourceQuery?: unknown;
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
       const result = await createOrMergeLead(resolvedOwnerId, {
         businessName,
         phone: typeof lead?.phone === "string" ? lead.phone.trim() || null : null,
+        email: typeof lead?.email === "string" ? lead.email.trim() || null : null,
         websiteUrl: typeof lead?.websiteUrl === "string" ? lead.websiteUrl.trim() || null : null,
         aiResearchSummary: typeof lead?.aiResearchSummary === "string" ? lead.aiResearchSummary.trim() || null : null,
         sourceQuery: typeof lead?.sourceQuery === "string" ? lead.sourceQuery.trim() || "csv_import" : "csv_import",
