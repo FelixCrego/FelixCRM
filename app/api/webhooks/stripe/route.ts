@@ -31,7 +31,12 @@ export async function POST(request: Request) {
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      await syncSubscriptionToLead(leads, event.data.object as Stripe.Subscription);
+      const incomingSubscription = event.data.object as Stripe.Subscription;
+      const subscription =
+        typeof incomingSubscription.id === "string"
+          ? await stripe.subscriptions.retrieve(incomingSubscription.id, { expand: ["customer"] })
+          : incomingSubscription;
+      await syncSubscriptionToLead(leads, subscription);
     }
 
     return NextResponse.json({ received: true });
