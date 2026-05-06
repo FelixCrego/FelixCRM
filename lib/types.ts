@@ -41,6 +41,7 @@ export type SeoTaskChecklistItem = {
 
 export type LeadAccountManagementProfile = {
   serviceStatus?: "ONBOARDING" | "ACTIVE" | "AT_RISK" | "PAUSED";
+  syncEnabled?: boolean;
   primaryOwnerId?: string | null;
   primaryOwnerName?: string | null;
   startDate?: string | null;
@@ -63,6 +64,21 @@ export type LeadAccountManagementProfile = {
     satisfaction?: "STRONG" | "STABLE" | "WATCH" | "AT_RISK";
     blockers?: string | null;
     expansionOpportunity?: string | null;
+  } | null;
+  successPlan?: {
+    primaryClientEmail?: string | null;
+    ccEmails?: string[] | null;
+    sendWeeklyReport?: boolean;
+    weeklyReportDay?: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+    weeklyReportTime?: string | null;
+    timeZone?: string | null;
+    communicationSummary?: string | null;
+    currentFocus?: string | null;
+    recentWins?: string | null;
+    currentRisks?: string | null;
+    nextSteps?: string | null;
+    lastWeeklyReportSentAt?: string | null;
+    nextWeeklyReportDueAt?: string | null;
   } | null;
 };
 
