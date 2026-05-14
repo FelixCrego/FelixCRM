@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronLeft, ChevronRight, Copy, Globe, Link2, Phone, RotateCcw } from "lucide-react";
 import { buildFallbackPlaybook, type AIDynamicPlaybook } from "@/lib/ai-playbook";
 import { useAmazonConnect } from "@/components/amazon-connect-provider";
+import { DemoPerformancePredictor } from "@/components/leads/demo-performance-predictor";
 import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
+import { getImportedFieldValue, type LeadCsvImportedFields } from "@/lib/lead-csv";
+import { MANAGER_CALL_REVIEW_CHANNEL } from "@/lib/lead-note-channels";
 import { createClientComponentClient } from "@/lib/supabase-client";
 import type { UserRole } from "@/lib/types";
 import FollowUpEngine from "./FollowUpEngine";
@@ -33,8 +36,21 @@ type LeadRecord = {
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
   vercel_deployment_id?: string | null;
   vercelDeploymentId?: string | null;
+  leadQuality?: string | null;
+  googleRating?: string | null;
+  googleReviews?: string | null;
+  importedFields?: LeadCsvImportedFields | null;
   source_payload?: {
     aiResearchSummary?: string | null;
+    ai_research_summary?: string | null;
+    leadQuality?: string | null;
+    lead_quality?: string | null;
+    googleRating?: string | null;
+    google_rating?: string | null;
+    googleReviews?: string | null;
+    google_reviews?: string | null;
+    importedFields?: LeadCsvImportedFields | null;
+    imported_fields?: LeadCsvImportedFields | null;
     contacts?: LeadContactRecord[];
     templateBranding?: {
       logoUrl?: string;
@@ -43,6 +59,11 @@ type LeadRecord = {
       galleryImages?: string[];
       primaryColor?: string;
       secondaryColor?: string;
+      themeVariant?: "classic" | "modern";
+    };
+    templateGeo?: {
+      primaryLocation?: string;
+      serviceAreas?: string[];
     };
     soldByUserId?: string | null;
     soldByName?: string | null;
@@ -60,6 +81,15 @@ type LeadRecord = {
   } | null;
   sourcePayload?: {
     aiResearchSummary?: string | null;
+    ai_research_summary?: string | null;
+    leadQuality?: string | null;
+    lead_quality?: string | null;
+    googleRating?: string | null;
+    google_rating?: string | null;
+    googleReviews?: string | null;
+    google_reviews?: string | null;
+    importedFields?: LeadCsvImportedFields | null;
+    imported_fields?: LeadCsvImportedFields | null;
     contacts?: LeadContactRecord[];
     templateBranding?: {
       logoUrl?: string;
@@ -68,6 +98,11 @@ type LeadRecord = {
       galleryImages?: string[];
       primaryColor?: string;
       secondaryColor?: string;
+      themeVariant?: "classic" | "modern";
+    };
+    templateGeo?: {
+      primaryLocation?: string;
+      serviceAreas?: string[];
     };
     soldByUserId?: string | null;
     soldByName?: string | null;
@@ -82,6 +117,13 @@ type LeadRecord = {
       meetLink?: string;
       bookedAt?: string;
     };
+  } | null;
+  demoBooking?: {
+    date?: string;
+    time?: string;
+    timeZone?: string;
+    meetLink?: string;
+    bookedAt?: string;
   } | null;
   enrichment?: {
     structured?: {
@@ -101,6 +143,7 @@ type LeadRecord = {
 };
 
 const LEAD_RESEARCH_CACHE_KEY = "leadResearchSummary";
+const LEAD_WORKSPACE_SEED_KEY = "felix.leadWorkspaceSeed";
 const BRANDING_IMAGE_SLOTS = [
   "Service Image 1",
   "Service Image 2",
@@ -156,6 +199,14 @@ type LeadNoteRecord = {
   activityType?: string;
   createdAt: string;
   created_at?: string;
+  targetUserId?: string | null;
+  targetUserName?: string | null;
+  requiresAcknowledgement?: boolean;
+  acknowledgedAt?: string | null;
+  acknowledgedByUserId?: string | null;
+  acknowledgedByName?: string | null;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
 };
 
 type CompletedFollowUpTask = {
@@ -178,16 +229,6 @@ type ScriptTab = "Scripts" | "Objections" | "Signals";
 type ExecutionLeadStatus = "New" | "Pitched" | "Demo Booked" | "Awaiting Approval" | "Payment Pending" | "Closed Won";
 
 const GOOGLE_VOICE_HOME_URL = "https://voice.google.com";
-
-
-
-type AwsActiveContact = {
-  onConnected?: (callback: () => void) => void;
-  onEnded?: (callback: () => void) => void;
-  getContactId?: () => string;
-  sendDigit?: (digit: string) => void;
-};
-
 type CallIntelTranscriptLine = {
   time?: string;
   speaker?: string;
@@ -576,6 +617,11 @@ const STATE_TIMEZONE_HINTS: TimeZoneHint[] = [
   },
 ];
 
+const AI_RESEARCH_SUMMARY_ALIASES = ["aiResearchSummary", "ai_research_summary"];
+const LEAD_QUALITY_ALIASES = ["leadQuality", "lead_quality", "LeadQuality"];
+const GOOGLE_RATING_ALIASES = ["googleRating", "google_rating", "GoogleRating"];
+const GOOGLE_REVIEWS_ALIASES = ["googleReviews", "google_reviews", "GoogleReviews"];
+
 function normalizeLocationText(value: string) {
   return ` ${value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
 }
@@ -598,6 +644,33 @@ function getMeaningfulText(value: string | null | undefined) {
   const trimmed = value.trim();
   if (!trimmed || trimmed.toLowerCase() === "unknown") return "";
   return trimmed;
+}
+
+function dedupeLocationList(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const value of values) {
+    const location = getMeaningfulText(value);
+    if (!location) continue;
+    const normalized = normalizeLocationText(location).trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    deduped.push(location);
+  }
+
+  return deduped;
+}
+
+function parseServiceAreaInput(value: string) {
+  return dedupeLocationList(value.split(/\r?\n|,/));
+}
+
+function formatServiceAreaInput(serviceAreas: string[] | null | undefined, primaryLocation: string) {
+  const normalizedPrimaryLocation = normalizeLocationText(primaryLocation).trim();
+  return dedupeLocationList(serviceAreas ?? [])
+    .filter((location) => normalizeLocationText(location).trim() !== normalizedPrimaryLocation)
+    .join("\n");
 }
 
 function collectLeadPhoneNumbers(lead: LeadRecord | null) {
@@ -686,6 +759,14 @@ function inferLeadTimeZone(
     location: leadCity || formatTimeZoneLabel(fallbackTimeZone),
     source: "browser timezone fallback",
   };
+}
+
+function formatLocalDateInputValue(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function toTwelveHourLabel(timeValue: string): string {
@@ -788,6 +869,17 @@ function getCallAnalysisState(record: CallIntelRecord | null): CallAnalysisState
   };
 }
 
+const FALLBACK_LEAD: LeadRecord = {
+  id: "fallback-lead",
+  business_name: "Demo Business",
+  status: "New",
+  phone: "No phone on file",
+  website: "No website on file",
+  city: "Unknown location",
+  email: "No email on file",
+  deployed_url: "",
+};
+
 function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord[] {
   const payloadContacts = leadRecord?.source_payload?.contacts ?? leadRecord?.sourcePayload?.contacts ?? leadRecord?.contacts;
 
@@ -831,9 +923,76 @@ function normalizeLeadContacts(leadRecord: LeadRecord | null): LeadContactRecord
   ];
 }
 
+function resolveLeadDemoBooking(leadRecord: LeadRecord | null) {
+  return leadRecord?.demoBooking ?? leadRecord?.source_payload?.demoBooking ?? leadRecord?.sourcePayload?.demoBooking ?? null;
+}
+
+function normalizeImportedFields(value: unknown): LeadCsvImportedFields {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<LeadCsvImportedFields>((accumulator, [label, rawValue]) => {
+    const key = label.trim();
+    const value = typeof rawValue === "string" ? rawValue.trim() : rawValue === null || rawValue === undefined ? "" : String(rawValue).trim();
+    if (!key || !value) return accumulator;
+    accumulator[key] = value;
+    return accumulator;
+  }, {});
+}
+
+function getLeadSourcePayload(leadRecord: LeadRecord | null) {
+  return (leadRecord?.source_payload ?? leadRecord?.sourcePayload ?? null) as Record<string, unknown> | null;
+}
+
+function getLeadImportedFields(leadRecord: LeadRecord | null) {
+  const sourcePayload = getLeadSourcePayload(leadRecord);
+  return normalizeImportedFields(leadRecord?.importedFields ?? sourcePayload?.importedFields ?? sourcePayload?.imported_fields);
+}
+
+function getLeadFieldValue(leadRecord: LeadRecord | null, aliases: string[], topLevelValues: Array<string | null | undefined> = []) {
+  for (const value of topLevelValues) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  const sourcePayload = getLeadSourcePayload(leadRecord);
+  for (const alias of aliases) {
+    const value = sourcePayload?.[alias];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return getImportedFieldValue(getLeadImportedFields(leadRecord), aliases);
+}
+
 function hasBookedDemo(leadRecord: LeadRecord | null) {
-  const demoBooking = leadRecord?.source_payload?.demoBooking ?? leadRecord?.sourcePayload?.demoBooking;
+  const demoBooking = resolveLeadDemoBooking(leadRecord);
   return Boolean(demoBooking?.meetLink && demoBooking?.date && demoBooking?.time);
+}
+
+function readLeadWorkspaceSeed(leadId: string) {
+  if (!leadId || typeof window === "undefined") return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(LEAD_WORKSPACE_SEED_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as {
+      leadId?: string;
+      lead?: LeadRecord | null;
+      orderedLeadIds?: string[];
+    } | null;
+
+    if (!parsed?.lead || String(parsed.leadId ?? "") !== leadId) {
+      return null;
+    }
+
+    return {
+      lead: parsed.lead,
+      orderedLeadIds: Array.isArray(parsed.orderedLeadIds) ? parsed.orderedLeadIds.map((value) => String(value)).filter(Boolean) : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 function LeadWorkspaceSkeleton() {
@@ -865,6 +1024,7 @@ function LeadWorkspaceSkeleton() {
 export default function LeadExecutionPage() {
   const params = useParams<{ id?: string | string[] }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const leadId = useMemo(() => {
     const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
     return typeof rawId === "string" ? rawId.trim() : "";
@@ -873,7 +1033,6 @@ export default function LeadExecutionPage() {
 
   const [status, setStatus] = useState<FetchStatus>("loading");
   const [lead, setLead] = useState<LeadRecord | null>(null);
-  const [loadError, setLoadError] = useState("");
   const [orderedLeadIds, setOrderedLeadIds] = useState<string[]>([]);
 
   const [researchLoading, setResearchLoading] = useState(false);
@@ -890,6 +1049,9 @@ export default function LeadExecutionPage() {
   const [brandingGalleryImages, setBrandingGalleryImages] = useState<string[]>(() => Array(BRANDING_IMAGE_SLOTS.length).fill(""));
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#0f172a");
   const [brandingSecondaryColor, setBrandingSecondaryColor] = useState("#2563eb");
+  const [selectedThemeVariant, setSelectedThemeVariant] = useState<"classic" | "modern">("classic");
+  const [deploymentPrimaryLocation, setDeploymentPrimaryLocation] = useState("");
+  const [deploymentServiceAreaInput, setDeploymentServiceAreaInput] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<DeployTemplateId>("new-template");
 
   const [activeTab, setActiveTab] = useState<ActivityTab>("Notes");
@@ -898,15 +1060,32 @@ export default function LeadExecutionPage() {
   const [isLoadingIntel, setIsLoadingIntel] = useState(false);
   const [scriptTab, setScriptTab] = useState<ScriptTab>("Scripts");
   const [showDisposition, setShowDisposition] = useState(false);
-  const [ccpStatus, setCcpStatus] = useState<"READY" | "ACW">("READY");
   const [currentContactId, setCurrentContactId] = useState<string | null>(null);
-  const activeContactRef = useRef<AwsActiveContact | null>(null);
   const linkedContactIdRef = useRef<string | null>(null);
+  const lastProviderContactIdRef = useRef<string | null>(null);
+  const promptedDispositionContactIdRef = useRef<string | null>(null);
+  const previousCallStatusRef = useRef<"idle" | "connecting" | "connected" | "acw">("idle");
   const [selectedDisposition, setSelectedDisposition] = useState("");
   const [dispositionSummary, setDispositionSummary] = useState("");
   const [savingDisposition, setSavingDisposition] = useState(false);
 
-  const { activeContactId, callActive, callSeconds, ccpReady, connectionStatus, callStatus, startOutboundCall, endActiveCall, sendCallDigit } = useAmazonConnect();
+  const {
+    activeContactId,
+    callActive,
+    callSeconds,
+    ccpReady,
+    connectionStatus,
+    callStatus,
+    callError,
+    agentStateLabel,
+    agentReadyForOutbound,
+    retrySecondsRemaining,
+    retryStatusMessage,
+    startOutboundCall,
+    endActiveCall,
+    sendCallDigit,
+    completeAfterCallWork,
+  } = useAmazonConnect();
   const [dialNumber, setDialNumber] = useState("");
   const [showKeypad, setShowKeypad] = useState(false);
   const keypadDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
@@ -917,6 +1096,10 @@ export default function LeadExecutionPage() {
     }
   }, [callActive]);
 
+  useEffect(() => {
+    setMeetingAction(null);
+  }, [leadId]);
+
   const [selectedMeetingDay, setSelectedMeetingDay] = useState("");
   const [selectedMeetingTime, setSelectedMeetingTime] = useState("");
   const [isCustomScheduling, setIsCustomScheduling] = useState(false);
@@ -926,6 +1109,7 @@ export default function LeadExecutionPage() {
   const [customMeetingTimes, setCustomMeetingTimes] = useState<string[]>([]);
   const [meetingLoading, setMeetingLoading] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
+  const [meetingAction, setMeetingAction] = useState<"book" | "reschedule" | null>(null);
   const [meetingError, setMeetingError] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
 
@@ -952,6 +1136,7 @@ export default function LeadExecutionPage() {
   const [notesDraft, setNotesDraft] = useState("");
   const [isDrafting, setIsDrafting] = useState(false);
   const [notes, setNotes] = useState<LeadNoteRecord[]>([]);
+  const [acknowledgingManagerNoteId, setAcknowledgingManagerNoteId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<LeadTaskRecord[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState("");
@@ -1056,53 +1241,46 @@ export default function LeadExecutionPage() {
     setSoldByUserId(persistedSoldByUserId || leadOwnerId || currentUserId || "");
   }, [currentUserId, lead?.id, lead?.ownerId, lead?.owner_id, lead?.sourcePayload, lead?.source_payload, leadOwnerId]);
 
-  const captureContactId = useCallback((contact: AwsActiveContact | null | undefined, attempts = 10) => {
-    const contactId = contact?.getContactId?.() ?? null;
-    if (contactId) {
-      setCurrentContactId(contactId);
-      return;
-    }
-
-    if (!contact || attempts <= 0 || typeof window === "undefined") {
-      return;
-    }
-
-    window.setTimeout(() => {
-      captureContactId(contact, attempts - 1);
-    }, 750);
-  }, []);
-
   useEffect(() => {
-    if (activeContactId) {
+    if (activeContactId && activeContactId !== lastProviderContactIdRef.current) {
+      lastProviderContactIdRef.current = activeContactId;
+      promptedDispositionContactIdRef.current = null;
       setCurrentContactId(activeContactId);
     }
   }, [activeContactId]);
 
   useEffect(() => {
-    type ConnectWindow = Window & {
-      connect?: {
-        contact?: (callback: (contact: AwsActiveContact) => void) => void;
-      };
-    };
+    const previousCallStatus = previousCallStatusRef.current;
+    const shouldPromptDisposition =
+      Boolean(currentContactId) &&
+      !showDisposition &&
+      promptedDispositionContactIdRef.current !== currentContactId &&
+      (callStatus === "acw" || (callStatus === "idle" && previousCallStatus !== "idle"));
 
-    const windowWithConnect = window as ConnectWindow;
-    windowWithConnect.connect?.contact?.((contact) => {
-      activeContactRef.current = contact;
-      captureContactId(contact);
+    if (shouldPromptDisposition) {
+      promptedDispositionContactIdRef.current = currentContactId;
+      setShowKeypad(false);
+      setShowDisposition(true);
+    }
 
-      contact.onConnected?.(() => {
-        activeContactRef.current = contact;
-        const contactId = contact.getContactId?.() ?? null;
-        console.log("AWS Call Connected. Contact ID:", contactId);
-        captureContactId(contact, 12);
-      });
+    if (callStatus !== previousCallStatus) {
+      if (callStatus === "connected" || callStatus === "connecting") {
+        setShowDisposition(false);
+      }
 
-      contact.onEnded?.(() => {
-        activeContactRef.current = null;
-        setShowDisposition(true);
-      });
-    });
-  }, [captureContactId]);
+      if (callStatus === "idle") {
+        setShowKeypad(false);
+      }
+    }
+
+    previousCallStatusRef.current = callStatus;
+  }, [callStatus, currentContactId, showDisposition]);
+
+  useEffect(() => {
+    if (!callActive && callStatus === "idle" && !showDisposition) {
+      setShowKeypad(false);
+    }
+  }, [callActive, callStatus, showDisposition]);
 
   useEffect(() => {
     if (!leadId || !currentContactId || linkedContactIdRef.current === currentContactId) return;
@@ -1116,6 +1294,9 @@ export default function LeadExecutionPage() {
         body: JSON.stringify({
           leadId,
           contactId: currentContactId,
+          source: "lead-workspace",
+          repId: currentUserId || undefined,
+          leadOwnerId: leadOwnerId || undefined,
         }),
       });
 
@@ -1136,7 +1317,7 @@ export default function LeadExecutionPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentContactId, leadId]);
+  }, [currentContactId, currentUserId, leadId, leadOwnerId]);
 
   useEffect(() => {
     if (!leadId || !currentContactId || callStatus !== "idle" || recoveringContactId === currentContactId) return;
@@ -1155,6 +1336,9 @@ export default function LeadExecutionPage() {
             body: JSON.stringify({
               leadId,
               contactId: currentContactId,
+              source: "lead-workspace",
+              repId: currentUserId || undefined,
+              leadOwnerId: leadOwnerId || undefined,
             }),
           }).catch(() => null);
 
@@ -1185,106 +1369,128 @@ export default function LeadExecutionPage() {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [callStatus, currentContactId, leadId, recoveringContactId]);
+  }, [callStatus, currentContactId, currentUserId, leadId, leadOwnerId, recoveringContactId]);
 
 
   useEffect(() => {
     let alive = true;
 
-    async function loadLead() {
-      setStatus("loading");
-      setLoadError("");
-
+    const loadOrderedLeadIds = async () => {
       try {
-        if (!leadId) {
-          throw new Error("Lead id is missing.");
-        }
-
-        const leadResponse = await fetch(`/api/leads/${encodeURIComponent(leadId)}`, {
+        const response = await fetch("/api/leads", {
           method: "GET",
           headers: { Accept: "application/json" },
           cache: "no-store",
         });
 
-        const leadPayload = (await leadResponse.json().catch(() => null)) as { lead?: LeadRecord; error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as { leads?: LeadRecord[] } | null;
+        if (!response.ok || !alive) return;
 
-        if (!leadResponse.ok || !leadPayload?.lead) {
-          throw new Error(leadPayload?.error || "Unable to load lead.");
+        const nextOrderedLeadIds = Array.isArray(payload?.leads) ? payload.leads.map((candidate) => String(candidate.id ?? "")).filter(Boolean) : [];
+        if (nextOrderedLeadIds.length > 0) {
+          setOrderedLeadIds(nextOrderedLeadIds);
         }
+      } catch {
+        // Ignore ordered-id refresh failures and keep the current navigation context.
+      }
+    };
 
-        const data = leadPayload.lead;
-        let nextOrderedLeadIds: string[] = [];
+    async function loadLead() {
+      setStatus("loading");
 
-        try {
-          const response = await fetch("/api/leads", {
-            method: "GET",
-            headers: { Accept: "application/json" },
-            cache: "no-store",
-          });
-          const payload = (await response.json().catch(() => null)) as { leads?: LeadRecord[] } | null;
-          if (response.ok && Array.isArray(payload?.leads)) {
-            nextOrderedLeadIds = payload.leads.map((candidate) => candidate.id).filter(Boolean);
-          }
-        } catch {
-          // Adjacent lead navigation is optional. Keep the current workspace loaded.
-        }
-
-        if (!alive) return;
-
-        setOrderedLeadIds(nextOrderedLeadIds);
-        setLead(data);
-        setLeadContacts(normalizeLeadContacts(data));
-        const existingResearch =
-          data.source_payload?.aiResearchSummary ?? data.sourcePayload?.aiResearchSummary ?? data.aiResearchSummary ?? "";
-        setResearchInsight(existingResearch);
-        setResearchError("");
-        const existingDemoBooking = data.source_payload?.demoBooking ?? data.sourcePayload?.demoBooking;
-        setSelectedMeetingDay(existingDemoBooking?.date ?? "");
-        setSelectedMeetingTime(existingDemoBooking?.time ?? "");
-        setMeetingLink(existingDemoBooking?.meetLink ?? "");
-
-        const resolvedStatus = typeof data.status === "string" ? data.status : "";
-        const leadIsClosed =
-          resolvedStatus.toUpperCase() === "CLOSED" ||
-          typeof data.closedAt === "string" ||
-          typeof data.closed_at === "string" ||
-          typeof data.closedDealValue === "number" ||
-          typeof data.closed_deal_value === "number";
-        if (leadIsClosed) {
-          setLeadExecutionStatus("Closed Won");
-        } else if (
-          resolvedStatus === "New" ||
-          resolvedStatus === "Pitched" ||
-          resolvedStatus === "Demo Booked" ||
-          resolvedStatus === "Awaiting Approval" ||
-          resolvedStatus === "Payment Pending" ||
-          resolvedStatus === "Closed Won"
-        ) {
-          setLeadExecutionStatus(resolvedStatus);
-        } else if (hasBookedDemo(data)) {
-          setLeadExecutionStatus("Demo Booked");
-        } else {
+      try {
+        if (!leadId) {
+          setLead(FALLBACK_LEAD);
           setLeadExecutionStatus("New");
+          setStatus("ready");
+          return;
         }
-        setStatus("ready");
-        return;
-      } catch (error) {
-        // Surface the load failure instead of swapping in demo data.
+
+        const seededLead = readLeadWorkspaceSeed(leadId);
+        const applyLeadRecord = (data: LeadRecord, orderedIds?: string[]) => {
+          if (orderedIds?.length) {
+            setOrderedLeadIds(orderedIds);
+          }
+          setLead(data);
+          setLeadContacts(normalizeLeadContacts(data));
+          const existingResearch = getLeadFieldValue(data, AI_RESEARCH_SUMMARY_ALIASES, [data.aiResearchSummary]) ?? "";
+          setResearchInsight(existingResearch);
+          setResearchError("");
+          const existingDemoBooking = resolveLeadDemoBooking(data);
+          if (existingDemoBooking?.date) setSelectedMeetingDay(existingDemoBooking.date);
+          if (existingDemoBooking?.time) setSelectedMeetingTime(existingDemoBooking.time);
+          if (existingDemoBooking?.meetLink) setMeetingLink(existingDemoBooking.meetLink);
+
+          const resolvedStatus = typeof data.status === "string" ? data.status : "";
+          const leadIsClosed =
+            resolvedStatus.toUpperCase() === "CLOSED" ||
+            typeof data.closedAt === "string" ||
+            typeof data.closed_at === "string" ||
+            typeof data.closedDealValue === "number" ||
+            typeof data.closed_deal_value === "number";
+          if (leadIsClosed) {
+            setLeadExecutionStatus("Closed Won");
+          } else if (
+            resolvedStatus === "New" ||
+            resolvedStatus === "Pitched" ||
+            resolvedStatus === "Demo Booked" ||
+            resolvedStatus === "Awaiting Approval" ||
+            resolvedStatus === "Payment Pending" ||
+            resolvedStatus === "Closed Won"
+          ) {
+            setLeadExecutionStatus(resolvedStatus);
+          } else if (hasBookedDemo(data)) {
+            setLeadExecutionStatus("Demo Booked");
+          }
+        };
+
+        if (seededLead && alive) {
+          applyLeadRecord(seededLead.lead, seededLead.orderedLeadIds);
+          setStatus("ready");
+        }
+
+        const response = await fetch(`/api/leads/${encodeURIComponent(leadId)}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+
+        const payload = (await response.json().catch(() => null)) as { lead?: LeadRecord | null; error?: string } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error || "Unable to load lead.");
+        }
+
+        const data = payload?.lead ?? null;
+
         if (!alive) return;
 
-        setLead(null);
-        setOrderedLeadIds([]);
-        setLeadContacts([]);
-        setResearchInsight("");
-        setResearchError("");
-        setSelectedMeetingDay("");
-        setSelectedMeetingTime("");
-        setMeetingLink("");
-        setLeadExecutionStatus("New");
-        setLoadError(error instanceof Error ? error.message : "Unable to load this lead workspace.");
-        setStatus("error");
+        if (data) {
+          applyLeadRecord(data, seededLead?.orderedLeadIds);
+          setStatus("ready");
+          void loadOrderedLeadIds();
+          return;
+        }
+      } catch {
+        // Fall back silently for any fetch error.
+      }
+
+      if (!alive) return;
+
+      const seededLead = readLeadWorkspaceSeed(leadId);
+      if (seededLead?.lead) {
+        setOrderedLeadIds(seededLead.orderedLeadIds);
+        setLead(seededLead.lead);
+        setLeadContacts(normalizeLeadContacts(seededLead.lead));
+        setStatus("ready");
+        void loadOrderedLeadIds();
         return;
       }
+
+      setLead(FALLBACK_LEAD);
+      setLeadContacts(normalizeLeadContacts(FALLBACK_LEAD));
+      setLeadExecutionStatus("New");
+      setStatus("ready");
     }
 
     loadLead();
@@ -1320,15 +1526,29 @@ export default function LeadExecutionPage() {
       }
 
       try {
-        const response = await fetch(`/api/deploy/status?leadId=${encodeURIComponent(leadId)}`, { cache: "no-store" });
-        const payload = (await response.json().catch(() => null)) as { siteStatus?: string; deployedUrl?: string | null; readyState?: string; error?: string } | null;
+        const response = await fetch(`/api/deploy/status?leadId=${encodeURIComponent(leadId)}`, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          siteStatus?: string;
+          deployedUrl?: string | null;
+          previewUrl?: string | null;
+          liveUrl?: string | null;
+          readyState?: string;
+          error?: string;
+        } | null;
 
         if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error("Your CRM session expired. Refresh the page and sign in again.");
+          }
           throw new Error(payload?.error || "Unable to fetch deployment status.");
         }
 
         const nextStatus = payload?.siteStatus;
-        const nextUrl = payload?.deployedUrl || undefined;
+        const nextUrl = payload?.deployedUrl || payload?.liveUrl || payload?.previewUrl || undefined;
+        const previewUrl = payload?.previewUrl || undefined;
 
         if (!active) return;
 
@@ -1371,23 +1591,16 @@ export default function LeadExecutionPage() {
         const readyState = payload?.readyState || "BUILDING";
         const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
 
-        if (elapsedSeconds >= 180 && nextUrl) {
-          setDeployProgress(100);
-          setDeployStageLabel("Build window elapsed. Live link is ready to open.");
-          setDeployStartedAt(null);
-          setDeployError("");
+        if (nextUrl) {
           setLead((previous) =>
             previous
               ? {
                   ...previous,
-                  site_status: "LIVE",
-                  siteStatus: "LIVE",
                   deployed_url: nextUrl || previous.deployed_url || previous.deployedUrl || "",
                   deployedUrl: nextUrl || previous.deployedUrl || previous.deployed_url || "",
                 }
               : previous,
           );
-          return;
         }
 
         const estimatedByState: Record<string, number> = {
@@ -1396,10 +1609,14 @@ export default function LeadExecutionPage() {
           BUILDING: 55,
           DEPLOYING: 78,
         };
-        const elapsedProgress = Math.min(Math.floor((elapsedSeconds / 180) * 100), 90);
+        const elapsedProgress = Math.min(Math.floor((elapsedSeconds / 180) * 100), 94);
         const stateProgress = estimatedByState[readyState] ?? 45;
         setDeployProgress((previous) => Math.min(Math.max(previous, stateProgress, elapsedProgress), 95));
-        setDeployStageLabel(readyState === "QUEUED" ? "Queued in build pipeline..." : `Building (${readyState})...`);
+        if (elapsedSeconds >= 180) {
+          setDeployStageLabel(previewUrl ? "Build is still running. Preview is available while Vercel finalizes the live alias." : "Build is taking longer than expected on Vercel.");
+        } else {
+          setDeployStageLabel(readyState === "QUEUED" ? "Queued in build pipeline..." : `Building (${readyState})...`);
+        }
       } catch (error) {
         if (!active) return;
         setDeployError(error instanceof Error ? error.message : "Unable to fetch deployment status.");
@@ -1417,6 +1634,60 @@ export default function LeadExecutionPage() {
       window.clearInterval(interval);
     };
   }, [deployStartedAt, lead?.site_status, lead?.siteStatus, leadId]);
+
+  useEffect(() => {
+    if (!leadId) return;
+
+    const currentStatus = lead?.site_status || lead?.siteStatus;
+    const currentDeploymentId = lead?.vercel_deployment_id || lead?.vercelDeploymentId;
+    if (currentStatus !== "LIVE" || !currentDeploymentId) return;
+
+    let active = true;
+
+    const syncLiveDeploymentUrl = async () => {
+      try {
+        const response = await fetch(`/api/deploy/status?leadId=${encodeURIComponent(leadId)}`, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          siteStatus?: string;
+          deployedUrl?: string | null;
+          previewUrl?: string | null;
+          liveUrl?: string | null;
+        } | null;
+        if (!response.ok || !active) return;
+
+        const nextStatus = payload?.siteStatus;
+        const nextUrl = payload?.deployedUrl || payload?.liveUrl || payload?.previewUrl || "";
+        if (!nextStatus && !nextUrl) return;
+
+        setLead((previous) => {
+          if (!previous) return previous;
+
+          const previousStatus = previous.site_status || previous.siteStatus || "";
+          const previousUrl = previous.deployed_url || previous.deployedUrl || "";
+          if (previousStatus === nextStatus && previousUrl === nextUrl) return previous;
+
+          return {
+            ...previous,
+            site_status: (nextStatus as LeadRecord["site_status"]) || previous.site_status,
+            siteStatus: (nextStatus as LeadRecord["siteStatus"]) || previous.siteStatus,
+            deployed_url: nextUrl || previous.deployed_url || previous.deployedUrl || "",
+            deployedUrl: nextUrl || previous.deployedUrl || previous.deployed_url || "",
+          };
+        });
+      } catch {
+        // Keep the existing link if Vercel status sync fails.
+      }
+    };
+
+    void syncLiveDeploymentUrl();
+
+    return () => {
+      active = false;
+    };
+  }, [leadId, lead?.deployedUrl, lead?.deployed_url, lead?.siteStatus, lead?.site_status, lead?.vercelDeploymentId, lead?.vercel_deployment_id]);
 
   useEffect(() => {
     if (activeTab !== "Call Audio & AI" || !leadId) return;
@@ -1574,7 +1845,11 @@ export default function LeadExecutionPage() {
 
   const leadName = lead?.business_name || lead?.businessName || "Unknown Business";
   const leadPhone = lead?.phone || "No phone on file";
-  const leadDemoBooking = lead?.source_payload?.demoBooking ?? lead?.sourcePayload?.demoBooking;
+  const leadDemoBooking = resolveLeadDemoBooking(lead);
+  const hasExistingDemoBooking = hasBookedDemo(lead);
+  const existingMeetingDay = leadDemoBooking?.date ?? "";
+  const existingMeetingTime = leadDemoBooking?.time ?? "";
+  const isRescheduleMode = searchParams.get("reschedule") === "1";
   const closedAt = lead?.closedAt ?? lead?.closed_at ?? null;
   const closedDealValue = lead?.closedDealValue ?? lead?.closed_deal_value ?? null;
   const isClosedDeal =
@@ -1582,7 +1857,7 @@ export default function LeadExecutionPage() {
     (typeof lead?.status === "string" && lead.status.toUpperCase() === "CLOSED") ||
     typeof closedAt === "string" ||
     typeof closedDealValue === "number";
-  const isDemoBooked = !isClosedDeal && (hasBookedDemo(lead) || leadExecutionStatus === "Demo Booked");
+  const isDemoBooked = !isClosedDeal && (hasExistingDemoBooking || leadExecutionStatus === "Demo Booked");
   const leadWebsite = lead?.website || lead?.website_url || lead?.websiteUrl || "No website on file";
   const hasLeadWebsite = leadWebsite !== "No website on file";
   const leadWebsiteHref = leadWebsite.startsWith("http://") || leadWebsite.startsWith("https://") ? leadWebsite : `https://${leadWebsite}`;
@@ -1601,13 +1876,23 @@ export default function LeadExecutionPage() {
     const seconds = remaining % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")} remaining (est.)`;
   }, [deployStartedAt, siteStatus]);
-  const leadCity = lead?.city || "Unknown city";
+  const leadCityValue = getMeaningfulText(lead?.city);
+  const leadCity = leadCityValue || "Unknown city";
+  const importedLeadQuality = getLeadFieldValue(lead, LEAD_QUALITY_ALIASES, [lead?.leadQuality]);
+  const importedGoogleRating = getLeadFieldValue(lead, GOOGLE_RATING_ALIASES, [lead?.googleRating]);
+  const importedGoogleReviews = getLeadFieldValue(lead, GOOGLE_REVIEWS_ALIASES, [lead?.googleReviews]);
+  const importedLeadFieldEntries = useMemo(
+    () => Object.entries(getLeadImportedFields(lead)).sort((left, right) => left[0].localeCompare(right[0])),
+    [lead],
+  );
 
   useEffect(() => {
     const sourcePayload = lead?.source_payload ?? lead?.sourcePayload;
     const branding = sourcePayload?.templateBranding;
+    const templateGeo = sourcePayload?.templateGeo;
     const enrichmentStructured = lead?.enrichment?.structured;
     const enrichmentColors = Array.isArray(enrichmentStructured?.brandColors) ? enrichmentStructured.brandColors.filter(Boolean) : [];
+    const primaryLocation = getMeaningfulText(templateGeo?.primaryLocation) || leadCityValue;
     setBrandingLogoUrl(branding?.logoUrl || enrichmentStructured?.logoUrl || "");
     setBrandingHeroImageUrl(branding?.heroImageUrl || "");
     setBrandingFeatureImageUrl(branding?.featureImageUrl || branding?.heroImageUrl || "");
@@ -1616,7 +1901,10 @@ export default function LeadExecutionPage() {
     );
     setBrandingPrimaryColor(branding?.primaryColor || enrichmentColors[0] || "#0f172a");
     setBrandingSecondaryColor(branding?.secondaryColor || enrichmentColors[1] || enrichmentColors[0] || "#2563eb");
-  }, [lead?.enrichment, lead?.id, lead?.sourcePayload, lead?.source_payload]);
+    setSelectedThemeVariant(branding?.themeVariant === "modern" ? "modern" : "classic");
+    setDeploymentPrimaryLocation(primaryLocation);
+    setDeploymentServiceAreaInput(formatServiceAreaInput(templateGeo?.serviceAreas, primaryLocation));
+  }, [lead?.enrichment, lead?.id, lead?.sourcePayload, lead?.source_payload, leadCityValue]);
 
   const hasSocialPresenceForPlaybook = useMemo(
     () => /(instagram|facebook|tiktok|youtube|linkedin|social)/i.test(researchInsight || ""),
@@ -1839,6 +2127,16 @@ export default function LeadExecutionPage() {
       return;
     }
 
+    const resolvedPrimaryLocation = getMeaningfulText(deploymentPrimaryLocation) || leadCityValue;
+    if (!resolvedPrimaryLocation) {
+      setDeployError("Add a main city before deploying this site.");
+      return;
+    }
+
+    const manualServiceAreas = parseServiceAreaInput(deploymentServiceAreaInput);
+    const serviceAreaOverride =
+      manualServiceAreas.length > 0 ? dedupeLocationList([resolvedPrimaryLocation, ...manualServiceAreas]).slice(0, 12) : undefined;
+
     setDeployLoading(true);
     setDeployError("");
     setDeployStartedAt(Date.now());
@@ -1848,10 +2146,11 @@ export default function LeadExecutionPage() {
     const templateConfigOverrides = {
       business: {
         name: leadName,
-        city: leadCity,
+        city: resolvedPrimaryLocation,
       },
       geo: {
-        primaryLocation: leadCity,
+        primaryLocation: resolvedPrimaryLocation,
+        ...(serviceAreaOverride ? { serviceAreas: serviceAreaOverride } : {}),
       },
       branding: {
         logoUrl: brandingLogoUrl.trim(),
@@ -1860,6 +2159,7 @@ export default function LeadExecutionPage() {
         galleryImages: brandingGalleryImages.map((value) => value.trim()),
         primaryColor: brandingPrimaryColor,
         secondaryColor: brandingSecondaryColor,
+        themeVariant: selectedThemeVariant,
       },
       research: {
         summary: researchInsight.trim(),
@@ -1867,9 +2167,13 @@ export default function LeadExecutionPage() {
     };
 
     try {
+      await ensureAuthenticatedSession();
+
       const response = await fetch("/api/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({
           leadId,
           templateId: selectedTemplateId,
@@ -1879,6 +2183,7 @@ export default function LeadExecutionPage() {
             NEXT_PUBLIC_BUSINESS_NAME: leadName,
             NEXT_PUBLIC_PRIMARY_COLOR: brandingPrimaryColor,
             NEXT_PUBLIC_SECONDARY_COLOR: brandingSecondaryColor,
+            NEXT_PUBLIC_TEMPLATE_VARIANT: selectedThemeVariant,
             NEXT_PUBLIC_LOGO_URL: brandingLogoUrl.trim(),
             NEXT_PUBLIC_HERO_URL: brandingHeroImageUrl.trim(),
             NEXT_PUBLIC_FEATURE_IMAGE_URL: brandingFeatureImageUrl.trim(),
@@ -1886,14 +2191,26 @@ export default function LeadExecutionPage() {
         }),
       });
 
-      const payload = (await response.json().catch(() => null)) as { url?: string; deployedUrl?: string; liveUrl?: string; project?: string; deploymentId?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as {
+        url?: string;
+        previewUrl?: string;
+        deployedUrl?: string;
+        liveUrl?: string;
+        project?: string;
+        deploymentId?: string;
+        error?: string;
+      } | null;
+
+      if (response.status === 401) {
+        throw new Error("Your CRM session expired. Refresh the page and sign in again.");
+      }
 
       if (!response.ok) {
         throw new Error(payload?.error || "Deployment failed.");
       }
 
       const fallbackProjectUrl = payload?.project ? `https://${payload.project}.vercel.app` : undefined;
-      const returnedUrl = payload?.liveUrl || payload?.deployedUrl || payload?.url || fallbackProjectUrl;
+      const returnedUrl = payload?.deployedUrl || payload?.liveUrl || payload?.url || fallbackProjectUrl || payload?.previewUrl;
 
       setDeployProgress(20);
       setDeployStageLabel("Deployment queued. Preparing your live site...");
@@ -1918,6 +2235,27 @@ export default function LeadExecutionPage() {
                     galleryImages: brandingGalleryImages.map((value) => value.trim()),
                     primaryColor: brandingPrimaryColor,
                     secondaryColor: brandingSecondaryColor,
+                    themeVariant: selectedThemeVariant,
+                  },
+                  templateGeo: {
+                    primaryLocation: resolvedPrimaryLocation,
+                    serviceAreas: serviceAreaOverride ?? [],
+                  },
+                },
+                sourcePayload: {
+                  ...(previous.sourcePayload ?? previous.source_payload ?? {}),
+                  templateBranding: {
+                    logoUrl: brandingLogoUrl.trim(),
+                    heroImageUrl: brandingHeroImageUrl.trim(),
+                    featureImageUrl: brandingFeatureImageUrl.trim(),
+                    galleryImages: brandingGalleryImages.map((value) => value.trim()),
+                    primaryColor: brandingPrimaryColor,
+                    secondaryColor: brandingSecondaryColor,
+                    themeVariant: selectedThemeVariant,
+                  },
+                  templateGeo: {
+                    primaryLocation: resolvedPrimaryLocation,
+                    serviceAreas: serviceAreaOverride ?? [],
                   },
                 },
               }
@@ -1978,6 +2316,7 @@ export default function LeadExecutionPage() {
     setInviteCopied(false);
     setMeetingError("");
     setMeetingLink("");
+    setMeetingAction(null);
 
     try {
       const response = await fetch("/api/calendar/meet", {
@@ -2001,6 +2340,7 @@ export default function LeadExecutionPage() {
         throw new Error(payload?.error || "Unable to generate a Google Meet link.");
       }
 
+      setMeetingAction(isRescheduleFlow ? "reschedule" : "book");
       setMeetingLink(payload.meetLink);
       setLeadExecutionStatus("Demo Booked");
 
@@ -2039,6 +2379,7 @@ export default function LeadExecutionPage() {
         );
       }
     } catch (error) {
+      setMeetingAction(null);
       setMeetingError(error instanceof Error ? error.message : "Unable to generate a Google Meet link.");
     } finally {
       setMeetingLoading(false);
@@ -2557,6 +2898,7 @@ export default function LeadExecutionPage() {
     if (!selectedDisposition || !leadId) return;
 
     setSavingDisposition(true);
+    setNotesError("");
     const summary = dispositionSummary.trim();
     const content = summary || `Disposition recorded: ${selectedDisposition}`;
     const response = await fetch("/api/lead-notes", {
@@ -2573,10 +2915,13 @@ export default function LeadExecutionPage() {
 
     if (response.ok && payload?.note) {
       setNotes((previous) => [payload.note as LeadNoteRecord, ...previous].slice(0, 20));
+      const clearedAfterCallWork = await completeAfterCallWork();
+      if (!clearedAfterCallWork) {
+        setNotesError("Disposition was saved, but Amazon Connect is still holding the contact in ACW.");
+      }
       setShowDisposition(false);
       setSelectedDisposition("");
       setDispositionSummary("");
-      setCcpStatus("READY");
     } else {
       setNotesError(payload?.error || "Unable to save disposition.");
     }
@@ -2587,35 +2932,27 @@ export default function LeadExecutionPage() {
   const formattedTimer = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
 
   const handleCall = () => {
-    setCcpStatus("READY");
     setCurrentContactId(null);
     linkedContactIdRef.current = null;
+    promptedDispositionContactIdRef.current = null;
+    setShowDisposition(false);
+    setShowKeypad(false);
     const sourceNumber = dialNumber || leadPhone;
     const digitsOnly = sourceNumber.replace(/\D/g, "");
     if (!digitsOnly) return;
 
     const formattedNumber = digitsOnly.startsWith("1") ? `+${digitsOnly}` : `+1${digitsOnly}`;
-    startOutboundCall(formattedNumber);
+    void startOutboundCall(formattedNumber);
   };
 
   const handleEndCall = () => {
     endActiveCall();
-    setCcpStatus("ACW");
-    setShowDisposition(true);
     setShowKeypad(false);
   };
 
   // Amazon Connect DTMF Handler
   const handleSendDigit = (digit: string) => {
-    const activeContact = activeContactRef.current;
-
-    // Prefer the lead page's live AWS contact subscription, with provider fallback.
-    if (activeContact?.sendDigit) {
-      activeContact.sendDigit(digit);
-      return;
-    }
-
-    if (callActive) {
+    if (callStatus === "connected") {
       sendCallDigit(digit);
       return;
     }
@@ -2624,28 +2961,37 @@ export default function LeadExecutionPage() {
   };
 
   const softphoneStatusLabel =
-    ccpStatus === "ACW"
+    callStatus === "acw"
       ? "After Call Work"
       : connectionStatus === "loading"
       ? "Loading AWS Streams…"
       : connectionStatus === "initializing"
         ? "Initializing CCP…"
+        : connectionStatus === "blocked"
+          ? "Softphone in another tab"
         : connectionStatus === "error"
           ? "CCP initialization failed"
             : callStatus === "connecting"
               ? "Dialing…"
               : callStatus === "connected"
                 ? `Live ${formattedTimer}`
+                : !agentReadyForOutbound && agentStateLabel
+                  ? `Agent ${agentStateLabel}`
                 : "Softphone ready";
 
   const softphoneStatusTone =
-    connectionStatus === "error"
+    connectionStatus === "error" || callError
       ? "text-rose-300"
-      : connectionStatus === "ready"
+      : connectionStatus === "ready" && agentReadyForOutbound
         ? "text-emerald-300"
         : "text-amber-300";
 
-  const canStartCall = ccpReady && connectionStatus === "ready" && callStatus !== "connecting";
+  const canStartCall =
+    ccpReady &&
+    connectionStatus === "ready" &&
+    agentReadyForOutbound &&
+    retrySecondsRemaining === 0 &&
+    callStatus === "idle";
   const isDialing = callStatus === "connecting";
   const isLiveCall = callStatus === "connected";
   const isCallInProgress = isDialing || isLiveCall;
@@ -2671,7 +3017,7 @@ export default function LeadExecutionPage() {
         offset === 0 ? `Today, ${shortLabel}` : offset === 1 ? `Tomorrow, ${shortLabel}` : shortLabel;
 
       return {
-        value: date.toISOString().slice(0, 10),
+        value: formatLocalDateInputValue(date),
         label: fullLabel,
       };
     });
@@ -2679,8 +3025,41 @@ export default function LeadExecutionPage() {
 
   const combinedDayOptions = useMemo(() => [...leadDayOptions, ...customMeetingDays], [leadDayOptions, customMeetingDays]);
 
+  const existingMeetingDayLabel = useMemo(() => {
+    if (!existingMeetingDay) return "";
+
+    return (
+      combinedDayOptions.find((day) => day.value === existingMeetingDay)?.label ||
+      new Date(`${existingMeetingDay}T00:00:00`).toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })
+    );
+  }, [combinedDayOptions, existingMeetingDay]);
+
   const leadTimeSlots = ["09:00 AM", "11:30 AM", "02:00 PM", "03:30 PM", "05:00 PM", "06:30 PM"];
   const combinedTimeSlots = [...leadTimeSlots, ...customMeetingTimes];
+  const hasScheduleSelection = Boolean(selectedMeetingDay && selectedMeetingTime);
+  const hasScheduleChanged =
+    !hasExistingDemoBooking ||
+    selectedMeetingDay !== existingMeetingDay ||
+    selectedMeetingTime !== existingMeetingTime;
+  const isRescheduleFlow = isRescheduleMode && hasExistingDemoBooking;
+  const disableMeetingAction = meetingLoading || !hasScheduleSelection || (isRescheduleFlow && !hasScheduleChanged);
+  const meetingActionLabel = meetingLoading
+    ? isRescheduleFlow
+      ? "Rescheduling..."
+      : "Booking..."
+    : meetingAction === "reschedule" && meetingLink
+      ? "Demo Rescheduled! New Meet link generated"
+      : meetingAction === "book" && meetingLink
+        ? "Demo Booked! Meet link generated"
+        : isRescheduleFlow
+          ? "Reschedule & Generate New Meet Link"
+          : hasExistingDemoBooking
+            ? "Generate New Meet Link"
+            : "Book & Generate Meet Link";
 
   const leadLocalTimeText = useMemo(
     () =>
@@ -2738,36 +3117,6 @@ export default function LeadExecutionPage() {
     setCustomTimeInput("");
   };
   if (status === "loading") return <LeadWorkspaceSkeleton />;
-
-  if (status === "error") {
-    return (
-      <div className="min-h-screen bg-zinc-950 p-4 text-zinc-100 lg:p-6">
-        <div className="mx-auto max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-          <p className="text-xs uppercase tracking-[0.18em] text-rose-300">Workspace Unavailable</p>
-          <h1 className="mt-2 text-2xl font-semibold text-zinc-100">This lead could not be loaded.</h1>
-          <p className="mt-3 text-sm text-zinc-400">{loadError || "The requested lead is unavailable or you no longer have access to it."}</p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/leads")}
-              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-sm text-zinc-200 transition hover:border-zinc-500"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Back to Leads
-            </button>
-            <button
-              type="button"
-              onClick={() => router.refresh()}
-              className="inline-flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-100 transition hover:bg-blue-500/15"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Retry
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (!lead) return <LeadWorkspaceSkeleton />;
 
@@ -2878,6 +3227,43 @@ export default function LeadExecutionPage() {
 
     setNotes((previous) => [payload.note as LeadNoteRecord, ...previous]);
   }
+
+  async function acknowledgeManagerReviewNote(noteId: string) {
+    if (!leadId) return;
+
+    setAcknowledgingManagerNoteId(noteId);
+    setNotesError("");
+
+    try {
+      const response = await fetch("/api/lead-notes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        credentials: "include",
+        body: JSON.stringify({
+          leadId,
+          noteId,
+          action: "acknowledge",
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { note?: LeadNoteRecord; error?: string } | null;
+      if (!response.ok || !payload?.note) {
+        throw new Error(payload?.error || "Unable to acknowledge manager note.");
+      }
+
+      setNotes((previous) => previous.map((note) => (note.id === noteId ? { ...note, ...(payload.note as LeadNoteRecord) } : note)));
+    } catch (error) {
+      setNotesError(error instanceof Error ? error.message : "Unable to acknowledge manager note.");
+    } finally {
+      setAcknowledgingManagerNoteId((current) => (current === noteId ? null : current));
+    }
+  }
+
+  const managerReviewNotes = notes.filter((note) => (note.channel || "").trim().toLowerCase() === MANAGER_CALL_REVIEW_CHANNEL);
+  const pendingManagerReviewNotes = managerReviewNotes.filter(
+    (note) => note.targetUserId === currentUserId && note.requiresAcknowledgement && !note.acknowledgedAt,
+  );
 
   const filteredNotes = notes.filter((note) => {
     const type = resolveNoteType(note);
@@ -3175,6 +3561,47 @@ export default function LeadExecutionPage() {
                 </select>
               </label>
 
+              {selectedTemplateId === "new-template" ? (
+                <label className="space-y-1">
+                  <span className="block">Design System</span>
+                  <select
+                    value={selectedThemeVariant}
+                    onChange={(event) => setSelectedThemeVariant(event.target.value as "classic" | "modern")}
+                    className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none"
+                  >
+                    <option value="classic">Classic MobileDetailer</option>
+                    <option value="modern">Modern MobileDetailer</option>
+                  </select>
+                  <span className="block text-[11px] text-indigo-200/80">
+                    Modern keeps the same wireframe but swaps in a newer surface system and auto-harmonized accent palette.
+                  </span>
+                </label>
+              ) : null}
+
+              <label className="space-y-1">
+                <span className="block">Main city</span>
+                <input
+                  value={deploymentPrimaryLocation}
+                  onChange={(event) => setDeploymentPrimaryLocation(event.target.value)}
+                  placeholder={leadCity}
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="block">Service area cities</span>
+                <span className="block text-[11px] text-indigo-200/80">
+                  Add one city per line or separate them with commas. The main city stays separate and is added automatically when you override the list.
+                </span>
+                <textarea
+                  value={deploymentServiceAreaInput}
+                  onChange={(event) => setDeploymentServiceAreaInput(event.target.value)}
+                  rows={4}
+                  placeholder={"Orlando\nWinter Park\nKissimmee"}
+                  className="w-full rounded-md border border-indigo-300/40 bg-black/20 px-2 py-1.5 text-xs text-white outline-none placeholder:text-indigo-200/70"
+                />
+              </label>
+
               <label className="space-y-1">
                 <span className="block">Logo URL or upload</span>
                 <input
@@ -3281,7 +3708,7 @@ export default function LeadExecutionPage() {
                   rel="noreferrer"
                   className="rounded-md border border-white/30 px-3 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/20"
                 >
-                  View Live Site
+                  {siteStatus === "LIVE" ? "View Live Site" : "Open Build Preview"}
                 </a>
               ) : null}
             </div>
@@ -3306,8 +3733,17 @@ export default function LeadExecutionPage() {
               </div>
             ) : null}
             {siteStatus === "LIVE" && deployedUrl ? <p className="mt-2 text-[11px] text-emerald-100">Site is live and ready to share.</p> : null}
+            {siteStatus === "BUILDING" && deployedUrl ? <p className="mt-2 text-[11px] text-indigo-100/85">Preview link is available while Vercel finishes the production alias.</p> : null}
             {deployError ? <p className="mt-2 text-xs text-rose-100">{deployError}</p> : null}
           </div>
+
+          <DemoPerformancePredictor
+            businessName={leadName}
+            currentWebsite={lead?.website || lead?.website_url || lead?.websiteUrl || ""}
+            demoWebsite={deployedUrl || ""}
+            city={lead?.city || ""}
+            businessType={lead?.business_type || lead?.businessType || ""}
+          />
 
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between">
@@ -3324,6 +3760,48 @@ export default function LeadExecutionPage() {
               {researchInsight || "Run analysis to generate localized insights and conversion weaknesses."}
             </p>
             {researchError ? <p className="mt-2 text-xs text-rose-300">{researchError}</p> : null}
+          </div>
+
+          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-100">Imported Lead Data</h2>
+                <p className="mt-1 text-xs text-zinc-500">Raw CSV fields are preserved here so the workspace keeps the full import context.</p>
+              </div>
+              <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-semibold text-zinc-300">
+                {importedLeadFieldEntries.length} field{importedLeadFieldEntries.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-amber-200">Lead Quality</p>
+                <p className="mt-2 text-sm font-semibold text-white">{importedLeadQuality || "Not imported"}</p>
+              </div>
+              <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-3">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-sky-200">Google Rating</p>
+                <p className="mt-2 text-sm font-semibold text-white">{importedGoogleRating || "Not imported"}</p>
+              </div>
+              <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-3">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-200">Google Reviews</p>
+                <p className="mt-2 text-sm font-semibold text-white">{importedGoogleReviews || "Not imported"}</p>
+              </div>
+            </div>
+
+            {importedLeadFieldEntries.length > 0 ? (
+              <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
+                {importedLeadFieldEntries.map(([label, value]) => (
+                  <div key={label} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-500">{label}</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-sm text-zinc-200">{value}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-lg border border-dashed border-zinc-800 bg-zinc-950/50 px-3 py-4 text-sm text-zinc-500">
+                No raw CSV fields were stored on this lead yet.
+              </p>
+            )}
           </div>
         </section>
 
@@ -3399,6 +3877,18 @@ export default function LeadExecutionPage() {
                   ))}
                 </div>
               </div>
+            ) : null}
+            {callError ? <p className="mt-3 text-xs text-rose-300">{callError}</p> : null}
+            {!callError && retrySecondsRemaining > 0 && retryStatusMessage ? <p className="mt-3 text-xs text-amber-300">{retryStatusMessage}</p> : null}
+            {!callError && connectionStatus === "blocked" ? (
+              <p className="mt-3 text-xs text-amber-300">
+                The Amazon Connect softphone is already active in another FelixCRM tab for this rep. Close the other tab, then this tab will take over automatically.
+              </p>
+            ) : null}
+            {!callError && !agentReadyForOutbound && agentStateLabel ? (
+              <p className="mt-3 text-xs text-amber-300">
+                Amazon Connect is currently {agentStateLabel}. Outbound dialing will re-enable once the rep returns to a routable status.
+              </p>
             ) : null}
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-300">
@@ -3635,10 +4125,72 @@ export default function LeadExecutionPage() {
               </div>
             ) : (
               <div className="space-y-2">
+                {activeTab === "Notes" && pendingManagerReviewNotes.length > 0 ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                    You have {pendingManagerReviewNotes.length} manager note{pendingManagerReviewNotes.length === 1 ? "" : "s"} that require acknowledgement on this lead.
+                  </div>
+                ) : null}
                 {filteredNotes.map((note) => {
                 const isCall = note.activity_type === "CALL" || note.aws_contact_id;
+                const isManagerReview = (note.channel || "").trim().toLowerCase() === MANAGER_CALL_REVIEW_CHANNEL;
                 const createdAt = getNoteCreatedAt(note);
                 const safeContent = sanitizeContactLensNoteContent(note.content);
+
+                if (isManagerReview) {
+                  const isAssignedRep = note.targetUserId === currentUserId;
+                  const needsAcknowledgement = isAssignedRep && note.requiresAcknowledgement && !note.acknowledgedAt;
+
+                  return (
+                    <div key={note.id} className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+                      <div className="mb-3 flex flex-wrap items-start justify-between gap-2 border-b border-amber-500/15 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded bg-amber-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                              Manager Review
+                            </span>
+                            <span className="text-xs text-zinc-500">{new Date(createdAt).toLocaleString()}</span>
+                          </div>
+                          <p className="mt-2 text-xs text-zinc-400">
+                            {note.createdByName ? `From ${note.createdByName}` : "Leadership feedback"}
+                            {note.targetUserName ? ` for ${note.targetUserName}` : ""}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                            note.acknowledgedAt
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                              : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                          }`}
+                        >
+                          {note.acknowledgedAt ? "Acknowledged" : "Pending Ack"}
+                        </span>
+                      </div>
+
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">{safeContent}</p>
+
+                      {note.acknowledgedAt ? (
+                        <p className="mt-3 text-xs text-emerald-300">
+                          Acknowledged{note.acknowledgedByName ? ` by ${note.acknowledgedByName}` : ""} on {new Date(note.acknowledgedAt).toLocaleString()}.
+                        </p>
+                      ) : note.targetUserName ? (
+                        <p className="mt-3 text-xs text-amber-200">Awaiting acknowledgement from {note.targetUserName}.</p>
+                      ) : null}
+
+                      {needsAcknowledgement ? (
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => void acknowledgeManagerReviewNote(note.id)}
+                            disabled={acknowledgingManagerNoteId === note.id}
+                            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:border-amber-400 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:text-zinc-500"
+                          >
+                            {acknowledgingManagerNoteId === note.id ? "Acknowledging..." : "I Read This"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                }
 
                 if (isCall) {
                   return (
@@ -3776,7 +4328,7 @@ export default function LeadExecutionPage() {
 
           <FollowUpEngine leadId={leadId} leadName={leadName} onTaskCompleted={saveCompletedFollowUpToNotes} />
 
-          <div className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
+          <div id="schedule" className="rounded-xl border border-zinc-700/80 bg-zinc-900 p-4">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">Smart Scheduling Hub</h2>
               <button
@@ -3793,6 +4345,30 @@ export default function LeadExecutionPage() {
               <span className="text-zinc-500">(Your Time: {repLocalTimeText})</span>
             </div>
             <p className="mt-2 text-[11px] text-zinc-500">Timezone auto-detected from {leadTimeMeta.source}.</p>
+
+            {hasExistingDemoBooking ? (
+              <div
+                className={`mt-4 rounded-lg border p-3 ${
+                  isRescheduleFlow ? "border-amber-500/40 bg-amber-500/10" : "border-zinc-700 bg-zinc-950/80"
+                }`}
+              >
+                <p
+                  className={`text-[11px] font-semibold uppercase tracking-wide ${
+                    isRescheduleFlow ? "text-amber-200" : "text-zinc-300"
+                  }`}
+                >
+                  {isRescheduleFlow ? "Reschedule Demo" : "Current Demo Booking"}
+                </p>
+                <p className="mt-1 text-sm font-medium text-zinc-100">
+                  {existingMeetingDayLabel} at {existingMeetingTime} ({leadTimeZone})
+                </p>
+                <p className={`mt-1 text-xs ${isRescheduleFlow ? "text-amber-100/80" : "text-zinc-400"}`}>
+                  {isRescheduleFlow
+                    ? "Choose a different day or time below, then generate a new Meet link."
+                    : "Choose a new day or time below and generate a new Meet link if this demo needs to move."}
+                </p>
+              </div>
+            ) : null}
 
             {isCustomScheduling ? (
               <div className="mt-4 rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3">
@@ -3854,6 +4430,7 @@ export default function LeadExecutionPage() {
                       onClick={() => {
                         setSelectedMeetingDay(day.value);
                         setMeetingLink("");
+                        setMeetingAction(null);
                       }}
                       className={`rounded-full border px-3 py-2 text-xs font-medium transition ${
                         isActive
@@ -3886,6 +4463,7 @@ export default function LeadExecutionPage() {
                       onClick={() => {
                         setSelectedMeetingTime(slot);
                         setMeetingLink("");
+                        setMeetingAction(null);
                       }}
                       className={`rounded-lg border px-2 py-2 text-xs font-medium transition ${
                         isActive
@@ -3902,22 +4480,29 @@ export default function LeadExecutionPage() {
 
             <button
               onClick={generateMeetingLink}
-              disabled={meetingLoading || !selectedMeetingDay || !selectedMeetingTime}
-              className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold transition disabled:opacity-50 ${
-                meetingLink ? "bg-emerald-600 text-white" : "bg-indigo-500 text-white"
+              disabled={disableMeetingAction}
+              className={`mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                meetingAction && meetingLink
+                  ? "bg-emerald-600 text-white"
+                  : isRescheduleFlow
+                    ? "bg-amber-500 text-zinc-950 hover:bg-amber-400"
+                    : "bg-indigo-500 text-white hover:bg-indigo-400"
               }`}
             >
               {meetingLoading ? (
                 <>
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/50 border-t-white" />
-                  Booking...
+                  {meetingActionLabel}
                 </>
-              ) : meetingLink ? (
+              ) : false ? (
                 "Demo Booked! • Meet link generated"
               ) : (
-                "Book & Generate Meet Link"
+                meetingActionLabel
               )}
             </button>
+            {isRescheduleFlow && !hasScheduleChanged ? (
+              <p className="mt-2 text-xs text-amber-300">Pick a different day or time to enable rescheduling.</p>
+            ) : null}
             {meetingError ? <p className="mt-2 text-xs text-rose-300">{meetingError}</p> : null}
             {meetingLink ? (
               <div className="mt-3 space-y-2">

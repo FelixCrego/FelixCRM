@@ -11,7 +11,6 @@ import { listLeadNotesWithMetadata } from "@/lib/lead-note-metadata";
 import { resolveLeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 import { canUserViewAllLeads, getEffectiveUserRole, getReviewedDashboardNotificationIds, listLeads } from "@/lib/store";
 import type { Lead } from "@/lib/types";
-import { getWorkforceUser, listWorkforceUsers, type TimeClockEntry, type WorkforceUser } from "@/lib/workforce-store";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -49,6 +48,42 @@ type CallAnalyticsRow = {
   raw_payload?: unknown;
 };
 
+type DashboardRangeKey = "today" | "3d" | "7d" | "30d";
+
+type DashboardWindowMetrics = {
+  key: DashboardRangeKey;
+  label: string;
+  shortLabel: string;
+  days: number;
+  isToday: boolean;
+  startDate: string;
+  endDate: string;
+  dials: number;
+  conversations: number;
+  demos: number;
+  closes: number;
+  revenue: number;
+  talkMinutes: number;
+  score: number;
+  callsPerHour: number;
+  contactRate: number;
+  demoConversionRate: number;
+  dialsPerDay: number;
+  conversationsPerDay: number;
+  demosPerDay: number;
+  closesPerDay: number;
+  talkMinutesPerDay: number;
+  revenuePerDay: number;
+  expectedDials: number;
+  expectedDemos: number;
+  dialGap: number;
+  dialsStatus: DashboardPerformanceStatus;
+  contactRateStatus: DashboardPerformanceStatus;
+  demosStatus: DashboardPerformanceStatus;
+  demoConversionStatus: DashboardPerformanceStatus;
+  overallStatus: DashboardPerformanceStatus;
+};
+
 type DashboardLeaderboardRow = {
   userId: string;
   userName: string;
@@ -60,7 +95,6 @@ type DashboardLeaderboardRow = {
   demosToday: number;
   demoConversionRateToday: number;
   expectedDialsByNow: number;
-  expectedDemosByNow: number;
   dialGapToday: number;
   talkMinutesToday: number;
   demosThisWeek: number;
@@ -70,6 +104,8 @@ type DashboardLeaderboardRow = {
   streakDays: number;
   overallStatus: DashboardPerformanceStatus;
   needsAttentionReason: string;
+  selectedWindow: DashboardWindowMetrics;
+  dailyAverages: DashboardWindowMetrics[];
 };
 
 type DashboardPerformanceStatus = "on_track" | "at_risk" | "off_track";
@@ -83,18 +119,6 @@ type DemoRow = {
   rep_id?: string | null;
   rep_email?: string | null;
   created_at?: string | null;
-};
-
-type DashboardDailyAverageWindowKey = "3d" | "7d" | "30d";
-
-type DashboardDailyAverageWindow = {
-  key: DashboardDailyAverageWindowKey;
-  label: string;
-  shortLabel: string;
-  days: number;
-  dialsPerDay: number;
-  demosPerDay: number;
-  contactRate: number;
 };
 
 type DashboardNotification = {
@@ -137,6 +161,8 @@ type DashboardRepCallDrilldown = {
   bookedDemoCalls: number;
   bookedDemoCallsToday: number;
   talkMinutesToday: number;
+  selectedWindow: DashboardWindowMetrics;
+  dailyAverages: DashboardWindowMetrics[];
   recentCalls: Array<{
     contactId: string;
     leadId: string;
@@ -149,15 +175,30 @@ type DashboardRepCallDrilldown = {
     hasRecording: boolean;
     hasAnalysis: boolean;
     hasBookedDemo: boolean;
+    isOwnedLead: boolean;
   }>;
 };
 
-type DashboardWorkdayProgress = {
-  elapsedHours: number;
-  expectedDialsByNow: number;
-  workdayLabel: string;
-  source: "clocked" | "scheduled";
+type DashboardRangeContext = {
+  key: DashboardRangeKey;
+  label: string;
+  shortLabel: string;
+  days: number;
+  isToday: boolean;
+  startDayStamp: number;
+  endDayStamp: number;
+  startDate: string;
+  endDate: string;
 };
+
+const DASHBOARD_RANGE_OPTIONS: Record<DashboardRangeKey, { days: number; label: string; shortLabel: string }> = {
+  today: { days: 1, label: "Today", shortLabel: "Today" },
+  "3d": { days: 3, label: "Last 3 Days", shortLabel: "3D Avg" },
+  "7d": { days: 7, label: "Last 7 Days", shortLabel: "7D Avg" },
+  "30d": { days: 30, label: "Last 30 Days", shortLabel: "30D Avg" },
+};
+
+const DASHBOARD_DAILY_AVERAGE_RANGES: DashboardRangeKey[] = ["3d", "7d", "30d"];
 
 function getHeaders() {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
@@ -228,6 +269,17 @@ async function requestOptionalTable<T>(candidates: string[], query?: Record<stri
   }
 
   return [] as T;
+}
+
+function isSchemaCacheColumnError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Could not find the") && message.includes("column") && message.includes("schema cache");
+}
+
+function getMissingColumnName(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/Could not find the '([^']+)' column/i);
+  return match?.[1] ?? null;
 }
 
 async function listUsersById() {
@@ -324,40 +376,98 @@ function parseCallRawPayload(rawPayload: unknown) {
   return null;
 }
 
-async function listRecentCalls(limit = 1500) {
-  const rows = await requestFirstWorkingTable<CallAnalyticsRow[]>(CALLS_TABLE_CANDIDATES, {
-    select: "contact_id,lead_id,duration_seconds,overall_sentiment,recording_url,recording_s3_uri,analysis_s3_uri,transcript_text,agent_talk_time_pct,customer_talk_time_pct,interruptions,created_at,raw_payload",
-    order: "created_at.desc",
-    limit: String(limit),
-  });
+function getCallAttributedUserId(call: CallAnalyticsRow, leadsById: Map<string, Lead>) {
+  const rawPayload = parseCallRawPayload(call.raw_payload);
+  const snapshotRepId =
+    (typeof rawPayload?.rep_id === "string" && rawPayload.rep_id.trim() ? rawPayload.rep_id.trim() : null) ??
+    (typeof rawPayload?.repId === "string" && rawPayload.repId.trim() ? rawPayload.repId.trim() : null) ??
+    (typeof rawPayload?.linked_by_user_id === "string" && rawPayload.linked_by_user_id.trim()
+      ? rawPayload.linked_by_user_id.trim()
+      : null);
 
-  return rows.filter((row) => typeof row.lead_id === "string" && row.lead_id);
+  if (snapshotRepId) return snapshotRepId;
+
+  if (typeof call.lead_id !== "string" || !call.lead_id) return null;
+  const lead = leadsById.get(call.lead_id);
+  return typeof lead?.ownerId === "string" && lead.ownerId ? lead.ownerId : null;
+}
+
+async function listRecentCalls(limit = 1500) {
+  const requiredColumns = ["contact_id", "lead_id", "created_at"];
+  const optionalColumns = [
+    "duration_seconds",
+    "overall_sentiment",
+    "recording_url",
+    "recording_s3_uri",
+    "analysis_s3_uri",
+    "transcript_text",
+    "agent_talk_time_pct",
+    "customer_talk_time_pct",
+    "interruptions",
+    "raw_payload",
+  ];
+  let selectedColumns = [...requiredColumns, ...optionalColumns];
+
+  while (selectedColumns.length >= requiredColumns.length) {
+    try {
+      const rows = await requestFirstWorkingTable<CallAnalyticsRow[]>(CALLS_TABLE_CANDIDATES, {
+        select: selectedColumns.join(","),
+        order: "created_at.desc",
+        limit: String(limit),
+      });
+
+      return rows.filter((row) => typeof row.lead_id === "string" && row.lead_id);
+    } catch (error) {
+      const missingColumn = getMissingColumnName(error);
+      if (!isSchemaCacheColumnError(error) || !missingColumn || !optionalColumns.includes(missingColumn)) {
+        throw error;
+      }
+
+      selectedColumns = selectedColumns.filter((column) => column !== missingColumn);
+    }
+  }
+
+  return [];
 }
 
 async function listDemoRows(params: { includeAll: boolean; userId: string; userEmail?: string | null }) {
-  const select = "id,lead_id,lead_name,selected_date,selected_time,rep_id,rep_email";
+  const requiredColumns = ["id", "lead_id", "lead_name", "selected_date", "selected_time", "rep_id"];
+  const optionalColumns = ["rep_email", "created_at"];
+
+  async function requestDemoRows(filter?: Record<string, string>) {
+    let selectedColumns = [...requiredColumns, ...optionalColumns];
+
+    while (selectedColumns.length >= requiredColumns.length) {
+      try {
+        return await requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
+          select: selectedColumns.join(","),
+          order: "selected_date.asc,selected_time.asc",
+          limit: "500",
+          ...(filter ?? {}),
+        });
+      } catch (error) {
+        const missingColumn = getMissingColumnName(error);
+        if (!isSchemaCacheColumnError(error) || !missingColumn || !optionalColumns.includes(missingColumn)) {
+          throw error;
+        }
+
+        selectedColumns = selectedColumns.filter((column) => column !== missingColumn);
+      }
+    }
+
+    return [] as DemoRow[];
+  }
 
   if (params.includeAll) {
-    return requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
-      select,
-      order: "selected_date.asc,selected_time.asc",
-      limit: "500",
-    });
+    return requestDemoRows();
   }
 
   const [byUserId, byEmail] = await Promise.all([
-    requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
-      select,
-      rep_id: `eq.${params.userId}`,
-      order: "selected_date.asc,selected_time.asc",
-      limit: "500",
-    }),
+    requestDemoRows({ rep_id: `eq.${params.userId}` }),
     params.userEmail
-      ? requestOptionalTable<DemoRow[]>(DEMOS_TABLE_CANDIDATES, {
-          select,
-          rep_email: `eq.${params.userEmail}`,
-          order: "selected_date.asc,selected_time.asc",
-          limit: "500",
+      ? requestDemoRows({ rep_email: `eq.${params.userEmail}` }).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          return message.includes("rep_email") ? [] as DemoRow[] : Promise.reject(error);
         })
       : Promise.resolve([] as DemoRow[]),
   ]);
@@ -406,9 +516,42 @@ function toDayStamp(year: number, month: number, day: number) {
   return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
 }
 
+function dayStampToIso(dayStamp: number) {
+  return new Date(dayStamp * 86400000).toISOString().slice(0, 10);
+}
+
 function getDayStampInTimeZone(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
   const parts = getZonedParts(date, timeZone);
   return toDayStamp(parts.year, parts.month, parts.day);
+}
+
+function parseDashboardRangeKey(value?: string | null): DashboardRangeKey {
+  if (value && value in DASHBOARD_RANGE_OPTIONS) {
+    return value as DashboardRangeKey;
+  }
+  return "today";
+}
+
+function createDashboardRangeContext(now: Date, key: DashboardRangeKey): DashboardRangeContext {
+  const option = DASHBOARD_RANGE_OPTIONS[key];
+  const endDayStamp = getDayStampInTimeZone(now, DASHBOARD_TIME_ZONE);
+  const startDayStamp = endDayStamp - option.days + 1;
+  return {
+    key,
+    label: option.label,
+    shortLabel: option.shortLabel,
+    days: option.days,
+    isToday: key === "today",
+    startDayStamp,
+    endDayStamp,
+    startDate: dayStampToIso(startDayStamp),
+    endDate: dayStampToIso(endDayStamp),
+  };
+}
+
+function isDateInRange(date: Date, range: DashboardRangeContext, timeZone = DASHBOARD_TIME_ZONE) {
+  const stamp = getDayStampInTimeZone(date, timeZone);
+  return stamp >= range.startDayStamp && stamp <= range.endDayStamp;
 }
 
 function isSameDayInTimeZone(date: Date, reference: Date, timeZone = DASHBOARD_TIME_ZONE) {
@@ -438,29 +581,122 @@ function parseDate(value?: string | null) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function getTimeZoneOffsetMilliseconds(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const zonedTimestamp = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  return zonedTimestamp - date.getTime();
+}
+
+function parseDemoTimeParts(value?: string | null) {
+  const normalized = value?.trim() ?? "";
+  const meridiemMatch = normalized.match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
+  if (meridiemMatch) {
+    const rawHour = Number(meridiemMatch[1]);
+    const minutes = Number(meridiemMatch[2]);
+    const period = meridiemMatch[3].toUpperCase();
+    return {
+      hours24: rawHour % 12 + (period === "PM" ? 12 : 0),
+      minutes,
+    };
+  }
+
+  const twentyFourHourMatch = normalized.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (twentyFourHourMatch) {
+    return {
+      hours24: Number(twentyFourHourMatch[1]),
+      minutes: Number(twentyFourHourMatch[2]),
+    };
+  }
+
+  return null;
+}
+
+function parseDateParts(value: string) {
+  const normalized = value.trim();
+  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T|\s)/);
+  if (isoMatch) {
+    return {
+      year: Number(isoMatch[1]),
+      month: Number(isoMatch[2]),
+      day: Number(isoMatch[3]),
+    };
+  }
+
+  const slashMatch = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    return {
+      year: Number(slashMatch[3]),
+      month: Number(slashMatch[1]),
+      day: Number(slashMatch[2]),
+    };
+  }
+
+  const dashMatch = normalized.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dashMatch) {
+    return {
+      year: Number(dashMatch[3]),
+      month: Number(dashMatch[1]),
+      day: Number(dashMatch[2]),
+    };
+  }
+
+  return null;
+}
+
+function createDateInTimeZone(
+  date: string,
+  timeParts: { hours24: number; minutes: number },
+  timeZone = DASHBOARD_TIME_ZONE,
+) {
+  const parts = parseDateParts(date);
+  if (!parts) return null;
+
+  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, timeParts.hours24, timeParts.minutes, 0));
+  let offsetMilliseconds = getTimeZoneOffsetMilliseconds(utcGuess, timeZone);
+  let zonedDate = new Date(utcGuess.getTime() - offsetMilliseconds);
+  const resolvedOffsetMilliseconds = getTimeZoneOffsetMilliseconds(zonedDate, timeZone);
+
+  if (resolvedOffsetMilliseconds !== offsetMilliseconds) {
+    offsetMilliseconds = resolvedOffsetMilliseconds;
+    zonedDate = new Date(utcGuess.getTime() - offsetMilliseconds);
+  }
+
+  return Number.isNaN(zonedDate.getTime()) ? null : zonedDate;
+}
+
 function parseDemoDate(lead: Lead) {
   const booking = lead.demoBooking;
   if (!booking?.date) return null;
-  const time = booking.time && booking.time.trim() ? booking.time.trim() : "12:00";
-  const parsed = new Date(`${booking.date}T${time}`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return createDateInTimeZone(
+    booking.date,
+    parseDemoTimeParts(booking.time) ?? { hours24: 23, minutes: 59 },
+  );
 }
 
 function parseDemoRowDate(demo: DemoRow) {
-  if (!demo.selected_date || !demo.selected_time) return null;
-  const normalized = demo.selected_time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
-  if (!normalized) {
-    const parsed = new Date(`${demo.selected_date}T00:00:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  const rawHour = Number(normalized[1]);
-  const minutes = Number(normalized[2]);
-  const period = normalized[3].toUpperCase();
-  const hours24 = rawHour % 12 + (period === "PM" ? 12 : 0);
-  const parsed = new Date(`${demo.selected_date}T00:00:00`);
-  parsed.setHours(hours24, minutes, 0, 0);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  if (!demo.selected_date) return null;
+  return createDateInTimeZone(
+    demo.selected_date,
+    parseDemoTimeParts(demo.selected_time) ?? { hours24: 23, minutes: 59 },
+  );
 }
 
 function getDemoBookedAt(demo: { bookedAt: Date | null; scheduledAt: Date | null }) {
@@ -557,12 +793,12 @@ function computeStreak(
   leads: Lead[],
   now: Date,
   ownerId: string,
-  leadIdsByOwner: Set<string>,
+  leadsById: Map<string, Lead>,
 ) {
   const scoresByDay = new Map<string, number>();
 
   for (const call of calls) {
-    if (typeof call.lead_id !== "string" || !leadIdsByOwner.has(call.lead_id)) continue;
+    if (getCallAttributedUserId(call, leadsById) !== ownerId) continue;
     const at = parseDate(call.created_at);
     if (!at) continue;
     const key = dayKey(at);
@@ -739,6 +975,8 @@ function getTodayPacedStatus(actual: number, expectedByNow: number): DashboardPe
     return actual > 0 ? "on_track" : "at_risk";
   }
 
+  // Before the first full expected unit lands, treat zero as at-risk instead of
+  // fully off-track so early-day pacing reflects time-of-day realistically.
   if (expectedByNow < 1 && actual <= 0) {
     return "at_risk";
   }
@@ -758,71 +996,7 @@ function getStatusRank(status: DashboardPerformanceStatus) {
   return 0;
 }
 
-function getTimeZoneOffsetMilliseconds(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-  const parts = formatter.formatToParts(date);
-  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
-  const zonedTimestamp = Date.UTC(
-    get("year"),
-    get("month") - 1,
-    get("day"),
-    get("hour"),
-    get("minute"),
-    get("second"),
-  );
-  return zonedTimestamp - date.getTime();
-}
-
-function getDayStartInTimeZone(dayStamp: number, timeZone = DASHBOARD_TIME_ZONE) {
-  const day = new Date(dayStamp * 86400000);
-  const baseTimestamp = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 0, 0, 0);
-  let offsetMilliseconds = getTimeZoneOffsetMilliseconds(new Date(baseTimestamp), timeZone);
-  let startOfDay = new Date(baseTimestamp - offsetMilliseconds);
-  const resolvedOffsetMilliseconds = getTimeZoneOffsetMilliseconds(startOfDay, timeZone);
-
-  if (resolvedOffsetMilliseconds !== offsetMilliseconds) {
-    offsetMilliseconds = resolvedOffsetMilliseconds;
-    startOfDay = new Date(baseTimestamp - offsetMilliseconds);
-  }
-
-  return startOfDay;
-}
-
-function getWorkedHoursToday(entries: TimeClockEntry[], date: Date, timeZone = DASHBOARD_TIME_ZONE) {
-  const todayStamp = getDayStampInTimeZone(date, timeZone);
-  const dayStart = getDayStartInTimeZone(todayStamp, timeZone).getTime();
-  const nextDayStart = getDayStartInTimeZone(todayStamp + 1, timeZone).getTime();
-  let workedMilliseconds = 0;
-  let hasWorkedSegmentToday = false;
-
-  for (const entry of entries) {
-    const startedAt = parseDate(entry.clockInAt);
-    if (!startedAt) continue;
-
-    const endedAt = entry.clockOutAt ? parseDate(entry.clockOutAt) : date;
-    if (!endedAt) continue;
-
-    const segmentStart = Math.max(startedAt.getTime(), dayStart);
-    const segmentEnd = Math.min(endedAt.getTime(), nextDayStart, date.getTime());
-    if (segmentEnd <= segmentStart) continue;
-
-    hasWorkedSegmentToday = true;
-    workedMilliseconds += segmentEnd - segmentStart;
-  }
-
-  return hasWorkedSegmentToday ? workedMilliseconds / 3600000 : null;
-}
-
-function getScheduledWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE): DashboardWorkdayProgress {
+function getWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE) {
   const { hour, minute } = getZonedClockParts(date, timeZone);
   const workdayStartMinutes = SALES_DASHBOARD_TARGETS.workdayStartHour * 60;
   const totalMinutes = SALES_DASHBOARD_WORKDAY_HOURS * 60;
@@ -837,31 +1011,105 @@ function getScheduledWorkdayProgress(date: Date, timeZone = DASHBOARD_TIME_ZONE)
   return {
     elapsedHours,
     expectedDialsByNow,
-    workdayLabel: `${formatDecimal(elapsedHours)} / ${SALES_DASHBOARD_WORKDAY_HOURS}h scheduled`,
-    source: "scheduled",
+    workdayLabel: `${formatDecimal(elapsedHours)} / ${SALES_DASHBOARD_WORKDAY_HOURS}h`,
   };
 }
 
-function getClockedWorkdayProgress(entries: TimeClockEntry[], date: Date, timeZone = DASHBOARD_TIME_ZONE): DashboardWorkdayProgress | null {
-  const elapsedHours = getWorkedHoursToday(entries, date, timeZone);
-  if (elapsedHours === null) return null;
+function buildWindowMetrics(params: {
+  range: DashboardRangeContext;
+  calls: CallAnalyticsRow[];
+  demos: AttributedDemoRecord[];
+  closedLeads: Lead[];
+  workdayProgress: ReturnType<typeof getWorkdayProgress>;
+}) {
+  const callsInRange = params.calls.filter((call) => {
+    const createdAt = parseDate(call.created_at);
+    return createdAt ? isDateInRange(createdAt, params.range) : false;
+  });
+  const conversationsInRange = callsInRange.filter(isConnectedCall);
+  const talkSecondsInRange = sum(callsInRange.map((call) => getCallDurationSeconds(call)));
+  const demosInRange = params.demos.filter((demo) => {
+    const bookedAt = getDemoBookedAt(demo);
+    return bookedAt ? isDateInRange(bookedAt, params.range) : false;
+  });
+  const closedLeadsInRange = params.closedLeads.filter((lead) => {
+    const closedAt = parseDate(lead.closedAt);
+    return closedAt ? isDateInRange(closedAt, params.range) : false;
+  });
+  const revenue = sum(closedLeadsInRange.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0)));
 
-  const expectedDialsByNow = Math.min(
-    SALES_DASHBOARD_TARGETS.dialsPerDay,
-    Math.round(elapsedHours * SALES_DASHBOARD_TARGETS.dialsPerHour),
+  const dials = callsInRange.length;
+  const conversations = conversationsInRange.length;
+  const demos = demosInRange.length;
+  const closes = closedLeadsInRange.length;
+  const talkMinutes = Math.round(talkSecondsInRange / 60);
+  const score = computeScore({ dials, conversations, demos, closes });
+  const dialsPerDay = dials / params.range.days;
+  const conversationsPerDay = conversations / params.range.days;
+  const demosPerDay = demos / params.range.days;
+  const closesPerDay = closes / params.range.days;
+  const talkMinutesPerDay = talkMinutes / params.range.days;
+  const revenuePerDay = revenue / params.range.days;
+  const contactRate = computeRate(conversations, dials);
+  const demoConversionRate = computeRate(demos, conversations);
+  const callsPerHour = params.range.isToday
+    ? (params.workdayProgress.elapsedHours > 0 ? dials / params.workdayProgress.elapsedHours : 0)
+    : dialsPerDay / SALES_DASHBOARD_WORKDAY_HOURS;
+  const expectedDials = params.range.isToday
+    ? params.workdayProgress.expectedDialsByNow
+    : SALES_DASHBOARD_TARGETS.dialsPerDay;
+  const expectedDemos = params.range.isToday
+    ? getTodayExpectedTargetByNow({
+        elapsedHours: params.workdayProgress.elapsedHours,
+        perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
+        dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
+      })
+    : SALES_DASHBOARD_TARGETS.demosPerDay;
+  const dialsComparison = params.range.isToday ? dials : dialsPerDay;
+  const demosComparison = params.range.isToday ? demos : demosPerDay;
+  const dialsStatus = getPerformanceStatus(dialsComparison, expectedDials);
+  const contactRateStatus = getPerformanceStatus(contactRate, SALES_DASHBOARD_TARGETS.contactRatePct);
+  const demosStatus = params.range.isToday
+    ? getTodayPacedStatus(demosComparison, expectedDemos)
+    : getPerformanceStatus(demosComparison, SALES_DASHBOARD_TARGETS.demosPerDay);
+  const demoConversionStatus = getPerformanceStatus(
+    demoConversionRate,
+    SALES_DASHBOARD_DERIVED_TARGETS.demoConversionRatePct,
   );
 
   return {
-    elapsedHours,
-    expectedDialsByNow,
-    workdayLabel: `${formatDecimal(elapsedHours)}h clocked`,
-    source: "clocked",
-  };
-}
-
-function resolveWorkdayProgress(workforceUser: WorkforceUser | null | undefined, date: Date, fallback: DashboardWorkdayProgress) {
-  if (!workforceUser) return fallback;
-  return getClockedWorkdayProgress(workforceUser.entries, date) ?? fallback;
+    key: params.range.key,
+    label: params.range.label,
+    shortLabel: params.range.shortLabel,
+    days: params.range.days,
+    isToday: params.range.isToday,
+    startDate: params.range.startDate,
+    endDate: params.range.endDate,
+    dials,
+    conversations,
+    demos,
+    closes,
+    revenue,
+    talkMinutes,
+    score,
+    callsPerHour,
+    contactRate,
+    demoConversionRate,
+    dialsPerDay,
+    conversationsPerDay,
+    demosPerDay,
+    closesPerDay,
+    talkMinutesPerDay,
+    revenuePerDay,
+    expectedDials,
+    expectedDemos,
+    dialGap: dialsComparison - expectedDials,
+    dialsStatus,
+    contactRateStatus,
+    demosStatus,
+    demoConversionStatus,
+    overallStatus: combineStatuses([dialsStatus, contactRateStatus, demosStatus]),
+  } satisfies DashboardWindowMetrics;
 }
 
 function isLeadDemoBookedThisWeek(lead: Lead, now: Date) {
@@ -876,102 +1124,72 @@ function isLeadDemoBookedToday(lead: Lead, now: Date) {
   return bookedAt ? isSameDayInTimeZone(bookedAt, now) : false;
 }
 
-function buildNeedsAttentionReason(row: Pick<DashboardLeaderboardRow, "dialGapToday" | "dialsToday" | "contactRateToday" | "demosToday" | "expectedDemosByNow">) {
+function buildNeedsAttentionReason(window: Pick<DashboardWindowMetrics, "isToday" | "dialGap" | "dials" | "dialsPerDay" | "contactRate" | "demos" | "demosPerDay" | "expectedDemos">) {
   const issues: string[] = [];
 
-  if (row.dialGapToday < 0) {
-    issues.push(`${Math.abs(row.dialGapToday)} behind dial pace`);
-  } else if (row.dialsToday === 0) {
+  if (window.dialGap < 0) {
+    const paceGap = window.isToday ? `${Math.abs(Math.round(window.dialGap))}` : formatDecimal(Math.abs(window.dialGap));
+    issues.push(`${paceGap} behind dial pace`);
+  } else if (window.dials === 0) {
     issues.push("no dials yet");
   }
 
-  if (row.dialsToday > 0 && row.contactRateToday < SALES_DASHBOARD_TARGETS.contactRatePct) {
-    issues.push(`${formatPercent(row.contactRateToday)} contact rate`);
+  if (window.dials > 0 && window.contactRate < SALES_DASHBOARD_TARGETS.contactRatePct) {
+    issues.push(`${formatPercent(window.contactRate)} contact rate`);
   }
 
-  if (getTodayPacedStatus(row.demosToday, row.expectedDemosByNow) === "off_track") {
-    issues.push(`${row.demosToday}/${formatDecimal(row.expectedDemosByNow)} demos by now`);
+  if (window.isToday) {
+    if (getTodayPacedStatus(window.demos, window.expectedDemos) === "off_track") {
+      issues.push(`${window.demos}/${formatDecimal(window.expectedDemos)} demos by now`);
+    }
+  } else if (window.demosPerDay < SALES_DASHBOARD_TARGETS.demosPerDay) {
+    issues.push(`${formatDecimal(window.demosPerDay)}/${SALES_DASHBOARD_TARGETS.demosPerDay} demos per day`);
   }
 
   return issues.slice(0, 2).join("; ");
 }
 
-function buildRepHeadline(params: {
-  dialsStatus: DashboardPerformanceStatus;
-  contactStatus: DashboardPerformanceStatus;
-  demosStatus: DashboardPerformanceStatus;
-  callsPerHourToday: number;
-  contactRateToday: number;
-  demosToday: number;
-  expectedDemosByNow: number;
-}) {
-  if (params.dialsStatus === "on_track" && params.contactStatus === "on_track" && params.demosStatus === "on_track") {
+function buildRepHeadline(window: DashboardWindowMetrics) {
+  if (!window.isToday) {
+    if (window.dialsStatus === "on_track" && window.contactRateStatus === "on_track" && window.demosStatus === "on_track") {
+      return `${window.label}: ${formatDecimal(window.dialsPerDay)} dials/day, ${formatPercent(window.contactRate)} contact rate, ${formatDecimal(window.demosPerDay)} demos/day.`;
+    }
+
+    if (window.dialsStatus === "off_track") {
+      return `${window.label}: averaging ${formatDecimal(window.dialsPerDay)} dials/day. Push back toward ${SALES_DASHBOARD_TARGETS.dialsPerDay} dials/day.`;
+    }
+
+    if (window.contactRateStatus === "off_track") {
+      return `${window.label}: contact rate is ${formatPercent(window.contactRate)}. Tighten the opener and first 20 seconds.`;
+    }
+
+    if (window.demosStatus !== "on_track") {
+      return `${window.label}: averaging ${formatDecimal(window.demosPerDay)} demos/day. Push harder on the close when the conversation lands.`;
+    }
+
+    return `${window.label}: ${formatDecimal(window.callsPerHour)} calls per hour on average. Keep stacking quality connects.`;
+  }
+
+  if (window.dialsStatus === "on_track" && window.contactRateStatus === "on_track" && window.demosStatus === "on_track") {
     return "On pace for 80 dials, 20% contact rate, and 4 booked demos.";
   }
 
-  if (params.dialsStatus === "off_track") {
+  if (window.dialsStatus === "off_track") {
     return `Dial pace is behind. Recover the block and get back above ${SALES_DASHBOARD_TARGETS.dialsPerHour} calls per hour.`;
   }
 
-  if (params.contactStatus === "off_track") {
-    return `The dial volume is moving, but contact rate is only ${formatPercent(params.contactRateToday)}. Tighten the opener and the first 20 seconds.`;
+  if (window.contactRateStatus === "off_track") {
+    return `The dial volume is moving, but contact rate is only ${formatPercent(window.contactRate)}. Tighten the opener and the first 20 seconds.`;
   }
 
-  if (params.demosStatus !== "on_track") {
-    return `${params.demosToday} demo${params.demosToday === 1 ? "" : "s"} booked so far. Pace by now is ${formatDecimal(params.expectedDemosByNow)}.`;
+  if (window.demosStatus !== "on_track") {
+    return `${window.demos} demo${window.demos === 1 ? "" : "s"} booked so far. Pace by now is ${formatDecimal(window.expectedDemos)}.`;
   }
 
-  return `Current pace is ${formatDecimal(params.callsPerHourToday)} calls per hour. Keep stacking quality connects.`;
+  return `Current pace is ${formatDecimal(window.callsPerHour)} calls per hour. Keep stacking quality connects.`;
 }
 
-const DAILY_AVERAGE_WINDOW_OPTIONS: ReadonlyArray<{
-  key: DashboardDailyAverageWindowKey;
-  label: string;
-  shortLabel: string;
-  days: number;
-}> = [
-  { key: "3d", label: "Last 3 Days", shortLabel: "3D Avg", days: 3 },
-  { key: "7d", label: "Last 7 Days", shortLabel: "7D Avg", days: 7 },
-  { key: "30d", label: "Last 30 Days", shortLabel: "30D Avg", days: 30 },
-];
-
-function buildDailyAverageWindow(params: {
-  key: DashboardDailyAverageWindowKey;
-  label: string;
-  shortLabel: string;
-  days: number;
-  calls: CallAnalyticsRow[];
-  demos: AttributedDemoRecord[];
-  now: Date;
-}): DashboardDailyAverageWindow {
-  const endDayStamp = getDayStampInTimeZone(params.now, DASHBOARD_TIME_ZONE);
-  const startDayStamp = endDayStamp - (params.days - 1);
-  const windowCalls = params.calls.filter((call) => {
-    const callAt = parseDate(call.created_at);
-    if (!callAt) return false;
-    const stamp = getDayStampInTimeZone(callAt, DASHBOARD_TIME_ZONE);
-    return stamp >= startDayStamp && stamp <= endDayStamp;
-  });
-  const windowDemos = params.demos.filter((demo) => {
-    const bookedAt = getDemoBookedAt(demo);
-    if (!bookedAt) return false;
-    const stamp = getDayStampInTimeZone(bookedAt, DASHBOARD_TIME_ZONE);
-    return stamp >= startDayStamp && stamp <= endDayStamp;
-  });
-  const windowConversations = windowCalls.filter(isConnectedCall);
-
-  return {
-    key: params.key,
-    label: params.label,
-    shortLabel: params.shortLabel,
-    days: params.days,
-    dialsPerDay: windowCalls.length / params.days,
-    demosPerDay: windowDemos.length / params.days,
-    contactRate: computeRate(windowConversations.length, windowCalls.length),
-  };
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await getAuthenticatedUser();
     if (!user?.id) {
@@ -979,36 +1197,33 @@ export async function GET() {
     }
 
     const now = new Date();
-    const scheduledWorkdayProgress = getScheduledWorkdayProgress(now);
+    const workdayProgress = getWorkdayProgress(now);
+    const url = new URL(request.url);
+    const selectedRangeKey = parseDashboardRangeKey(url.searchParams.get("range"));
+    const selectedRange = createDashboardRangeContext(now, selectedRangeKey);
     const includeAll = await canUserViewAllLeads(user.id, user.email);
     const viewerRole = await getEffectiveUserRole(user.id, user.email);
+    const includeRepBoard = viewerRole === "REP" || viewerRole === "SUPER_ADMIN";
+    const includeTeamBoard = viewerRole === "TEAM_LEAD" || viewerRole === "MANAGER" || viewerRole === "SUPER_ADMIN";
     const includeAllUpcomingDemos = includeAll || viewerRole === "TEAM_LEAD";
-    const workforceUsersPromise = includeAll
-      ? listWorkforceUsers().catch((error) => {
-          console.error("Failed to load workforce users for dashboard pacing.", error);
-          return [] as WorkforceUser[];
-        })
-      : getWorkforceUser(user.id)
-          .then((viewer) => [viewer])
-          .catch((error) => {
-            console.error("Failed to load viewer workforce record for dashboard pacing.", error);
-            return [] as WorkforceUser[];
-          });
 
-    const [visibleLeads, tableUsersById, authUserDirectory, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds, workforceUsers] = await Promise.all([
+    const [visibleLeads, tableUsersById, authUserDirectory, recentCalls, visibleDemoRows, allDemoSourceLeads, reviewedNotificationIds] = await Promise.all([
       listLeads(user.id, { includeAll }),
-      listUsersById(),
-      listAuthUsersById(),
+      includeTeamBoard ? listUsersById() : Promise.resolve(new Map<string, string>()),
+      includeTeamBoard
+        ? listAuthUsersById()
+        : Promise.resolve({
+            namesById: new Map<string, string>(),
+            emailsById: new Map<string, string>(),
+          }),
       listRecentCalls(),
       listDemoRows({ includeAll: includeAllUpcomingDemos, userId: user.id, userEmail: user.email }),
       viewerRole === "TEAM_LEAD" ? listLeads(user.id, { includeAll: true }) : Promise.resolve([] as Lead[]),
-      getReviewedDashboardNotificationIds(user.id),
-      workforceUsersPromise,
+      includeTeamBoard ? getReviewedDashboardNotificationIds(user.id) : Promise.resolve([] as string[]),
     ]);
 
     const usersById = new Map<string, string>(authUserDirectory.namesById);
     const userEmailsById = new Map<string, string>(authUserDirectory.emailsById);
-    const workforceUsersById = new Map<string, WorkforceUser>(workforceUsers.map((employee) => [employee.id, employee]));
     for (const [id, name] of tableUsersById.entries()) {
       usersById.set(id, name);
     }
@@ -1143,10 +1358,10 @@ export async function GET() {
       });
     }
 
-    const attributedDemos = [...attributedDemoMap.values()];
-
-    const calls = recentCalls.filter((call) => typeof call.lead_id === "string" && visibleLeads.some((lead) => lead.id === call.lead_id));
     const leadsById = new Map(visibleLeads.map((lead) => [lead.id, lead]));
+    const visibleLeadIds = new Set(leadsById.keys());
+    const attributedDemos = [...attributedDemoMap.values()];
+    const calls = recentCalls.filter((call) => typeof call.lead_id === "string" && visibleLeadIds.has(call.lead_id));
     const repLeads = visibleLeads.filter((lead) => lead.ownerId === user.id);
     const repLeadIds = new Set(repLeads.map((lead) => lead.id));
     const repAttributedDemos = attributedDemos.filter((demo) => matchesDemoToUser(demo, user.id, user.email));
@@ -1156,7 +1371,11 @@ export async function GET() {
         .filter(Boolean),
     );
     const repCallLeadIds = new Set([...repLeadIds, ...repAttributedLeadIds]);
-    const repCalls = calls.filter((call) => typeof call.lead_id === "string" && repCallLeadIds.has(call.lead_id));
+    const repCalls = calls.filter((call) => {
+      const attributedUserId = getCallAttributedUserId(call, leadsById);
+      if (attributedUserId) return attributedUserId === user.id;
+      return typeof call.lead_id === "string" && repCallLeadIds.has(call.lead_id);
+    });
 
     const repCallsToday = repCalls.filter((call) => {
       const at = parseDate(call.created_at);
@@ -1166,8 +1385,8 @@ export async function GET() {
     const repTalkSecondsToday = sum(repCallsToday.map((call) => getCallDurationSeconds(call)));
     const repDemosThisWeek = repAttributedDemos.filter((demo) => isDemoBookedOnOrAfterWeekStart(demo, now));
     const repDemosToday = repAttributedDemos.filter((demo) => isDemoBookedSameDay(demo, now));
-    const repClosedThisMonth = visibleLeads.filter((lead) => {
-      if (getLeadCloseAttributionUserId(lead) !== user.id) return false;
+    const repClosedLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === user.id);
+    const repClosedThisMonth = repClosedLeads.filter((lead) => {
       const closedAt = parseDate(lead.closedAt);
       return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
@@ -1175,7 +1394,6 @@ export async function GET() {
       const closedAt = parseDate(lead.closedAt);
       return closedAt ? isSameDayInTimeZone(closedAt, now) : false;
     });
-    const repWorkdayProgress = resolveWorkdayProgress(workforceUsersById.get(user.id), now, scheduledWorkdayProgress);
     const repRevenueThisMonth = sum(repClosedThisMonth.map((lead) => (typeof lead.closedDealValue === "number" ? lead.closedDealValue : 0)));
     const repLiveSites = repLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
     const repScoreToday = computeScore({
@@ -1184,15 +1402,14 @@ export async function GET() {
       demos: repDemosToday.length,
       closes: repClosedToday.length,
     });
-    const repStreak = computeStreak(calls, visibleLeads, now, user.id, repLeadIds);
-    const repCallsPerHourToday = repWorkdayProgress.elapsedHours > 0 ? repCallsToday.length / repWorkdayProgress.elapsedHours : 0;
+    const repStreak = computeStreak(calls, visibleLeads, now, user.id, leadsById);
+    const repCallsPerHourToday = workdayProgress.elapsedHours > 0 ? repCallsToday.length / workdayProgress.elapsedHours : 0;
     const repContactRateToday = computeRate(repConversationsToday.length, repCallsToday.length);
     const repDemoConversionRateToday = computeRate(repDemosToday.length, repConversationsToday.length);
-    const repDialPaceStatus = getPerformanceStatus(repCallsToday.length, repWorkdayProgress.expectedDialsByNow);
-    const repCallsPerHourStatus = getPerformanceStatus(repCallsPerHourToday, SALES_DASHBOARD_TARGETS.dialsPerHour);
+    const repDialPaceStatus = getPerformanceStatus(repCallsToday.length, workdayProgress.expectedDialsByNow);
     const repContactStatus = getPerformanceStatus(repContactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct);
     const repExpectedDemosByNow = getTodayExpectedTargetByNow({
-      elapsedHours: repWorkdayProgress.elapsedHours,
+      elapsedHours: workdayProgress.elapsedHours,
       perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
       dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
     });
@@ -1202,7 +1419,27 @@ export async function GET() {
       SALES_DASHBOARD_DERIVED_TARGETS.demoConversionRatePct,
     );
     const repOverallStatus = combineStatuses([repDialPaceStatus, repContactStatus, repDemosStatus]);
-    const repDialGapToday = repCallsToday.length - repWorkdayProgress.expectedDialsByNow;
+    const repDialGapToday = repCallsToday.length - workdayProgress.expectedDialsByNow;
+    const repSelectedWindow = buildWindowMetrics({
+      range: selectedRange,
+      calls: repCalls,
+      demos: repAttributedDemos,
+      closedLeads: repClosedLeads,
+      workdayProgress,
+    });
+    const repSelectedWindowCallsPerHourStatus = getPerformanceStatus(
+      repSelectedWindow.callsPerHour,
+      SALES_DASHBOARD_TARGETS.dialsPerHour,
+    );
+    const repDailyAverages = DASHBOARD_DAILY_AVERAGE_RANGES.map((rangeKey) =>
+      buildWindowMetrics({
+        range: createDashboardRangeContext(now, rangeKey),
+        calls: repCalls,
+        demos: repAttributedDemos,
+        closedLeads: repClosedLeads,
+        workdayProgress,
+      }),
+    );
 
     const focusLeads = repLeads
       .map((lead) => ({
@@ -1290,37 +1527,37 @@ export async function GET() {
       .sort((a, b) => a.startsAt - b.startsAt)
       .slice(0, 10);
 
-    const repManagerAlertGroups = await Promise.all(
-      repLeads.map(async (lead) => ({
-        lead,
-        notes: await listLeadNotesWithMetadata(lead.id).catch(() => []),
-      })),
-    );
-
-    const repManagerAlerts = repManagerAlertGroups
-      .flatMap(({ lead, notes }) =>
-        notes
-          .filter((note) =>
-            (note.channel || "").trim().toLowerCase() === MANAGER_CALL_REVIEW_CHANNEL &&
-            note.targetUserId === user.id &&
-            note.requiresAcknowledgement &&
-            !note.acknowledgedAt,
-          )
-          .map((note) => ({
-            id: `manager-review-${lead.id}-${note.id}`,
-            noteId: note.id,
-            leadId: lead.id,
-            title: `Manager review note: ${lead.businessName}`,
-            detail: `${note.createdByName ? `${note.createdByName}: ` : ""}${note.content}`,
-            createdAt: note.createdAt,
+    const repManagerAlerts = includeRepBoard && repLeads.length > 0
+      ? (await Promise.all(
+          repLeads.map(async (lead) => ({
+            lead,
+            notes: await listLeadNotesWithMetadata(lead.id).catch(() => []),
           })),
-      )
-      .sort((left, right) => {
-        const leftTime = parseDate(left.createdAt)?.getTime() ?? 0;
-        const rightTime = parseDate(right.createdAt)?.getTime() ?? 0;
-        return rightTime - leftTime;
-      })
-      .slice(0, 6);
+        ))
+          .flatMap(({ lead, notes }) =>
+            notes
+              .filter((note) =>
+                (note.channel || "").trim().toLowerCase() === MANAGER_CALL_REVIEW_CHANNEL &&
+                note.targetUserId === user.id &&
+                note.requiresAcknowledgement &&
+                !note.acknowledgedAt,
+              )
+              .map((note) => ({
+                id: `manager-review-${lead.id}-${note.id}`,
+                noteId: note.id,
+                leadId: lead.id,
+                title: `Manager review note: ${lead.businessName}`,
+                detail: `${note.createdByName ? `${note.createdByName}: ` : ""}${note.content}`,
+                createdAt: note.createdAt,
+              })),
+          )
+          .sort((left, right) => {
+            const leftTime = parseDate(left.createdAt)?.getTime() ?? 0;
+            const rightTime = parseDate(right.createdAt)?.getTime() ?? 0;
+            return rightTime - leftTime;
+          })
+          .slice(0, 6)
+      : [];
 
     const teamLeadIds = new Set<string>();
     const leaderboardSeed = new Map<string, DashboardLeaderboardRow>();
@@ -1347,12 +1584,7 @@ export async function GET() {
         contactRateToday: 0,
         demosToday: 0,
         demoConversionRateToday: 0,
-        expectedDialsByNow: scheduledWorkdayProgress.expectedDialsByNow,
-        expectedDemosByNow: getTodayExpectedTargetByNow({
-          elapsedHours: scheduledWorkdayProgress.elapsedHours,
-          perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
-          dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
-        }),
+        expectedDialsByNow: workdayProgress.expectedDialsByNow,
         dialGapToday: 0,
         talkMinutesToday: 0,
         demosThisWeek: 0,
@@ -1362,6 +1594,22 @@ export async function GET() {
         streakDays: 0,
         overallStatus: "at_risk",
         needsAttentionReason: "",
+        selectedWindow: buildWindowMetrics({
+          range: selectedRange,
+          calls: [],
+          demos: [],
+          closedLeads: [],
+          workdayProgress,
+        }),
+        dailyAverages: DASHBOARD_DAILY_AVERAGE_RANGES.map((rangeKey) =>
+          buildWindowMetrics({
+            range: createDashboardRangeContext(now, rangeKey),
+            calls: [],
+            demos: [],
+            closedLeads: [],
+            workdayProgress,
+          }),
+        ),
       });
     }
 
@@ -1377,12 +1625,7 @@ export async function GET() {
           contactRateToday: 0,
           demosToday: 0,
           demoConversionRateToday: 0,
-          expectedDialsByNow: scheduledWorkdayProgress.expectedDialsByNow,
-          expectedDemosByNow: getTodayExpectedTargetByNow({
-            elapsedHours: scheduledWorkdayProgress.elapsedHours,
-            perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
-            dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
-          }),
+          expectedDialsByNow: workdayProgress.expectedDialsByNow,
           dialGapToday: 0,
           talkMinutesToday: 0,
           demosThisWeek: 0,
@@ -1392,6 +1635,22 @@ export async function GET() {
           streakDays: 0,
           overallStatus: "at_risk",
           needsAttentionReason: "",
+          selectedWindow: buildWindowMetrics({
+            range: selectedRange,
+            calls: [],
+            demos: [],
+            closedLeads: [],
+            workdayProgress,
+          }),
+          dailyAverages: DASHBOARD_DAILY_AVERAGE_RANGES.map((rangeKey) =>
+            buildWindowMetrics({
+              range: createDashboardRangeContext(now, rangeKey),
+              calls: [],
+              demos: [],
+              closedLeads: [],
+              workdayProgress,
+            }),
+          ),
         });
       }
     }
@@ -1399,7 +1658,11 @@ export async function GET() {
     for (const row of leaderboardSeed.values()) {
       const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
       const ownedLeadIds = new Set(ownedLeads.map((lead) => lead.id));
-      const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
+      const ownedCalls = calls.filter((call) => {
+        const attributedUserId = getCallAttributedUserId(call, leadsById);
+        if (attributedUserId) return attributedUserId === row.userId;
+        return typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id);
+      });
       const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
       const rowAttributedDemos = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId)));
       const callsToday = ownedCalls.filter((call) => {
@@ -1418,21 +1681,15 @@ export async function GET() {
         const closedAt = parseDate(lead.closedAt);
         return closedAt ? isSameDayInTimeZone(closedAt, now) : false;
       });
-      const rowWorkdayProgress = resolveWorkdayProgress(workforceUsersById.get(row.userId), now, scheduledWorkdayProgress);
 
       row.userName = usersById.get(row.userId) ?? row.userName;
       row.dialsToday = callsToday.length;
-      row.callsPerHourToday = rowWorkdayProgress.elapsedHours > 0 ? callsToday.length / rowWorkdayProgress.elapsedHours : 0;
+      row.callsPerHourToday = workdayProgress.elapsedHours > 0 ? callsToday.length / workdayProgress.elapsedHours : 0;
       row.conversationsToday = conversationsToday.length;
       row.contactRateToday = computeRate(conversationsToday.length, callsToday.length);
       row.demosToday = demosToday.length;
       row.demoConversionRateToday = computeRate(demosToday.length, conversationsToday.length);
-      row.expectedDialsByNow = rowWorkdayProgress.expectedDialsByNow;
-      row.expectedDemosByNow = getTodayExpectedTargetByNow({
-        elapsedHours: rowWorkdayProgress.elapsedHours,
-        perHourTarget: SALES_DASHBOARD_TARGETS_BY_HOUR.demosPerHour,
-        dailyTarget: SALES_DASHBOARD_TARGETS.demosPerDay,
-      });
+      row.expectedDialsByNow = workdayProgress.expectedDialsByNow;
       row.dialGapToday = row.dialsToday - row.expectedDialsByNow;
       row.talkMinutesToday = talkMinutesToday;
       row.demosThisWeek = demosThisWeek.length;
@@ -1444,23 +1701,45 @@ export async function GET() {
         demos: demosToday.length,
         closes: closesToday.length,
       });
-      row.streakDays = computeStreak(calls, visibleLeads, now, row.userId, ownedLeadIds);
-      row.overallStatus = combineStatuses([
-        getPerformanceStatus(row.dialsToday, row.expectedDialsByNow),
-        getPerformanceStatus(row.contactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct),
-        getTodayPacedStatus(row.demosToday, row.expectedDemosByNow),
-      ]);
-      row.needsAttentionReason = buildNeedsAttentionReason(row);
+      row.streakDays = computeStreak(calls, visibleLeads, now, row.userId, leadsById);
+      row.selectedWindow = buildWindowMetrics({
+        range: selectedRange,
+        calls: ownedCalls,
+        demos: rowAttributedDemos,
+        closedLeads: soldLeads,
+        workdayProgress,
+      });
+      row.dailyAverages = DASHBOARD_DAILY_AVERAGE_RANGES.map((rangeKey) =>
+        buildWindowMetrics({
+          range: createDashboardRangeContext(now, rangeKey),
+          calls: ownedCalls,
+          demos: rowAttributedDemos,
+          closedLeads: soldLeads,
+          workdayProgress,
+        }),
+      );
+      row.overallStatus = row.selectedWindow.overallStatus;
+      row.needsAttentionReason = buildNeedsAttentionReason(row.selectedWindow);
     }
 
     const leaderboard = [...leaderboardSeed.values()]
-      .filter((row) => row.claimedLeads > 0 || row.dialsToday > 0 || row.demosThisWeek > 0 || row.closesThisMonth > 0 || row.revenueThisMonth > 0)
+      .filter((row) =>
+        row.claimedLeads > 0 ||
+        row.selectedWindow.dials > 0 ||
+        row.selectedWindow.demos > 0 ||
+        row.selectedWindow.closes > 0 ||
+        row.selectedWindow.revenue > 0 ||
+        row.dialsToday > 0 ||
+        row.demosThisWeek > 0 ||
+        row.closesThisMonth > 0 ||
+        row.revenueThisMonth > 0,
+      )
       .sort((a, b) =>
         getStatusRank(a.overallStatus) - getStatusRank(b.overallStatus) ||
-        b.demosToday - a.demosToday ||
-        b.contactRateToday - a.contactRateToday ||
-        b.scoreToday - a.scoreToday ||
-        b.revenueThisMonth - a.revenueThisMonth ||
+        b.selectedWindow.demos - a.selectedWindow.demos ||
+        b.selectedWindow.contactRate - a.selectedWindow.contactRate ||
+        b.selectedWindow.score - a.selectedWindow.score ||
+        b.selectedWindow.revenue - a.selectedWindow.revenue ||
         b.demosThisWeek - a.demosThisWeek ||
         b.claimedLeads - a.claimedLeads ||
         a.userName.localeCompare(b.userName))
@@ -1471,6 +1750,7 @@ export async function GET() {
       const closedAt = parseDate(lead.closedAt);
       return closedAt ? isSameMonthInTimeZone(closedAt, now) : false;
     });
+    const closedLeadsAll = visibleLeads.filter((lead) => Boolean(parseDate(lead.closedAt)));
     const liveSitesAll = visibleLeads.filter((lead) => lead.siteStatus === "LIVE" || Boolean(lead.deployedUrl)).length;
     const trackedReps = [...leaderboardSeed.values()].filter((row) => row.claimedLeads > 0);
     const teamDialsToday = sum(trackedReps.map((row) => row.dialsToday));
@@ -1479,25 +1759,27 @@ export async function GET() {
     const avgContactRateToday = computeRate(teamConversationsToday, teamDialsToday);
     const repsOnTrack = trackedReps.filter((row) => row.overallStatus === "on_track").length;
     const repsOffTrack = trackedReps.filter((row) => row.overallStatus !== "on_track").length;
+    const teamSelectedWindow = buildWindowMetrics({
+      range: selectedRange,
+      calls,
+      demos: attributedDemos,
+      closedLeads: closedLeadsAll,
+      workdayProgress,
+    });
+    const teamDialsPerRepPerDay = trackedReps.length > 0
+      ? average(trackedReps.map((row) => row.selectedWindow.dialsPerDay))
+      : 0;
+    const teamDemosPerRepPerDay = trackedReps.length > 0
+      ? average(trackedReps.map((row) => row.selectedWindow.demosPerDay))
+      : 0;
     const scorecards = [...leaderboard]
       .map((row) => {
         const ownedLeads = visibleLeads.filter((lead) => lead.ownerId === row.userId);
-        const ownedLeadIds = new Set(ownedLeads.map((lead) => lead.id));
-        const ownedCalls = calls.filter((call) => typeof call.lead_id === "string" && ownedLeadIds.has(call.lead_id));
         const soldLeads = visibleLeads.filter((lead) => getLeadCloseAttributionUserId(lead) === row.userId);
-        const rowAttributedDemos = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId)));
-        const demosBookedTotal = rowAttributedDemos.length;
+        const demosBookedTotal = attributedDemos.filter((demo) => matchesDemoToUser(demo, row.userId, userEmailsById.get(row.userId))).length;
         const closesTotal = soldLeads.length;
         const demoToCloseRate = demosBookedTotal > 0 ? (closesTotal / demosBookedTotal) * 100 : 0;
         const workingRate = row.dialsToday > 0 ? (row.conversationsToday / row.dialsToday) * 100 : 0;
-        const dailyAverages = DAILY_AVERAGE_WINDOW_OPTIONS.map((window) =>
-          buildDailyAverageWindow({
-            ...window,
-            calls: ownedCalls,
-            demos: rowAttributedDemos,
-            now,
-          }),
-        );
         return {
           userId: row.userId,
           userName: row.userName,
@@ -1513,11 +1795,9 @@ export async function GET() {
           revenueThisMonth: row.revenueThisMonth,
           streakDays: row.streakDays,
           overallStatus: row.overallStatus,
-          dialsStatus: getPerformanceStatus(row.dialsToday, row.expectedDialsByNow),
-          contactRateStatus: getPerformanceStatus(row.contactRateToday, SALES_DASHBOARD_TARGETS.contactRatePct),
-          demosStatus: getTodayPacedStatus(row.demosToday, row.expectedDemosByNow),
           paceGapLabel: `${formatSignedNumber(row.dialGapToday)} vs pace`,
-          dailyAverages,
+          selectedWindow: row.selectedWindow,
+          dailyAverages: row.dailyAverages,
         };
       })
       .slice(0, 6);
@@ -1535,7 +1815,11 @@ export async function GET() {
           .filter(Boolean),
       );
       const repCallLeadIds = new Set([...ownedLeadIds, ...repDemoLeadIds]);
-      const repCalls = calls.filter((call) => typeof call.lead_id === "string" && repCallLeadIds.has(call.lead_id));
+      const repCalls = calls.filter((call) => {
+        const attributedUserId = getCallAttributedUserId(call, leadsById);
+        if (attributedUserId) return attributedUserId === scorecard.userId;
+        return typeof call.lead_id === "string" && repCallLeadIds.has(call.lead_id);
+      });
       const callsToday = repCalls.filter((call) => {
         const at = parseDate(call.created_at);
         return at ? isSameDayInTimeZone(at, now) : false;
@@ -1564,9 +1848,26 @@ export async function GET() {
         bookedDemoCalls: bookedDemoCalls.length,
         bookedDemoCallsToday: bookedDemoCallsToday.length,
         talkMinutesToday,
+        selectedWindow: leaderboard.find((row) => row.userId === scorecard.userId)?.selectedWindow ?? buildWindowMetrics({
+          range: selectedRange,
+          calls: [],
+          demos: [],
+          closedLeads: [],
+          workdayProgress,
+        }),
+        dailyAverages: leaderboard.find((row) => row.userId === scorecard.userId)?.dailyAverages ?? DASHBOARD_DAILY_AVERAGE_RANGES.map((rangeKey) =>
+          buildWindowMetrics({
+            range: createDashboardRangeContext(now, rangeKey),
+            calls: [],
+            demos: [],
+            closedLeads: [],
+            workdayProgress,
+          }),
+        ),
         recentCalls: repCalls.slice(0, 40).map((call) => {
           const leadId = typeof call.lead_id === "string" ? call.lead_id : "";
           const lead = leadId ? leadsById.get(leadId) : null;
+          const isOwnedLead = ownedLeadIds.has(leadId);
           const hasRecording = Boolean(call.recording_s3_uri || call.recording_url);
           const hasAnalysis = Boolean(call.analysis_s3_uri || call.transcript_text || call.overall_sentiment);
           const hasBookedDemo = Boolean(lead?.demoBooking?.date) || bookedDemoLeadIds.has(leadId);
@@ -1583,17 +1884,18 @@ export async function GET() {
             hasRecording,
             hasAnalysis,
             hasBookedDemo,
+            isOwnedLead,
           };
         }),
       };
     });
 
     const callLeaderboard = [...leaderboard]
-      .filter((row) => row.dialsToday > 0 || row.talkMinutesToday > 0)
+      .filter((row) => row.selectedWindow.dials > 0 || row.selectedWindow.talkMinutes > 0 || row.dialsToday > 0 || row.talkMinutesToday > 0)
       .sort((a, b) =>
-        b.talkMinutesToday - a.talkMinutesToday ||
-        b.conversationsToday - a.conversationsToday ||
-        b.dialsToday - a.dialsToday ||
+        b.selectedWindow.talkMinutes - a.selectedWindow.talkMinutes ||
+        b.selectedWindow.conversations - a.selectedWindow.conversations ||
+        b.selectedWindow.dials - a.selectedWindow.dials ||
         a.userName.localeCompare(b.userName))
       .slice(0, 6)
       .map((row) => ({
@@ -1605,6 +1907,8 @@ export async function GET() {
         callsPerHourLabel: `${formatDecimal(row.callsPerHourToday)} / ${SALES_DASHBOARD_TARGETS.dialsPerHour} hr`,
         contactRateLabel: formatPercent(row.contactRateToday),
         avgTalkPerCallLabel: row.dialsToday > 0 ? `${Math.round((row.talkMinutesToday / row.dialsToday) * 10) / 10} min` : "0 min",
+        selectedWindow: row.selectedWindow,
+        dailyAverages: row.dailyAverages,
       }));
 
     const funnel = [...leaderboardSeed.values()]
@@ -1704,16 +2008,22 @@ export async function GET() {
     return NextResponse.json({
       generatedAt: now.toISOString(),
       viewerRole,
+      range: {
+        selectedKey: selectedRange.key,
+        selectedLabel: selectedRange.label,
+        selectedShortLabel: selectedRange.shortLabel,
+        selectedDays: selectedRange.days,
+        startDate: selectedRange.startDate,
+        endDate: selectedRange.endDate,
+        available: Object.entries(DASHBOARD_RANGE_OPTIONS).map(([key, option]) => ({
+          key,
+          label: option.label,
+          shortLabel: option.shortLabel,
+          days: option.days,
+        })),
+      },
       rep: {
-        headline: buildRepHeadline({
-          dialsStatus: repDialPaceStatus,
-          contactStatus: repContactStatus,
-          demosStatus: repDemosStatus,
-          callsPerHourToday: repCallsPerHourToday,
-          contactRateToday: repContactRateToday,
-          demosToday: repDemosToday.length,
-          expectedDemosByNow: repExpectedDemosByNow,
-        }),
+        headline: buildRepHeadline(repSelectedWindow),
         scoreToday: repScoreToday,
         streakDays: repStreak,
         kpis: {
@@ -1730,57 +2040,64 @@ export async function GET() {
           closesThisMonth: repClosedThisMonth.length,
           liveSites: repLiveSites,
         },
+        selectedWindow: repSelectedWindow,
+        dailyAverages: repDailyAverages,
         targets: [
           {
-            label: "Dials Today",
-            completed: repCallsToday.length,
-            target: repWorkdayProgress.expectedDialsByNow,
-            valueLabel: String(repCallsToday.length),
-            targetLabel: String(repWorkdayProgress.expectedDialsByNow),
-            detail: `${formatSignedNumber(repDialGapToday)} vs pace by now`,
+            label: repSelectedWindow.isToday ? "Dials Today" : "Avg Dials / Day",
+            completed: repSelectedWindow.isToday ? repSelectedWindow.dials : repSelectedWindow.dialsPerDay,
+            target: repSelectedWindow.isToday ? repSelectedWindow.expectedDials : SALES_DASHBOARD_TARGETS.dialsPerDay,
+            valueLabel: repSelectedWindow.isToday ? String(repSelectedWindow.dials) : formatDecimal(repSelectedWindow.dialsPerDay),
+            targetLabel: repSelectedWindow.isToday ? String(Math.round(repSelectedWindow.expectedDials)) : String(SALES_DASHBOARD_TARGETS.dialsPerDay),
+            detail: repSelectedWindow.isToday
+              ? `${formatSignedNumber(repDialGapToday)} vs pace by now`
+              : `${formatSignedNumber(Math.round(repSelectedWindow.dialGap * 10) / 10)} vs ${SALES_DASHBOARD_TARGETS.dialsPerDay} daily target across ${repSelectedWindow.label.toLowerCase()}`,
             tone: "indigo",
-            status: repDialPaceStatus,
+            status: repSelectedWindow.dialsStatus,
           },
           {
-            label: "Calls / Hour",
-            completed: repCallsPerHourToday,
+            label: repSelectedWindow.isToday ? "Calls / Hour" : "Avg Calls / Hour",
+            completed: repSelectedWindow.callsPerHour,
             target: SALES_DASHBOARD_TARGETS.dialsPerHour,
-            valueLabel: formatDecimal(repCallsPerHourToday),
+            valueLabel: formatDecimal(repSelectedWindow.callsPerHour),
             targetLabel: String(SALES_DASHBOARD_TARGETS.dialsPerHour),
-            detail: `Based on ${repWorkdayProgress.workdayLabel}`,
+            detail: repSelectedWindow.isToday
+              ? `${workdayProgress.workdayLabel} worked today`
+              : `${repSelectedWindow.label} rolling average`,
             tone: "indigo",
-            status: repCallsPerHourStatus,
+            status: repSelectedWindowCallsPerHourStatus,
           },
           {
             label: "Contact Rate",
-            completed: repContactRateToday,
+            completed: repSelectedWindow.contactRate,
             target: SALES_DASHBOARD_TARGETS.contactRatePct,
-            valueLabel: formatPercent(repContactRateToday),
+            valueLabel: formatPercent(repSelectedWindow.contactRate),
             targetLabel: `${SALES_DASHBOARD_TARGETS.contactRatePct}%`,
-            detail: `${repConversationsToday.length} connects from ${repCallsToday.length} dials`,
+            detail: `${repSelectedWindow.conversations} connects from ${repSelectedWindow.dials} dials in ${repSelectedWindow.label.toLowerCase()}`,
             tone: "amber",
-            status: repContactStatus,
+            status: repSelectedWindow.contactRateStatus,
           },
           {
-            label: "Booked Demos",
-            completed: repDemosToday.length,
-            target: repExpectedDemosByNow,
-            valueLabel: String(repDemosToday.length),
-            targetLabel: formatDecimal(repExpectedDemosByNow),
-            detail: `${formatPercent(repDemoConversionRateToday)} conversion from connects; ${formatDecimal(repExpectedDemosByNow)} expected by now`,
+            label: repSelectedWindow.isToday ? "Booked Demos" : "Avg Demos / Day",
+            completed: repSelectedWindow.isToday ? repSelectedWindow.demos : repSelectedWindow.demosPerDay,
+            target: repSelectedWindow.isToday ? repSelectedWindow.expectedDemos : SALES_DASHBOARD_TARGETS.demosPerDay,
+            valueLabel: repSelectedWindow.isToday ? String(repSelectedWindow.demos) : formatDecimal(repSelectedWindow.demosPerDay),
+            targetLabel: repSelectedWindow.isToday ? formatDecimal(repSelectedWindow.expectedDemos) : String(SALES_DASHBOARD_TARGETS.demosPerDay),
+            detail: repSelectedWindow.isToday
+              ? `${formatPercent(repSelectedWindow.demoConversionRate)} conversion from connects; ${formatDecimal(repSelectedWindow.expectedDemos)} expected by now`
+              : `${formatPercent(repSelectedWindow.demoConversionRate)} demo conversion from connects`,
             tone: "emerald",
-            status: repDemosStatus,
+            status: repSelectedWindow.demosStatus,
           },
         ],
         progress: {
-          scoreLabel: compactNumber(repScoreToday),
-          revenueLabel: currency(repRevenueThisMonth),
-          talkLabel: minutesLabel(repTalkSecondsToday),
+          scoreLabel: compactNumber(repSelectedWindow.score),
+          revenueLabel: currency(repSelectedWindow.revenue),
+          talkLabel: `${Math.round(repSelectedWindow.talkMinutes)} min`,
         },
         accountability: {
-          expectedDialsByNow: repWorkdayProgress.expectedDialsByNow,
-          expectedDemosByNow: repExpectedDemosByNow,
-          workdayLabel: repWorkdayProgress.workdayLabel,
+          expectedDialsByNow: workdayProgress.expectedDialsByNow,
+          workdayLabel: workdayProgress.workdayLabel,
           dialsStatus: repDialPaceStatus,
           contactRateStatus: repContactStatus,
           demosStatus: repDemosStatus,
@@ -1805,6 +2122,11 @@ export async function GET() {
           avgContactRateToday,
           repsOnTrack,
           repsOffTrack,
+          selectedWindow: {
+            ...teamSelectedWindow,
+            dialsPerRepPerDay: teamDialsPerRepPerDay,
+            demosPerRepPerDay: teamDemosPerRepPerDay,
+          },
         },
         upcomingSchedule: teamUpcomingSchedule,
         leaderboard,
@@ -1818,9 +2140,9 @@ export async function GET() {
           .filter((row) => row.claimedLeads > 0 && row.overallStatus !== "on_track")
           .sort((a, b) =>
             getStatusRank(b.overallStatus) - getStatusRank(a.overallStatus) ||
-            a.dialGapToday - b.dialGapToday ||
-            a.contactRateToday - b.contactRateToday ||
-            a.demosToday - b.demosToday)
+            a.selectedWindow.dialGap - b.selectedWindow.dialGap ||
+            a.selectedWindow.contactRate - b.selectedWindow.contactRate ||
+            a.selectedWindow.demos - b.selectedWindow.demos)
           .slice(0, 5),
       },
     });

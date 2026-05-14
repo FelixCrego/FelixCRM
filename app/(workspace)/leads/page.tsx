@@ -1,5 +1,5 @@
 import { LeadsListView } from "@/components/leads/leads-list-view";
-import { canUserViewAllLeads, listLeads } from "@/lib/store";
+import { canUserAssignLeads, canUserViewAllLeads, listLeads } from "@/lib/store";
 import { getAuthenticatedUser } from "@/lib/auth";
 
 export default async function LeadsPage() {
@@ -17,10 +17,13 @@ export default async function LeadsPage() {
     }
 
     const includeAll = await canUserViewAllLeads(user.id, user.email);
+    const canAssign = await canUserAssignLeads(user.id, user.email);
     const userLeads = await listLeads(user.id, { includeAll });
     return (
       <LeadsListView
         leads={userLeads}
+        canAssignLeads={canAssign}
+        currentUserId={user.id}
         openTitle="Lead Directory"
         openDescription="Search, review, and manage leads across the workspace."
       />

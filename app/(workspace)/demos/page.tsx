@@ -27,12 +27,7 @@ type LeadApiRecord = {
 type PersistedBookedDemo = {
   date?: string;
   time?: string;
-  selected_date?: string;
-  selected_time?: string;
   meetLink?: string;
-  meet_link?: string;
-  bookedAt?: string;
-  booked_at?: string;
 };
 
 const DEMO_CACHE_KEY = "felix:pending-upcoming-demos";
@@ -44,24 +39,62 @@ function isPipelineStage(value: string): value is PipelineStage {
   return pipelineStageOptions.includes(value as PipelineStage);
 }
 
-function parseDemoDateTime(date: string, time: string) {
-  const normalized = time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
-  if (!normalized) {
-    return new Date(`${date}T00:00:00`);
+function normalizeDemoDateKey(input: string | null | undefined) {
+  const value = typeof input === "string" ? input.trim() : "";
+  if (!value) return null;
+
+  const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T|\s)/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
   }
 
-  const rawHour = Number(normalized[1]);
-  const minutes = Number(normalized[2]);
-  const period = normalized[3].toUpperCase();
-  const hours24 = rawHour % 12 + (period === "PM" ? 12 : 0);
+  const slashMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    return `${slashMatch[3]}-${slashMatch[1].padStart(2, "0")}-${slashMatch[2].padStart(2, "0")}`;
+  }
 
-  const dateTime = new Date(`${date}T00:00:00`);
-  dateTime.setHours(hours24, minutes, 0, 0);
+  const dashMatch = value.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dashMatch) {
+    return `${dashMatch[3]}-${dashMatch[1].padStart(2, "0")}-${dashMatch[2].padStart(2, "0")}`;
+  }
+
+  return null;
+}
+
+function parseDemoTimeParts(time: string) {
+  const normalizedMeridiem = time.trim().match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s?(AM|PM)$/i);
+  if (normalizedMeridiem) {
+    const rawHour = Number(normalizedMeridiem[1]);
+    const minutes = Number(normalizedMeridiem[2]);
+    const period = normalizedMeridiem[3].toUpperCase();
+    return { hours24: rawHour % 12 + (period === "PM" ? 12 : 0), minutes };
+  }
+
+  const normalizedTwentyFourHour = time.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (normalizedTwentyFourHour) {
+    return { hours24: Number(normalizedTwentyFourHour[1]), minutes: Number(normalizedTwentyFourHour[2]) };
+  }
+
+  return null;
+}
+
+function parseDemoDateTime(date: string, time: string) {
+  const normalizedDate = normalizeDemoDateKey(date);
+  if (!normalizedDate) return new Date(0);
+
+  const timeParts = parseDemoTimeParts(time);
+  const dateTime = new Date(`${normalizedDate}T00:00:00`);
+  if (!timeParts) {
+    return dateTime;
+  }
+
+  dateTime.setHours(timeParts.hours24, timeParts.minutes, 0, 0);
   return dateTime;
 }
 
 function formatDateTimeLabel(date: string, time: string) {
-  const localDate = new Date(`${date}T00:00:00`);
+  const normalizedDate = normalizeDemoDateKey(date);
+  const localDate = new Date(`${normalizedDate ?? date}T00:00:00`);
   const today = new Date();
   const tomorrow = new Date();
   tomorrow.setDate(today.getDate() + 1);
@@ -81,24 +114,24 @@ function formatDateTimeLabel(date: string, time: string) {
   };
 }
 
-function isValidDateString(input: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(input);
-}
-
 function getTodayKey() {
-  return new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function normalizeDemo(value: unknown): Demo | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
 
-  const selectedDate = typeof raw.selected_date === "string" ? raw.selected_date.trim() : "";
+  const selectedDate = normalizeDemoDateKey(typeof raw.selected_date === "string" ? raw.selected_date : "");
   const selectedTime = typeof raw.selected_time === "string" ? raw.selected_time.trim() : "";
   const meetLink = typeof raw.meet_link === "string" ? raw.meet_link.trim() : "";
   const leadName = typeof raw.lead_name === "string" && raw.lead_name.trim() ? raw.lead_name.trim() : "Unknown Lead";
 
-  if (!selectedDate || !selectedTime || !isValidDateString(selectedDate)) return null;
+  if (!selectedDate || !selectedTime) return null;
   if (selectedDate < getTodayKey()) return null;
 
   const rawLeadId = typeof raw.lead_id === "string" ? raw.lead_id.trim() : "";
@@ -123,30 +156,20 @@ function resolveBookedDemoFromLead(lead: LeadApiRecord): Demo | null {
   if ((lead.status || "").toUpperCase() === "CLOSED") return null;
 
   const sourcePayload = (lead.sourcePayload ?? lead.source_payload ?? {}) as Record<string, unknown>;
-  const demoBooking = (lead.demoBooking ?? sourcePayload.demoBooking ?? sourcePayload.demo_booking ?? null) as PersistedBookedDemo | null;
+  const topLevelDemoBooking =
+    lead.demoBooking && typeof lead.demoBooking === "object"
+      ? lead.demoBooking
+      : null;
+  const payloadDemoBooking = (sourcePayload.demoBooking ?? sourcePayload.demo_booking ?? null) as PersistedBookedDemo | null;
+  const demoBooking = topLevelDemoBooking ?? payloadDemoBooking;
 
   if (!demoBooking) return null;
 
-  const date =
-    typeof demoBooking.date === "string"
-      ? demoBooking.date.trim()
-      : typeof demoBooking.selected_date === "string"
-        ? demoBooking.selected_date.trim()
-        : "";
-  const time =
-    typeof demoBooking.time === "string"
-      ? demoBooking.time.trim()
-      : typeof demoBooking.selected_time === "string"
-        ? demoBooking.selected_time.trim()
-        : "";
-  const meetLink =
-    typeof demoBooking.meetLink === "string"
-      ? demoBooking.meetLink.trim()
-      : typeof demoBooking.meet_link === "string"
-        ? demoBooking.meet_link.trim()
-        : "";
+  const date = normalizeDemoDateKey(typeof demoBooking.date === "string" ? demoBooking.date : "");
+  const time = typeof demoBooking.time === "string" ? demoBooking.time.trim() : "";
+  const meetLink = typeof demoBooking.meetLink === "string" ? demoBooking.meetLink.trim() : "";
 
-  if (!date || !time || !isValidDateString(date)) return null;
+  if (!date || !time) return null;
   if (date < getTodayKey()) return null;
 
   const leadName =
@@ -171,7 +194,6 @@ function saveCachedDemos(demos: Demo[]) {
 
 export default function DemosPage() {
   const [demos, setDemos] = useState<Demo[]>([]);
-  const [persistedLeadDemos, setPersistedLeadDemos] = useState<Demo[]>([]);
   const [cachedPendingDemos, setCachedPendingDemos] = useState<Demo[]>([]);
   const [pendingDemoFromQuery, setPendingDemoFromQuery] = useState<Demo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -220,40 +242,22 @@ export default function DemosPage() {
       setLoading(true);
       setError("");
       try {
-        const [demosResponse, leadsResponse] = await Promise.all([
-          fetch("/api/demos", { cache: "no-store" }),
-          fetch("/api/leads", { cache: "no-store" }),
-        ]);
-
+        const demosResponse = await fetch("/api/demos", { cache: "no-store" });
         const demosPayload = (await demosResponse.json().catch(() => null)) as { demos?: Demo[]; error?: string } | null;
-        const leadsPayload = (await leadsResponse.json().catch(() => null)) as { leads?: LeadApiRecord[]; error?: string } | null;
 
         if (!demosResponse.ok) {
           throw new Error(demosPayload?.error || "Failed to load upcoming demos.");
         }
 
-        if (!leadsResponse.ok) {
-          throw new Error(leadsPayload?.error || "Failed to load leads for booked demo tracking.");
-        }
-
-        const allLeads = leadsPayload?.leads ?? [];
-        const closedLeadIds = new Set(allLeads.filter((lead) => (lead.status || "").toUpperCase() === "CLOSED").map((lead) => lead.id));
-
         setDemos(demosPayload?.demos ?? []);
-        setPersistedLeadDemos(allLeads.map(resolveBookedDemoFromLead).filter((demo): demo is Demo => Boolean(demo)));
         setCachedPendingDemos((previous) => {
-          const nextCached = previous.filter((demo) => {
-            if (demo.selected_date < getTodayKey()) return false;
-            if (demo.lead_id && closedLeadIds.has(demo.lead_id)) return false;
-            return true;
-          });
+          const nextCached = previous.filter((demo) => demo.selected_date >= getTodayKey());
           saveCachedDemos(nextCached);
           return nextCached;
         });
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load upcoming demos.");
         setDemos([]);
-        setPersistedLeadDemos([]);
       } finally {
         setLoading(false);
       }
@@ -268,11 +272,11 @@ export default function DemosPage() {
     }
 
     const params = new URLSearchParams(window.location.search);
-    const date = params.get("date")?.trim() || "";
+    const date = normalizeDemoDateKey(params.get("date"));
     const time = params.get("time")?.trim() || "";
     const meetLink = params.get("meetLink")?.trim() || "";
 
-    if (!date || !time || !meetLink || !isValidDateString(date) || date < getTodayKey()) {
+    if (!date || !time || !meetLink || date < getTodayKey()) {
       setPendingDemoFromQuery(null);
       return;
     }
@@ -300,7 +304,7 @@ export default function DemosPage() {
   }, []);
 
   const demosWithMeta = useMemo(() => {
-    const combined = [...cachedPendingDemos, ...(pendingDemoFromQuery ? [pendingDemoFromQuery] : []), ...demos, ...persistedLeadDemos];
+    const combined = [...cachedPendingDemos, ...(pendingDemoFromQuery ? [pendingDemoFromQuery] : []), ...demos];
 
     const dedupedBySlot = new Map<string, Demo>();
     for (const demo of combined) {
@@ -319,7 +323,7 @@ export default function DemosPage() {
         };
       })
       .sort((firstDemo, secondDemo) => firstDemo.scheduledAt.getTime() - secondDemo.scheduledAt.getTime());
-  }, [cachedPendingDemos, demos, pendingDemoFromQuery, persistedLeadDemos]);
+  }, [cachedPendingDemos, demos, pendingDemoFromQuery]);
 
 
   const getSelectedPipelineStage = (demo: Demo) => {
@@ -410,23 +414,31 @@ export default function DemosPage() {
                       Open Lead
                     </Link>
                   ) : null}
-                  {demo.meet_link ? (
-                    <a
-                      href={demo.meet_link.startsWith("http") ? demo.meet_link : `https://${demo.meet_link}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="w-full rounded-lg bg-indigo-600 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-indigo-700"
+                  {demo.lead_id ? (
+                    <Link
+                      href={`/leads/${demo.lead_id}?reschedule=1#schedule`}
+                      className="w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-5 py-2.5 text-center text-sm font-medium text-amber-100 transition hover:border-amber-400 hover:bg-amber-500/15"
                     >
-                      Launch Workspace &amp; Meet
-                    </a>
+                      Reschedule Demo
+                    </Link>
+                  ) : null}
+                  {demo.meet_link ? (
+                    <>
+                      <a
+                        href={demo.meet_link.startsWith("http") ? demo.meet_link : `https://${demo.meet_link}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full rounded-lg bg-indigo-600 px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-indigo-700"
+                      >
+                        Launch Workspace &amp; Meet
+                      </a>
+                      <p className="text-xs text-zinc-400">Opens the Google Meet link for this scheduled demo.</p>
+                    </>
                   ) : (
-                    <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-center text-sm font-semibold text-amber-100">
-                      Meet Link Pending
+                    <div className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-5 py-3 text-center text-sm font-medium text-zinc-400">
+                      Meet link unavailable
                     </div>
                   )}
-                  <p className="text-xs text-zinc-400">
-                    {demo.meet_link ? "Opens the Google Meet link for this scheduled demo." : "This booking is scheduled, but no meet link is attached yet."}
-                  </p>
                 </div>
               </div>
             </article>

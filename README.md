@@ -41,9 +41,36 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_APP_URL=https://felix-crm-xi.vercel.app
 SUPABASE_SERVICE_ROLE_KEY=
+MARKETING_HUB_BASE_URL=https://felix-marketing-hub.vercel.app
+MARKETING_HUB_SYNC_TOKEN=
+MARKETING_HUB_DEFAULT_CLIENT_ID=xpgarage
 ```
 
 > Most features degrade gracefully without optional keys, but lead scraping specifically requires `MAPS_API_KEY`.
+
+## Marketing Hub feedback sync
+
+- Set `MARKETING_HUB_BASE_URL` and `MARKETING_HUB_SYNC_TOKEN` to push booked jobs and Contact Lens call-quality signals into Felix Marketing Hub automatically.
+- `MARKETING_HUB_DEFAULT_CLIENT_ID` lets FelixCRM sync outcomes even when the lead is missing explicit `sourcePayload.marketingAttribution.clientId`.
+- Leads can carry `sourcePayload.marketingAttribution` with `clientId`, `customerId`, `gclid`, `service`, and `utm_*` values for tighter Google Ads attribution.
+
+## Account management workflow (CRM -> Marketing Hub)
+
+- Close the lead as won (`status: CLOSED`).
+- Promote it from **Account Management Center** using `Promote to Managed` (or ensure recurring billing is configured).
+- Promotion sets `accountManagement.syncEnabled = true` and recurring billing defaults so the account becomes exportable.
+- Marketing Hub consumes accounts from `GET /api/account-management/clients`.
+
+## Weekly client reports
+
+- Configure per-client reporting fields under Account Management:
+  - client report email
+  - weekly report day/time
+  - communication summary, focus, wins, risks, next steps
+- Automated report endpoint: `GET /api/account-management/reports/weekly`
+- Manual send endpoint: `POST /api/account-management/reports/weekly` with `{ leadId, force: true }`
+- Vercel cron is configured in `vercel.json` and should run daily; the route sends only on each client's configured weekday.
+- Set `CRON_SECRET` (or align with `FELIXCRM_WEBHOOK_SECRET`) to authorize scheduled runs.
 
 ## Template deployment payload contract
 

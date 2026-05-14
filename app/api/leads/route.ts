@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { canUserViewAllLeads, createLead, deleteLeads, listClaimableLeads, listLeads, releaseStaleLeads, setLeadWorkspaceStatus } from "@/lib/store";
+import { canUserAssignLeads, canUserViewAllLeads, createLead, deleteLeads, getEffectiveUserRole, isValidLeadAssignmentUserId, listClaimableLeads, listLeads, releaseStaleLeads, setLeadWorkspaceStatus } from "@/lib/store";
 import { getAuthenticatedUser, getAuthenticatedUserId } from "@/lib/auth";
 
 export async function GET(request: Request) {
@@ -9,8 +9,14 @@ export async function GET(request: Request) {
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await releaseStaleLeads();
     const scope = new URL(request.url).searchParams.get("scope");
-    const includeAll = await canUserViewAllLeads(user.id, user.email);
-    const leads = scope === "all" ? await listClaimableLeads(200) : await listLeads(user.id, { includeAll });
+    const [includeAll, viewerRole] = await Promise.all([
+      canUserViewAllLeads(user.id, user.email),
+      getEffectiveUserRole(user.id, user.email),
+    ]);
+    const includeAllCalendarLeads = includeAll || viewerRole === "TEAM_LEAD";
+    const leads = scope === "all"
+      ? await listClaimableLeads(200)
+      : await listLeads(user.id, { includeAll: scope === "calendar" ? includeAllCalendarLeads : includeAll });
     return NextResponse.json({ leads });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load leads." }, { status: 500 });
@@ -20,17 +26,43 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const userId = await getAuthenticatedUserId();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthenticatedUser();
+    if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json()) as { businessName?: string; phone?: string | null; websiteUrl?: string | null };
+    const body = (await request.json()) as { businessName?: string; phone?: string | null; websiteUrl?: string | null; assigneeId?: string | null };
     const businessName = body?.businessName?.trim() || "";
 
     if (!businessName) {
       return NextResponse.json({ error: "Business name is required." }, { status: 400 });
     }
 
-    const lead = await createLead(userId, {
+    const rawAssigneeId =
+      body?.assigneeId === null
+        ? null
+        : typeof body?.assigneeId === "string" && body.assigneeId.trim().length > 0
+          ? body.assigneeId.trim()
+          : undefined;
+
+    let resolvedOwnerId: string | null = user.id;
+
+    if (rawAssigneeId !== undefined) {
+      const canAssign = await canUserAssignLeads(user.id, user.email);
+      if (!canAssign) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+
+      if (rawAssigneeId === null) {
+        resolvedOwnerId = null;
+      } else {
+        const isValidAssignee = await isValidLeadAssignmentUserId(rawAssigneeId);
+        if (!isValidAssignee) {
+          return NextResponse.json({ error: "Invalid assignee." }, { status: 400 });
+        }
+        resolvedOwnerId = rawAssigneeId;
+      }
+    }
+
+    const lead = await createLead(resolvedOwnerId, {
       businessName,
       phone: body?.phone?.trim() || null,
       websiteUrl: body?.websiteUrl?.trim() || null,

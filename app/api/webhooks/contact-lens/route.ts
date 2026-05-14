@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createLeadNote, findLeadIdByContactId, findLeadIdByPhone } from "@/lib/store";
+import { createLeadNote, findLeadIdByContactId, findLeadIdByPhone, getLeadById } from "@/lib/store";
 import { getCallAnalyticsByContactId, upsertCallAnalytics } from "@/lib/call-analytics-store";
 import {
   buildContactLensLeadNote,
@@ -9,6 +9,7 @@ import {
   toContactLensCrmRecord,
 } from "@/lib/contact-lens";
 import { hydrateCallAnalyticsPayload } from "@/lib/contact-lens-artifacts";
+import { syncContactLensOutcomeToMarketingHub } from "@/lib/marketing-hub-sync";
 
 type CallAnalyticsRecord = {
   lead_id: string;
@@ -178,6 +179,15 @@ export async function POST(request: Request) {
       await createLeadNote(leadId, buildContactLensLeadNote({ ...resolvedPayload, leadId }), "call", resolvedPayload.contactId);
     } catch (noteError) {
       console.warn("Contact Lens note creation failed:", noteError);
+    }
+
+    try {
+      const lead = await getLeadById(leadId, "marketing-hub-sync", { includeAll: true });
+      if (lead) {
+        await syncContactLensOutcomeToMarketingHub(lead, resolvedPayload);
+      }
+    } catch (syncError) {
+      console.warn("Marketing Hub Contact Lens sync failed:", syncError);
     }
 
     return NextResponse.json(

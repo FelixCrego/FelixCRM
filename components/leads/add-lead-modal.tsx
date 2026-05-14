@@ -8,17 +8,40 @@ type NewLeadForm = {
   website: string;
 };
 
+type AssignmentOption = {
+  value: string;
+  label: string;
+};
+
 type AddLeadModalProps = {
   isOpen: boolean;
   isSubmitting: boolean;
   formData: NewLeadForm;
   errorMessage?: string | null;
+  assignmentLabel?: string;
+  assignmentHelperText?: string | null;
+  assignmentOptions?: AssignmentOption[];
+  assignmentValue?: string;
   onChange: (field: keyof NewLeadForm, value: string) => void;
+  onAssignmentChange?: (value: string) => void;
   onClose: () => void;
   onSubmit: () => void;
 };
 
-export function AddLeadModal({ isOpen, isSubmitting, formData, errorMessage, onChange, onClose, onSubmit }: AddLeadModalProps) {
+export function AddLeadModal({
+  isOpen,
+  isSubmitting,
+  formData,
+  errorMessage,
+  assignmentLabel = "Assign To",
+  assignmentHelperText,
+  assignmentOptions,
+  assignmentValue,
+  onChange,
+  onAssignmentChange,
+  onClose,
+  onSubmit,
+}: AddLeadModalProps) {
   if (!isOpen) return null;
 
   return (
@@ -71,6 +94,24 @@ export function AddLeadModal({ isOpen, isSubmitting, formData, errorMessage, onC
               className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
             />
           </label>
+
+          {assignmentOptions?.length && onAssignmentChange ? (
+            <label className="block space-y-1">
+              <span className="text-xs uppercase tracking-[0.15em] text-zinc-500">{assignmentLabel}</span>
+              <select
+                value={assignmentValue}
+                onChange={(event) => onAssignmentChange(event.target.value)}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+              >
+                {assignmentOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {assignmentHelperText ? <p className="text-xs text-zinc-500">{assignmentHelperText}</p> : null}
+            </label>
+          ) : null}
         </div>
 
         {errorMessage ? <p className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{errorMessage}</p> : null}

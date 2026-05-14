@@ -8,6 +8,7 @@ type PayType = "COMMISSION" | "HOURLY" | "HOURLY_PLUS_COMMISSION";
 type OvertimeStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
 type TimeEditRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
 type TimeEditRequestType = "ADD_SHIFT" | "EDIT_SHIFT";
+type CrmPresenceStatus = "ACTIVE" | "STALE" | "ENDED";
 type TimeClockEntry = {
   id: string;
   clockInAt: string;
@@ -36,6 +37,13 @@ type WorkforceUser = {
   email: string | null;
   name: string;
   role: string;
+  crmPresence: {
+    displayStatus: CrmPresenceStatus;
+    startedAt: string;
+    lastSeenAt: string;
+    lastPath: string | null;
+    durationMinutes: number;
+  } | null;
   settings: {
     payType: PayType;
     hourlyRate: number | null;
@@ -84,6 +92,7 @@ type Snapshot = {
   viewerRole?: string;
   canManageWorkforce: boolean;
   canEditAssignments: boolean;
+  crmSessionTrackingAvailable: boolean;
   self: WorkforceUser;
   team: WorkforceUser[];
   liveWorkforce: {
@@ -252,6 +261,40 @@ function badgeTone(status: OvertimeStatus | TimeEditRequestStatus) {
   return "border-zinc-700 bg-zinc-800/70 text-zinc-300";
 }
 
+function crmPresenceTone(status: CrmPresenceStatus | null, trackingAvailable: boolean) {
+  if (!trackingAvailable) return "border-zinc-700 bg-zinc-800/70 text-zinc-400";
+  if (status === "ACTIVE") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (status === "STALE") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+  if (status === "ENDED") return "border-zinc-600/40 bg-zinc-700/20 text-zinc-200";
+  return "border-zinc-700 bg-zinc-800/70 text-zinc-400";
+}
+
+function crmPresenceLabel(status: CrmPresenceStatus | null, trackingAvailable: boolean) {
+  if (!trackingAvailable) return "CRM Unavailable";
+  if (status === "ACTIVE") return "CRM Active";
+  if (status === "STALE") return "CRM Stale";
+  if (status === "ENDED") return "CRM Ended";
+  return "No CRM Activity";
+}
+
+function clockBadgeTone(user: WorkforceUser) {
+  if (user.currentEntry) return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (supportsHourlyTracking(user.settings.payType)) return "border-zinc-700 bg-zinc-800/70 text-zinc-300";
+  return "border-zinc-800 bg-zinc-900 text-zinc-500";
+}
+
+function clockBadgeLabel(user: WorkforceUser) {
+  if (user.currentEntry) return "Clocked In";
+  if (supportsHourlyTracking(user.settings.payType)) return "Clocked Out";
+  return "Hourly Disabled";
+}
+
+function crmActivitySummary(user: WorkforceUser, trackingAvailable: boolean) {
+  if (!trackingAvailable) return "CRM activity tracking is unavailable right now.";
+  if (!user.crmPresence) return "No CRM activity has been captured for this user yet.";
+  return `Last CRM activity ${formatDateTime(user.crmPresence.lastSeenAt)}`;
+}
+
 function supportsHourlyTracking(payType: PayType) {
   return payType === "HOURLY" || payType === "HOURLY_PLUS_COMMISSION";
 }
@@ -282,13 +325,13 @@ function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
-function crmPresenceTone(presence: "ACTIVE" | "IDLE" | "UNAVAILABLE") {
+function liveCrmPresenceTone(presence: "ACTIVE" | "IDLE" | "UNAVAILABLE") {
   if (presence === "ACTIVE") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
   if (presence === "IDLE") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
   return "border-zinc-700 bg-zinc-800/70 text-zinc-300";
 }
 
-function crmPresenceLabel(presence: "ACTIVE" | "IDLE" | "UNAVAILABLE") {
+function liveCrmPresenceLabel(presence: "ACTIVE" | "IDLE" | "UNAVAILABLE") {
   if (presence === "ACTIVE") return "Active In CRM";
   if (presence === "IDLE") return "Clocked In, Idle";
   return "CRM Activity Unknown";
@@ -391,6 +434,45 @@ export default function TimeClockPage() {
     }
     return map;
   }, [snapshot?.team]);
+  const sortedTeam = useMemo(() => {
+    const crmStatusRank = (user: WorkforceUser) => {
+      const status = user.crmPresence?.displayStatus;
+      if (status === "ACTIVE") return 0;
+      if (status === "STALE") return 1;
+      if (status === "ENDED") return 2;
+      return 3;
+    };
+
+    return [...(snapshot?.team ?? [])].sort((left, right) => {
+      const clockPriority = Number(Boolean(right.currentEntry)) - Number(Boolean(left.currentEntry));
+      if (clockPriority !== 0) return clockPriority;
+
+      const crmPriority = crmStatusRank(left) - crmStatusRank(right);
+      if (crmPriority !== 0) return crmPriority;
+
+      const leftLastSeen = left.crmPresence ? new Date(left.crmPresence.lastSeenAt).getTime() : 0;
+      const rightLastSeen = right.crmPresence ? new Date(right.crmPresence.lastSeenAt).getTime() : 0;
+      if (rightLastSeen !== leftLastSeen) return rightLastSeen - leftLastSeen;
+
+      return left.name.localeCompare(right.name);
+    });
+  }, [snapshot?.team]);
+  const clockedInTeam = useMemo(() => sortedTeam.filter((user) => Boolean(user.currentEntry)), [sortedTeam]);
+  const activeCrmTeam = useMemo(
+    () => sortedTeam.filter((user) => user.crmPresence?.displayStatus === "ACTIVE"),
+    [sortedTeam],
+  );
+  const latestCrmActivity = useMemo(
+    () =>
+      sortedTeam
+        .filter((user) => user.crmPresence)
+        .sort((left, right) => {
+          const leftLastSeen = left.crmPresence ? new Date(left.crmPresence.lastSeenAt).getTime() : 0;
+          const rightLastSeen = right.crmPresence ? new Date(right.crmPresence.lastSeenAt).getTime() : 0;
+          return rightLastSeen - leftLastSeen;
+        })[0] ?? null,
+    [sortedTeam],
+  );
   const teamPayrollHistory = useMemo(
     () =>
       (snapshot?.payroll.team ?? [])
@@ -787,8 +869,8 @@ export default function TimeClockPage() {
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="text-lg font-semibold text-white">{employee.name}</p>
-                              <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${crmPresenceTone(employee.crmPresence)}`}>
-                                {crmPresenceLabel(employee.crmPresence)}
+                              <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${liveCrmPresenceTone(employee.crmPresence)}`}>
+                                {liveCrmPresenceLabel(employee.crmPresence)}
                               </span>
                             </div>
                             <p className="mt-1 text-sm text-zinc-400">
@@ -1046,8 +1128,43 @@ export default function TimeClockPage() {
                   </div>
                   <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-zinc-400">{snapshot.team.length} users</span>
                 </div>
+                <div className="mb-4 grid gap-3 xl:grid-cols-3">
+                  <article className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Clocked In Now</p>
+                    <p className="mt-2 text-2xl font-semibold text-white">{clockedInTeam.length}</p>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      {clockedInTeam.length > 0 ? clockedInTeam.map((user) => user.name).join(", ") : "Nobody is currently clocked in."}
+                    </p>
+                  </article>
+                  <article className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">CRM Active Now</p>
+                    <p className="mt-2 text-2xl font-semibold text-white">
+                      {snapshot.crmSessionTrackingAvailable ? activeCrmTeam.length : "--"}
+                    </p>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      {!snapshot.crmSessionTrackingAvailable
+                        ? "CRM session tracking is unavailable."
+                        : activeCrmTeam.length > 0
+                          ? activeCrmTeam.map((user) => user.name).join(", ")
+                          : "No one is actively using the CRM right now."}
+                    </p>
+                  </article>
+                  <article className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Latest CRM Activity</p>
+                    <p className="mt-2 text-lg font-semibold text-white">
+                      {!snapshot.crmSessionTrackingAvailable
+                        ? "Unavailable"
+                        : latestCrmActivity?.crmPresence
+                          ? `${latestCrmActivity.name} at ${formatDateTime(latestCrmActivity.crmPresence.lastSeenAt)}`
+                          : "No activity yet"}
+                    </p>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      {latestCrmActivity?.crmPresence?.lastPath ? latestCrmActivity.crmPresence.lastPath : "No tracked CRM page yet."}
+                    </p>
+                  </article>
+                </div>
                 <div className="grid gap-4 xl:grid-cols-2">
-                  {snapshot.team.map((employee) => {
+                  {sortedTeam.map((employee) => {
                     const draft = drafts[employee.id] ?? buildDraft(employee);
                     const draftCommissionRate = parseDraftNumber(draft.commissionRate);
                     const draftManagerOverrideRate = parseDraftNumber(draft.managerOverrideRate);
@@ -1063,9 +1180,23 @@ export default function TimeClockPage() {
                       <article id={`employee-${employee.id}`} key={employee.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
                         <div className="mb-4 flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-lg font-semibold text-white">{employee.name}</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-lg font-semibold text-white">{employee.name}</p>
+                              <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${clockBadgeTone(employee)}`}>
+                                {clockBadgeLabel(employee)}
+                              </span>
+                              <span
+                                className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${crmPresenceTone(employee.crmPresence?.displayStatus ?? null, snapshot.crmSessionTrackingAvailable)}`}
+                              >
+                                {crmPresenceLabel(employee.crmPresence?.displayStatus ?? null, snapshot.crmSessionTrackingAvailable)}
+                              </span>
+                            </div>
                             <p className="mt-1 text-sm text-zinc-400">{employee.email ?? employee.id} | {roleLabel(employee.role)}</p>
                             <p className="mt-2 text-xs text-zinc-500">Assigned manager: {assignedManager} | Assigned team lead: {assignedTeamLead}</p>
+                            <p className="mt-2 text-xs text-zinc-400">
+                              {crmActivitySummary(employee, snapshot.crmSessionTrackingAvailable)}
+                              {employee.crmPresence?.lastPath ? ` | ${employee.crmPresence.lastPath}` : ""}
+                            </p>
                           </div>
                           <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-right">
                             <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Worked This Week</p>
@@ -1218,6 +1349,7 @@ export default function TimeClockPage() {
                         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="text-xs text-zinc-500">
                             {employee.currentEntry ? `Clocked in since ${formatDateTime(employee.currentEntry.clockInAt)}` : supportsHourlyTracking(employee.settings.payType) ? "Currently clocked out" : "Hourly tracking disabled"}
+                            {employee.crmPresence ? ` | Last CRM activity ${formatDateTime(employee.crmPresence.lastSeenAt)}` : ""}
                             {!snapshot.canEditAssignments ? " | Team assignments and override rates are Super Admin only." : ""}
                           </div>
                           <button

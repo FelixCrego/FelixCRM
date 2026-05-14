@@ -5,7 +5,6 @@ import {
   AUTH_REFRESH_TOKEN_COOKIE,
   AUTH_USER_EMAIL_HEADER,
   AUTH_USER_HEADER,
-  setAuthCookies,
   getSupabaseUserByAccessToken,
   refreshSupabaseSession,
 } from "@/lib/auth";
@@ -14,46 +13,48 @@ const PUBLIC_PATHS = [
   "/login",
   "/signup",
   "/apply",
-  "/api/auth/refresh",
   "/api/auth/login",
   "/api/auth/signup",
   "/api/public",
-  "/api/webhooks/contact-lens",
-  "/api/webhooks/stripe",
+  "/client-portal",
+  "/api/account-management/clients",
+  "/api/account-management/reports/weekly"
 ];
-
-function normalizeEnvValue(value?: string | null) {
-  if (!value) return "";
-  return value.trim().replace(/^['"]|['"]$/g, "");
-}
-
-function hasMarketingHubSyncAccess(request: NextRequest) {
-  if (request.nextUrl.pathname !== "/api/account-management/clients") return false;
-  const expected = normalizeEnvValue(process.env.MARKETING_HUB_SYNC_TOKEN);
-  if (!expected) return false;
-
-  const headerToken = normalizeEnvValue(request.headers.get("x-marketing-hub-token"));
-  const queryToken = normalizeEnvValue(request.nextUrl.searchParams.get("token"));
-  return headerToken === expected || queryToken === expected;
-}
+const AUTH_REFRESH_GRACE_SECONDS = 60;
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
 function unauthorizedResponse(request: NextRequest) {
-  if (request.nextUrl.pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const response = request.nextUrl.pathname.startsWith("/api/")
+    ? NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    : (() => {
+        const loginUrl = new URL("/login", request.url);
+        loginUrl.searchParams.set("next", request.nextUrl.pathname);
+        return NextResponse.redirect(loginUrl);
+      })();
 
-  const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("next", request.nextUrl.pathname);
-  return NextResponse.redirect(loginUrl);
+  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+  return response;
 }
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (isPublicPath(pathname) || hasMarketingHubSyncAccess(request)) return NextResponse.next();
+  if (isPublicPath(pathname)) return NextResponse.next();
 
   const accessToken = request.cookies.get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
   const refreshToken = request.cookies.get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? "";
@@ -62,12 +63,27 @@ export async function middleware(request: NextRequest) {
     return unauthorizedResponse(request);
   }
 
-  const user = accessToken ? await getSupabaseUserByAccessToken(accessToken) : null;
+  const locallyVerifiedUser = accessToken
+    ? await getSupabaseUserByAccessToken(accessToken, { allowNetworkFallback: false })
+    : null;
 
-  if (user?.id) {
+  if (locallyVerifiedUser?.id) {
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set(AUTH_USER_HEADER, user.id);
-    requestHeaders.set(AUTH_USER_EMAIL_HEADER, user.email ?? "");
+    requestHeaders.set(AUTH_USER_HEADER, locallyVerifiedUser.id);
+    requestHeaders.set(AUTH_USER_EMAIL_HEADER, locallyVerifiedUser.email ?? "");
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
+  // If local JWT verification is unavailable (for example, ES256 tokens),
+  // validate against Supabase before treating the session as unauthorized.
+  const remotelyVerifiedUser = accessToken
+    ? await getSupabaseUserByAccessToken(accessToken, { allowNetworkFallback: true })
+    : null;
+
+  if (remotelyVerifiedUser?.id) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set(AUTH_USER_HEADER, remotelyVerifiedUser.id);
+    requestHeaders.set(AUTH_USER_EMAIL_HEADER, remotelyVerifiedUser.email ?? "");
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
@@ -82,9 +98,36 @@ export async function middleware(request: NextRequest) {
     requestHeaders.set(AUTH_USER_EMAIL_HEADER, refreshed.email ?? "");
 
     const response = NextResponse.next({ request: { headers: requestHeaders } });
-    setAuthCookies(response, refreshed);
+    response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, refreshed.accessToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: refreshed.expiresIn,
+    });
+    response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, refreshed.refreshToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    });
     return response;
   } catch {
+    const graceUser = accessToken
+      ? await getSupabaseUserByAccessToken(accessToken, {
+          allowExpiredGraceSeconds: AUTH_REFRESH_GRACE_SECONDS,
+          allowNetworkFallback: true,
+        })
+      : null;
+
+    if (graceUser?.id) {
+      const requestHeaders = new Headers(request.headers);
+      requestHeaders.set(AUTH_USER_HEADER, graceUser.id);
+      requestHeaders.set(AUTH_USER_EMAIL_HEADER, graceUser.email ?? "");
+      return NextResponse.next({ request: { headers: requestHeaders } });
+    }
+
     return unauthorizedResponse(request);
   }
 }

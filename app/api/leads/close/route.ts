@@ -2,7 +2,8 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { canUserManageAllLeads, closeLeadDeal } from "@/lib/store";
+import { syncClosedLeadOutcomeToMarketingHub } from "@/lib/marketing-hub-sync";
+import { canUserManageAllLeads, closeLeadDeal, getLeadById } from "@/lib/store";
 
 export async function POST(request: Request) {
   try {
@@ -31,7 +32,17 @@ export async function POST(request: Request) {
       soldByUserId: isSuperAdmin && typeof body.soldByUserId === "string" ? body.soldByUserId.trim() || null : null,
     });
 
-    return NextResponse.json({ closed: result });
+    const lead = await getLeadById(leadId, user.id, { includeAll: isSuperAdmin });
+    let marketingHubSync: Awaited<ReturnType<typeof syncClosedLeadOutcomeToMarketingHub>> | null = null;
+    if (lead) {
+      try {
+        marketingHubSync = await syncClosedLeadOutcomeToMarketingHub(lead);
+      } catch (syncError) {
+        console.warn("Marketing Hub closed-deal sync failed:", syncError);
+      }
+    }
+
+    return NextResponse.json({ closed: result, marketingHubSync });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to close lead.";
     const status = message === "Forbidden" ? 403 : message === "Lead not found." ? 404 : 500;

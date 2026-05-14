@@ -1,16 +1,41 @@
 import { cookies, headers } from "next/headers";
-import type { NextResponse } from "next/server";
 
 export const AUTH_ACCESS_TOKEN_COOKIE = "felix_access_token";
 export const AUTH_REFRESH_TOKEN_COOKIE = "felix_refresh_token";
 export const AUTH_USER_HEADER = "x-felix-user-id";
 export const AUTH_USER_EMAIL_HEADER = "x-felix-user-email";
-export const AUTH_REFRESH_BUFFER_SECONDS = 10 * 60;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseJwtSecret = process.env.SUPABASE_JWT_SECRET?.trim().replace(/^['"]|['"]$/g, "") ?? "";
 
 type SupabaseUser = { id: string; email?: string | null };
+type SupabaseJwtHeader = { alg?: string; typ?: string };
+type SupabaseJwtPayload = { sub?: string; email?: string | null; exp?: number };
+type GetSupabaseUserOptions = {
+  allowExpiredGraceSeconds?: number;
+  allowNetworkFallback?: boolean;
+};
+type AuthCookieResponse = {
+  cookies: {
+    set: (
+      name: string,
+      value: string,
+      options?: {
+        httpOnly?: boolean;
+        sameSite?: "lax" | "strict" | "none";
+        secure?: boolean;
+        path?: string;
+        maxAge?: number;
+      },
+    ) => unknown;
+  };
+};
+type AuthCookieSession = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+};
 
 type SupabaseAuthSession = {
   access_token: string;
@@ -33,68 +58,16 @@ type SupabaseSignUpResponse = {
   } | null;
 };
 
-type AuthCookieSession = {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-};
+let cachedJwtSecret = "";
+let cachedJwtKeyPromise: Promise<CryptoKey> | null = null;
+const AUTH_COOKIE_REFRESH_MAX_AGE = 60 * 60 * 24 * 30;
+const AUTH_ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 60;
+const SUPABASE_AUTH_REQUEST_TIMEOUT_MS = 4000;
 
 function requireSupabaseAuthConfig() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("Supabase auth requires NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   }
-}
-
-function decodeJwtPayload(token: string) {
-  const [, payload] = token.split(".");
-  if (!payload) return null;
-
-  try {
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    const json = typeof atob === "function"
-      ? atob(padded)
-      : Buffer.from(payload, "base64url").toString("utf8");
-    return JSON.parse(json) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-export function getAccessTokenRemainingSeconds(accessToken: string, now = Date.now()) {
-  const payload = decodeJwtPayload(accessToken);
-  const exp = typeof payload?.exp === "number" ? payload.exp : NaN;
-  if (!Number.isFinite(exp)) return null;
-  return Math.floor(exp - now / 1000);
-}
-
-export function shouldRefreshAccessToken(accessToken: string, bufferSeconds = AUTH_REFRESH_BUFFER_SECONDS) {
-  if (!accessToken) return true;
-  const remainingSeconds = getAccessTokenRemainingSeconds(accessToken);
-  if (remainingSeconds === null) return true;
-  return remainingSeconds <= bufferSeconds;
-}
-
-export function setAuthCookies(response: NextResponse, session: AuthCookieSession) {
-  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, session.accessToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: session.expiresIn,
-  });
-  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, session.refreshToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
-}
-
-export function clearAuthCookies(response: NextResponse) {
-  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
-  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
 }
 
 function getNormalizedEmail(usernameOrEmail: string) {
@@ -103,8 +76,83 @@ function getNormalizedEmail(usernameOrEmail: string) {
   return normalized;
 }
 
+function base64UrlToBase64(value: string) {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+  return `${normalized}${padding}`;
+}
+
+function decodeBase64Url(value: string) {
+  return atob(base64UrlToBase64(value));
+}
+
+function decodeJwtSection<T>(value: string): T | null {
+  try {
+    return JSON.parse(decodeBase64Url(value)) as T;
+  } catch {
+    return null;
+  }
+}
+
+function decodeBase64UrlToBytes(value: string) {
+  const decoded = decodeBase64Url(value);
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
+async function getSupabaseJwtKey() {
+  if (!supabaseJwtSecret) return null;
+  if (!cachedJwtKeyPromise || cachedJwtSecret !== supabaseJwtSecret) {
+    cachedJwtSecret = supabaseJwtSecret;
+    cachedJwtKeyPromise = crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(supabaseJwtSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+  }
+  return cachedJwtKeyPromise;
+}
+
+async function getVerifiedSupabaseUserFromAccessToken(accessToken: string, options?: GetSupabaseUserOptions): Promise<SupabaseUser | null> {
+  if (!accessToken || !supabaseJwtSecret) return null;
+
+  const [encodedHeader, encodedPayload, encodedSignature] = accessToken.split(".");
+  if (!encodedHeader || !encodedPayload || !encodedSignature) return null;
+
+  const header = decodeJwtSection<SupabaseJwtHeader>(encodedHeader);
+  if (header?.alg !== "HS256") return null;
+
+  const key = await getSupabaseJwtKey();
+  if (!key) return null;
+
+  const verified = await crypto.subtle.verify(
+    "HMAC",
+    key,
+    decodeBase64UrlToBytes(encodedSignature),
+    new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
+  ).catch(() => false);
+
+  if (!verified) return null;
+
+  const payload = decodeJwtSection<SupabaseJwtPayload>(encodedPayload);
+  if (!payload?.sub || typeof payload.exp !== "number") return null;
+
+  const nowInSeconds = Math.floor(Date.now() / 1000);
+  const graceSeconds = Math.max(0, Math.floor(options?.allowExpiredGraceSeconds ?? 0));
+  if (payload.exp + graceSeconds < nowInSeconds) return null;
+
+  return {
+    id: payload.sub,
+    email: typeof payload.email === "string" ? payload.email : null,
+  };
+}
+
 async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise<T> {
   requireSupabaseAuthConfig();
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SUPABASE_AUTH_REQUEST_TIMEOUT_MS);
 
   const response = await fetch(`${supabaseUrl}/auth/v1${path}`, {
     ...init,
@@ -114,6 +162,9 @@ async function supabaseAuthRequest<T>(path: string, init?: RequestInit): Promise
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
+    signal: init?.signal ?? controller.signal,
+  }).finally(() => {
+    clearTimeout(timeoutId);
   });
 
   const text = await response.text();
@@ -205,8 +256,68 @@ export async function refreshSupabaseSession(refreshToken: string) {
   };
 }
 
-export async function getSupabaseUserByAccessToken(accessToken: string): Promise<SupabaseUser | null> {
+export function shouldRefreshAccessToken(accessToken: string, bufferSeconds = AUTH_ACCESS_TOKEN_REFRESH_BUFFER_SECONDS) {
+  if (!accessToken) return true;
+
+  const [, encodedPayload] = accessToken.split(".");
+  if (!encodedPayload) return true;
+
+  const payload = decodeJwtSection<SupabaseJwtPayload>(encodedPayload);
+  if (!payload?.exp || typeof payload.exp !== "number") return true;
+
+  const nowInSeconds = Math.floor(Date.now() / 1000);
+  return payload.exp - Math.max(0, Math.floor(bufferSeconds)) <= nowInSeconds;
+}
+
+export function setAuthCookies(response: AuthCookieResponse, session: AuthCookieSession) {
+  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, session.accessToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: session.expiresIn,
+  });
+  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, session.refreshToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: AUTH_COOKIE_REFRESH_MAX_AGE,
+  });
+}
+
+export function clearAuthCookies(response: AuthCookieResponse) {
+  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+}
+
+export async function getSupabaseUserByAccessToken(
+  accessToken: string,
+  options?: GetSupabaseUserOptions,
+): Promise<SupabaseUser | null> {
   if (!accessToken) return null;
+
+  const locallyVerifiedUser = await getVerifiedSupabaseUserFromAccessToken(accessToken, options);
+  if (locallyVerifiedUser?.id) {
+    return locallyVerifiedUser;
+  }
+
+  if (options?.allowNetworkFallback === false) {
+    return null;
+  }
+
   try {
     return await supabaseAuthRequest<SupabaseUser>("/user", {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -221,20 +332,12 @@ export async function getAuthenticatedUserId() {
   if (forwardedUserId) return forwardedUserId;
 
   const accessToken = cookies().get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
-  if (accessToken) {
-    const user = await getSupabaseUserByAccessToken(accessToken);
-    if (user?.id) return user.id;
-  }
+  if (!accessToken) return null;
 
-  const refreshToken = cookies().get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? "";
-  if (!refreshToken) return null;
-
-  try {
-    const refreshed = await refreshSupabaseSession(refreshToken);
-    return refreshed.userId;
-  } catch {
-    return null;
-  }
+  // Refresh tokens must only be rotated from middleware, where the updated
+  // cookies can be written back to the browser on the same response.
+  const user = await getSupabaseUserByAccessToken(accessToken);
+  return user?.id ?? null;
 }
 
 export async function getAuthenticatedUser() {
@@ -247,26 +350,17 @@ export async function getAuthenticatedUser() {
   }
 
   const accessToken = cookies().get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
-  if (accessToken) {
-    const user = await getSupabaseUserByAccessToken(accessToken);
-    if (user?.id) {
-      return {
-        id: user.id,
-        email: user.email ?? null,
-      };
-    }
-  }
+  if (!accessToken) return null;
 
-  const refreshToken = cookies().get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? "";
-  if (!refreshToken) return null;
-
-  try {
-    const refreshed = await refreshSupabaseSession(refreshToken);
+  // Refresh tokens must only be rotated from middleware, where the updated
+  // cookies can be written back to the browser on the same response.
+  const user = await getSupabaseUserByAccessToken(accessToken);
+  if (user?.id) {
     return {
-      id: refreshed.userId,
-      email: refreshed.email,
+      id: user.id,
+      email: user.email ?? null,
     };
-  } catch {
-    return null;
   }
+
+  return null;
 }

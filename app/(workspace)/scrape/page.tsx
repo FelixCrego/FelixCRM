@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BriefcaseBusiness, Loader2, MapPin, RefreshCcw, Search, Sparkles, Upload } from "lucide-react";
 import { AddLeadModal } from "@/components/leads/add-lead-modal";
+import { parseLeadsFromCsv, type ParsedCsvLead } from "@/lib/lead-csv";
 
 type ApiPayload = Record<string, unknown>;
 
@@ -31,15 +32,6 @@ type Lead = {
   transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
 };
 
-type ParsedCsvLead = {
-  businessName: string;
-  phone?: string;
-  email?: string;
-  websiteUrl?: string;
-  aiResearchSummary?: string;
-  sourceQuery?: string;
-};
-
 type AssignmentUser = {
   id: string;
   name: string;
@@ -48,86 +40,12 @@ type AssignmentUser = {
 };
 
 const CURRENT_USER_ASSIGNMENT = "__current__";
+const UNASSIGNED_ASSIGNMENT = "__unassigned__";
 
 function resolveAssignmentOwnerId(selection: string, currentUserId: string | null) {
+  if (selection === UNASSIGNED_ASSIGNMENT) return null;
   if (selection === CURRENT_USER_ASSIGNMENT) return currentUserId ?? undefined;
   return selection;
-}
-
-function parseCsvRows(raw: string): string[][] {
-  const rows: string[][] = [];
-  let currentCell = "";
-  let currentRow: string[] = [];
-  let inQuotes = false;
-
-  for (let index = 0; index < raw.length; index += 1) {
-    const char = raw[index];
-    const nextChar = raw[index + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentCell += '"';
-        index += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === "," && !inQuotes) {
-      currentRow.push(currentCell.trim());
-      currentCell = "";
-      continue;
-    }
-
-    if ((char === "\n" || char === "\r") && !inQuotes) {
-      if (char === "\r" && nextChar === "\n") index += 1;
-      currentRow.push(currentCell.trim());
-      if (currentRow.some((value) => value.length > 0)) rows.push(currentRow);
-      currentRow = [];
-      currentCell = "";
-      continue;
-    }
-
-    currentCell += char;
-  }
-
-  if (currentCell.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentCell.trim());
-    if (currentRow.some((value) => value.length > 0)) rows.push(currentRow);
-  }
-
-  return rows;
-}
-
-function parseLeadsFromCsv(raw: string): ParsedCsvLead[] {
-  const rows = parseCsvRows(raw);
-  if (!rows.length) return [];
-
-  const [headerRow, ...dataRows] = rows;
-  const normalizedHeaders = headerRow.map((header) => header.toLowerCase().replace(/[^a-z0-9]/g, ""));
-
-  const businessNameIndex = normalizedHeaders.findIndex((header) => ["businessname", "name", "company", "business"].includes(header));
-  const phoneIndex = normalizedHeaders.findIndex((header) => ["phone", "phonenumber", "telephone"].includes(header));
-  const emailIndex = normalizedHeaders.findIndex((header) => ["email", "emailaddress", "contactemail", "businessemail", "owneremail"].includes(header));
-  const websiteIndex = normalizedHeaders.findIndex((header) => ["website", "websiteurl", "url", "domain"].includes(header));
-  const aiResearchSummaryIndex = normalizedHeaders.findIndex((header) => ["airesearchsummary", "deepaianalysis", "aianalysis", "analysis", "summary", "researchsummary"].includes(header));
-  const sourceQueryIndex = normalizedHeaders.findIndex((header) => ["sourcequery", "source", "query", "searchquery", "sourceprompt"].includes(header));
-
-  if (businessNameIndex < 0) {
-    throw new Error("CSV must include a business name column (businessName, name, company, or business). Optional columns: phone, email, website, Deep AI analysis, and source query.");
-  }
-
-  return dataRows
-    .map((row) => ({
-      businessName: row[businessNameIndex]?.trim() || "",
-      phone: phoneIndex >= 0 ? row[phoneIndex]?.trim() || "" : "",
-      email: emailIndex >= 0 ? row[emailIndex]?.trim() || "" : "",
-      websiteUrl: websiteIndex >= 0 ? row[websiteIndex]?.trim() || "" : "",
-      aiResearchSummary: aiResearchSummaryIndex >= 0 ? row[aiResearchSummaryIndex]?.trim() || "" : "",
-      sourceQuery: sourceQueryIndex >= 0 ? row[sourceQueryIndex]?.trim() || "" : "",
-    }))
-    .filter((lead) => lead.businessName.length > 0);
 }
 
 function websitePill(lead: Lead) {
@@ -169,6 +87,7 @@ export default function ScrapePage() {
   const [canAssignLeads, setCanAssignLeads] = useState(false);
   const [assignmentUsers, setAssignmentUsers] = useState<AssignmentUser[]>([]);
   const [csvAssigneeSelection, setCsvAssigneeSelection] = useState(CURRENT_USER_ASSIGNMENT);
+  const [newLeadAssigneeSelection, setNewLeadAssigneeSelection] = useState(CURRENT_USER_ASSIGNMENT);
   const [currentPage, setCurrentPage] = useState(1);
   const [newLeadForm, setNewLeadForm] = useState({ businessName: "", phone: "", website: "" });
   const csvFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -249,6 +168,7 @@ export default function ScrapePage() {
     if (!canAssignLeads) return [];
     return [
       { value: CURRENT_USER_ASSIGNMENT, label: "Assign to Me" },
+      { value: UNASSIGNED_ASSIGNMENT, label: "Leave Unassigned" },
       ...assignmentUsers.map((user) => ({
         value: user.id,
         label: user.email ? `${user.name} (${user.email})` : user.name,
@@ -388,6 +308,7 @@ export default function ScrapePage() {
     setIsAddingLead(true);
     setError(null);
     try {
+      const assigneeId = canAssignLeads ? resolveAssignmentOwnerId(newLeadAssigneeSelection, currentUserId) : undefined;
       const response = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -395,6 +316,7 @@ export default function ScrapePage() {
           businessName: newLeadForm.businessName,
           phone: newLeadForm.phone,
           websiteUrl: newLeadForm.website,
+          ...(canAssignLeads ? { assigneeId } : {}),
         }),
       });
       const payload = await response.json();
@@ -402,6 +324,7 @@ export default function ScrapePage() {
 
       setIsAddLeadOpen(false);
       setNewLeadForm({ businessName: "", phone: "", website: "" });
+      setNewLeadAssigneeSelection(CURRENT_USER_ASSIGNMENT);
       setClaimSuccessMessage("Lead added successfully.");
       await refreshLeads();
     } catch (err) {
@@ -422,7 +345,7 @@ export default function ScrapePage() {
     try {
       const csvText = await file.text();
       const leadsToImport = parseLeadsFromCsv(csvText);
-      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.\nRequired column: business name. Optional columns: phone, email, website, Deep AI analysis, and source query.");
+      if (!leadsToImport.length) throw new Error("No valid leads found in CSV.\nRequired column: business name. Optional columns: phone, website, Deep AI analysis, and source query.");
 
       const response = await fetch("/api/leads/import", {
         method: "POST",
@@ -545,6 +468,9 @@ export default function ScrapePage() {
             </button>
           </div>
         </div>
+        <p className="mb-4 text-xs text-zinc-500">
+          CSV import requires a business name column. Every other CSV column is preserved on the lead workspace, including LeadQuality, GoogleRating, GoogleReviews, and AI research fields.
+        </p>
 
         <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px_auto]">
           <label className="relative block">
@@ -755,6 +681,10 @@ export default function ScrapePage() {
         isSubmitting={isAddingLead}
         formData={newLeadForm}
         errorMessage={null}
+        assignmentLabel="Lead Owner"
+        assignmentHelperText={canAssignLeads ? "Managers and super admins can assign new leads directly to a rep or leave them unassigned." : null}
+        assignmentOptions={canAssignLeads ? assignmentOptions : undefined}
+        assignmentValue={newLeadAssigneeSelection}
         onChange={(field, value) => {
           if (field === "website") {
             setNewLeadForm((prev) => ({ ...prev, website: value }));
@@ -766,6 +696,7 @@ export default function ScrapePage() {
           }
           setNewLeadForm((prev) => ({ ...prev, businessName: value }));
         }}
+        onAssignmentChange={canAssignLeads ? setNewLeadAssigneeSelection : undefined}
         onClose={() => {
           if (isAddingLead) return;
           setIsAddLeadOpen(false);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { canUserManageAllLeads, getLeadById, setLeadDeployment } from "@/lib/store";
+import { canUserViewAllLeads, getLeadById, setLeadDeployment } from "@/lib/store";
 
 function toHttpsUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -65,6 +65,30 @@ function deploymentProjectAlias(payload: Record<string, unknown>): string | unde
   return toHttpsUrl(`${projectName}.vercel.app`);
 }
 
+function preferredPreviewDeploymentUrl(input: {
+  aliasUrl?: string;
+  projectAliasUrl?: string;
+  deploymentUrl?: string | null;
+}): string | null {
+  return input.deploymentUrl ?? input.aliasUrl ?? input.projectAliasUrl ?? null;
+}
+
+function preferredLiveDeploymentUrl(input: {
+  aliasUrl?: string;
+  projectAliasUrl?: string;
+  deploymentUrl?: string | null;
+}): string | null {
+  return input.aliasUrl ?? input.projectAliasUrl ?? input.deploymentUrl ?? null;
+}
+
+function preferredCrmDeploymentUrl(input: {
+  liveUrl?: string | null;
+  storedUrl?: string | null;
+  previewUrl?: string | null;
+}): string | null {
+  return input.liveUrl ?? input.storedUrl ?? input.previewUrl ?? null;
+}
+
 function latestProjectDeployment(payload: Record<string, unknown>): Record<string, unknown> | null {
   const targets = payload.targets;
   if (targets && typeof targets === "object") {
@@ -92,6 +116,10 @@ function resolveDeploymentState(payload: Record<string, unknown>): string {
   return candidate.trim().toUpperCase();
 }
 
+function shouldTreatStatusLookupAsTransient(status: number): boolean {
+  return status === 401 || status === 403 || status === 404 || status === 410 || status === 429;
+}
+
 export async function GET(request: Request) {
   try {
     const user = await getAuthenticatedUser();
@@ -101,10 +129,10 @@ export async function GET(request: Request) {
     const leadId = searchParams.get("leadId")?.trim() || "";
     if (!leadId) return NextResponse.json({ error: "leadId required" }, { status: 400 });
 
-    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserManageAllLeads(user.id, user.email) });
+    const lead = await getLeadById(leadId, user.id, { includeAll: await canUserViewAllLeads(user.id, user.email) });
     if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
-    if (lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED") {
+    if ((lead.siteStatus === "LIVE" || lead.siteStatus === "FAILED") && !lead.vercelDeploymentId) {
       return NextResponse.json({ siteStatus: lead.siteStatus, deployedUrl: lead.deployedUrl ?? null, done: true });
     }
 
@@ -128,21 +156,37 @@ export async function GET(request: Request) {
             const projectPayload = (await projectResponse.json()) as Record<string, unknown>;
             const latestDeployment = latestProjectDeployment(projectPayload);
             const readyState = latestDeployment ? resolveDeploymentState(latestDeployment) : "";
-            const recoveredUrl =
-              (latestDeployment ? firstDeploymentAlias(latestDeployment) : undefined) ??
-              (latestDeployment ? toHttpsUrl(latestDeployment.url) : undefined) ??
-              lead.deployedUrl ??
-              null;
+            const previewUrl = preferredPreviewDeploymentUrl({
+              aliasUrl: latestDeployment ? firstDeploymentAlias(latestDeployment) : undefined,
+              projectAliasUrl: deploymentProjectAlias(latestDeployment ?? projectPayload),
+              deploymentUrl: (latestDeployment ? toHttpsUrl(latestDeployment.url) : undefined) ?? lead.deployedUrl ?? null,
+            });
+            const liveUrl = preferredLiveDeploymentUrl({
+              aliasUrl: latestDeployment ? firstDeploymentAlias(latestDeployment) : undefined,
+              projectAliasUrl: deploymentProjectAlias(latestDeployment ?? projectPayload),
+              deploymentUrl: (latestDeployment ? toHttpsUrl(latestDeployment.url) : undefined) ?? lead.deployedUrl ?? null,
+            });
+            const deployedUrl = preferredCrmDeploymentUrl({
+              liveUrl,
+              storedUrl: lead.deployedUrl ?? null,
+              previewUrl,
+            });
 
             if (latestDeployment && (readyState === "READY" || readyState === "LIVE")) {
-              await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: recoveredUrl ?? undefined });
-              return NextResponse.json({ siteStatus: "LIVE", deployedUrl: recoveredUrl, done: true, readyState });
+              await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: deployedUrl ?? undefined });
+              return NextResponse.json({ siteStatus: "LIVE", deployedUrl, previewUrl, liveUrl, done: true, readyState });
             }
 
             if (latestDeployment && (readyState === "ERROR" || readyState === "CANCELED" || readyState === "CANCELLED")) {
-              await setLeadDeployment(leadId, { siteStatus: "FAILED", deployedUrl: recoveredUrl ?? undefined });
-              return NextResponse.json({ siteStatus: "FAILED", deployedUrl: recoveredUrl, done: true, readyState });
+              await setLeadDeployment(leadId, { siteStatus: "FAILED", deployedUrl: deployedUrl ?? undefined });
+              return NextResponse.json({ siteStatus: "FAILED", deployedUrl, previewUrl, liveUrl, done: true, readyState });
             }
+
+            if (deployedUrl && deployedUrl !== lead.deployedUrl) {
+              await setLeadDeployment(leadId, { siteStatus: "BUILDING", deployedUrl });
+            }
+
+            return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl, previewUrl, liveUrl, done: false, readyState });
           }
         }
       }
@@ -152,7 +196,7 @@ export async function GET(request: Request) {
         await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? undefined });
         return NextResponse.json({ siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? null, done: true, readyState: "READY" });
       }
-      return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl: lead.deployedUrl ?? null, done: false });
+      return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl: lead.deployedUrl ?? null, previewUrl: lead.deployedUrl ?? null, done: false });
     }
     if (!token) {
       const reachableWithoutToken = await isDeploymentReachable(lead.deployedUrl ?? null);
@@ -160,7 +204,7 @@ export async function GET(request: Request) {
         await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
         return NextResponse.json({ siteStatus: "LIVE", deployedUrl: lead.deployedUrl ?? null, done: true, readyState: "READY" });
       }
-      return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl: lead.deployedUrl ?? null, done: false });
+      return NextResponse.json({ siteStatus: lead.siteStatus ?? "BUILDING", deployedUrl: lead.deployedUrl ?? null, previewUrl: lead.deployedUrl ?? null, done: false });
     }
 
     const response = await fetch(`https://api.vercel.com/v13/deployments/${encodeURIComponent(lead.vercelDeploymentId)}${scopeQuery}`, {
@@ -179,7 +223,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ siteStatus: "LIVE", deployedUrl: fallbackUrl, done: true, readyState: "READY" });
       }
 
-      if (response.status === 404 || response.status === 410) {
+      if (shouldTreatStatusLookupAsTransient(response.status)) {
         return NextResponse.json({ siteStatus: "BUILDING", deployedUrl: fallbackUrl, done: false, readyState: "BUILDING" });
       }
 
@@ -191,25 +235,49 @@ export async function GET(request: Request) {
     const readyState = resolveDeploymentState(payload);
     const aliasUrl = firstDeploymentAlias(payload);
     const projectAliasUrl = deploymentProjectAlias(payload);
-    const deployedUrl = aliasUrl ?? projectAliasUrl ?? lead.deployedUrl ?? toHttpsUrl(payload.url) ?? null;
+    const previewUrl = preferredPreviewDeploymentUrl({
+      aliasUrl,
+      projectAliasUrl,
+      deploymentUrl: toHttpsUrl(payload.url) ?? lead.deployedUrl ?? null,
+    });
+    const liveUrl = preferredLiveDeploymentUrl({
+      aliasUrl,
+      projectAliasUrl,
+      deploymentUrl: toHttpsUrl(payload.url) ?? lead.deployedUrl ?? null,
+    });
+    const deployedUrl = preferredCrmDeploymentUrl({
+      liveUrl,
+      storedUrl: lead.deployedUrl ?? null,
+      previewUrl,
+    });
 
     if (readyState === "READY" || readyState === "LIVE") {
       await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
-      return NextResponse.json({ siteStatus: "LIVE", deployedUrl, done: true, readyState });
+      return NextResponse.json({ siteStatus: "LIVE", deployedUrl, previewUrl, liveUrl, done: true, readyState });
     }
 
     if (readyState === "ERROR" || readyState === "CANCELED" || readyState === "CANCELLED") {
       await setLeadDeployment(leadId, { siteStatus: "FAILED", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
-      return NextResponse.json({ siteStatus: "FAILED", deployedUrl, done: true, readyState });
+      return NextResponse.json({ siteStatus: "FAILED", deployedUrl, previewUrl, liveUrl, done: true, readyState });
     }
 
-    const reachableWhileBuilding = await isDeploymentReachable(deployedUrl);
+    const reachableLiveUrl = aliasUrl ?? projectAliasUrl ?? null;
+    const reachableWhileBuilding = await isDeploymentReachable(reachableLiveUrl);
     if (reachableWhileBuilding) {
-      await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: deployedUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
-      return NextResponse.json({ siteStatus: "LIVE", deployedUrl, done: true, readyState: readyState || "READY" });
+      const resolvedLiveUrl = preferredCrmDeploymentUrl({
+        liveUrl,
+        storedUrl: lead.deployedUrl ?? null,
+        previewUrl,
+      });
+      await setLeadDeployment(leadId, { siteStatus: "LIVE", deployedUrl: resolvedLiveUrl ?? undefined, vercelDeploymentId: lead.vercelDeploymentId });
+      return NextResponse.json({ siteStatus: "LIVE", deployedUrl: resolvedLiveUrl, previewUrl, liveUrl: resolvedLiveUrl, done: true, readyState: readyState || "READY" });
     }
 
-    return NextResponse.json({ siteStatus: "BUILDING", deployedUrl, done: false, readyState });
+    if (deployedUrl && deployedUrl !== lead.deployedUrl) {
+      await setLeadDeployment(leadId, { siteStatus: "BUILDING", deployedUrl, vercelDeploymentId: lead.vercelDeploymentId });
+    }
+
+    return NextResponse.json({ siteStatus: "BUILDING", deployedUrl, previewUrl, liveUrl, done: false, readyState });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Request failed." }, { status: 500 });
   }

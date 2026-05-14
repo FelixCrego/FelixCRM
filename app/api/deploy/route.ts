@@ -442,6 +442,22 @@ function projectHostname(projectName: string): string | undefined {
   return toHttpsUrl(`${normalized}.vercel.app`);
 }
 
+function preferredPreviewDeploymentUrl(input: {
+  aliasUrl?: string;
+  projectAliasUrl?: string;
+  deploymentUrl?: string;
+}): string | undefined {
+  return input.deploymentUrl ?? input.aliasUrl ?? input.projectAliasUrl;
+}
+
+function preferredLiveDeploymentUrl(input: {
+  aliasUrl?: string;
+  projectAliasUrl?: string;
+  deploymentUrl?: string;
+}): string | undefined {
+  return input.aliasUrl ?? input.projectAliasUrl ?? input.deploymentUrl;
+}
+
 function firstDeploymentAlias(payload: Record<string, unknown>): string | undefined {
   const singleAlias = toHttpsUrl(payload.alias);
   if (singleAlias) return singleAlias;
@@ -654,6 +670,7 @@ export async function POST(request: Request) {
       NEXT_PUBLIC_GOOGLE_BUSINESS_PROFILE: templateConfig.links.googleBusinessProfile,
       NEXT_PUBLIC_GOOGLE_DRIVE_IMAGES: JSON.stringify(galleryImages),
       NEXT_PUBLIC_SOCIAL_LINKS: templateConfig.links.socials.map((social) => social.url).join(","),
+      NEXT_PUBLIC_TEMPLATE_VARIANT: templateConfig.branding.themeVariant,
       NEXT_PUBLIC_PRIMARY_COLOR:
         typeof frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR === "string" && frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()
           ? frontendEnv.NEXT_PUBLIC_PRIMARY_COLOR.trim()
@@ -813,13 +830,24 @@ export async function POST(request: Request) {
     const deploymentAliasUrl = firstDeploymentAlias(payload);
     const projectAliasUrl = projectHostname(vercelProjectName);
     const fallbackDeploymentUrl = toHttpsUrl(payload.url);
-    const deployedUrl = deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl;
+    const previewUrl = preferredPreviewDeploymentUrl({
+      aliasUrl: deploymentAliasUrl,
+      projectAliasUrl,
+      deploymentUrl: fallbackDeploymentUrl,
+    });
+    const liveUrl = preferredLiveDeploymentUrl({
+      aliasUrl: deploymentAliasUrl,
+      projectAliasUrl,
+      deploymentUrl: fallbackDeploymentUrl,
+    });
+    const deployedUrl = liveUrl ?? previewUrl;
 
     await setLeadDeployment(leadId, { siteStatus: "BUILDING", deployedUrl, vercelDeploymentId: deploymentId });
     return NextResponse.json({
       url: deployedUrl,
+      previewUrl,
       deployedUrl,
-      liveUrl: deploymentAliasUrl ?? fallbackDeploymentUrl ?? projectAliasUrl,
+      liveUrl,
       deploymentId,
       project: vercelProjectName,
       repository: clonedRepoFullName,

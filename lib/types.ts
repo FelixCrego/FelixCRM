@@ -82,6 +82,63 @@ export type LeadAccountManagementProfile = {
   } | null;
 };
 
+export type ServiceTicketCategory =
+  | "WEBSITE"
+  | "CRM"
+  | "SOCIAL_MEDIA"
+  | "GOOGLE_ADS"
+  | "SEO"
+  | "AUTOMATION"
+  | "BILLING"
+  | "OTHER";
+
+export type ServiceTicketPriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+
+export type ServiceTicketStatus =
+  | "NEW"
+  | "TRIAGED"
+  | "IN_PROGRESS"
+  | "WAITING_ON_CLIENT"
+  | "COMPLETED"
+  | "CANCELLED";
+
+export type ServiceTicketSource = "CLIENT_PORTAL" | "INTERNAL";
+
+export type ServiceTicket = {
+  id: string;
+  leadId: string;
+  businessName?: string | null;
+  category: ServiceTicketCategory;
+  priority: ServiceTicketPriority;
+  status: ServiceTicketStatus;
+  source: ServiceTicketSource;
+  title: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  dueDate?: string | null;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
+  clientName?: string | null;
+  clientEmail?: string | null;
+  resolutionNotes?: string | null;
+  resolvedAt?: string | null;
+};
+
+export type LeadMarketingAttribution = {
+  clientId?: string | null;
+  customerId?: string | null;
+  gclid?: string | null;
+  service?: string | null;
+  leadValue?: number | null;
+  landingPage?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  utmTerm?: string | null;
+  utmContent?: string | null;
+};
+
 export type Lead = {
   id: string;
   businessName: string;
@@ -94,6 +151,12 @@ export type Lead = {
   websiteStatus?: string | null;
   socialLinks?: string[];
   aiResearchSummary?: string | null;
+  leadQuality?: string | null;
+  googleRating?: string | null;
+  googleReviews?: string | null;
+  importedFields?: Record<string, string> | null;
+  csvImportBatchId?: string | null;
+  csvImportedAt?: string | null;
   enrichment?: LeadEnrichmentPayload | null;
   sourceQuery?: string | null;
   sourceType?: "SCRAPED" | "ADDED" | null;
@@ -144,6 +207,7 @@ export type Lead = {
   closedAt?: string | null;
   stripeCheckoutLink?: string | null;
   accountManagement?: LeadAccountManagementProfile | null;
+  marketingAttribution?: LeadMarketingAttribution | null;
   transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
   updatedAt: string;
 };

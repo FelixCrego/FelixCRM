@@ -1,20 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { canUserAccessAccountManagement, listLeads } from "@/lib/store";
+import { resolveLeadWorkspaceStatus } from "@/lib/lead-workspace-status";
 
 export const dynamic = "force-dynamic";
 
 function normalizeEnvValue(value?: string | null) {
   if (!value) return "";
-  return value.trim().replace(/^['"]|['"]$/g, "");
+  return value
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/\\r\\n|\\n|\\r/g, "")
+    .replace(/[\r\n\t]/g, "")
+    .trim();
 }
 
 function isAuthorizedBySharedToken(request: NextRequest) {
   const expected = normalizeEnvValue(process.env.MARKETING_HUB_SYNC_TOKEN);
   if (!expected) return false;
-  const provided = normalizeEnvValue(request.headers.get("x-marketing-hub-token"));
-  const providedQuery = normalizeEnvValue(request.nextUrl.searchParams.get("token"));
-  return Boolean((provided && provided === expected) || (providedQuery && providedQuery === expected));
+  const providedHeader = normalizeEnvValue(request.headers.get("x-marketing-hub-token"));
+  const bearerToken = normalizeEnvValue(request.headers.get("authorization")?.replace(/^Bearer\s+/i, ""));
+  const queryToken = normalizeEnvValue(request.nextUrl.searchParams.get("token"));
+  return [providedHeader, bearerToken, queryToken].some((provided) => Boolean(provided && provided === expected));
+}
+
+function isLegacyRecurringManagedLead(lead: Awaited<ReturnType<typeof listLeads>>[number]) {
+  const looksClosedOrBilled =
+    resolveLeadWorkspaceStatus(lead) === "CLOSED" ||
+    (typeof lead.closedAt === "string" && lead.closedAt.trim().length > 0) ||
+    (typeof lead.closedDealValue === "number" && lead.closedDealValue > 0) ||
+    lead.billingProfile?.billingType === "RECURRING";
+  return (
+    looksClosedOrBilled &&
+    lead.billingProfile?.billingType === "RECURRING" &&
+    lead.billingProfile?.billingStatus !== "CANCELLED" &&
+    (lead.billingProfile?.recurringAmount ?? 0) > 0
+  );
+}
+
+function isManagedForMarketingHubSync(lead: Awaited<ReturnType<typeof listLeads>>[number]) {
+  return Boolean(lead.accountManagement?.syncEnabled) || isLegacyRecurringManagedLead(lead);
 }
 
 export async function GET(request: NextRequest) {
@@ -32,13 +58,7 @@ export async function GET(request: NextRequest) {
     const leads = await listLeads("shared-account-management", { includeAll: true });
 
     const accounts = leads
-      .filter(
-        (lead) =>
-          lead.status === "CLOSED" &&
-          lead.billingProfile?.billingType === "RECURRING" &&
-          lead.billingProfile?.billingStatus !== "CANCELLED" &&
-          (lead.billingProfile?.recurringAmount ?? 0) > 0,
-      )
+      .filter((lead) => isManagedForMarketingHubSync(lead))
       .map((lead) => ({
         id: lead.id,
         businessName: lead.businessName,

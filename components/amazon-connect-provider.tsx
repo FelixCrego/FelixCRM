@@ -82,6 +82,7 @@ type AmazonConnectContextValue = {
   agentStateLabel: string | null;
   agentReadyForOutbound: boolean;
   retrySecondsRemaining: number;
+  retryStatusMessage: string | null;
   startOutboundCall: (dialNumber: string) => void;
   endActiveCall: () => void;
   sendCallDigit: (digit: string) => void;
@@ -876,6 +877,10 @@ export function AmazonConnectProvider({ children }: { children: React.ReactNode 
       agentStateLabel,
       agentReadyForOutbound,
       retrySecondsRemaining,
+      retryStatusMessage:
+        retrySecondsRemaining > 0
+          ? `Amazon Connect is rate-limiting outbound calls. Wait ${retrySecondsRemaining}s before dialing again.`
+          : null,
       startOutboundCall,
       endActiveCall,
       sendCallDigit,

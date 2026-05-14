@@ -144,8 +144,8 @@ export function LeadExecutionWorkspace({ lead }: LeadExecutionWorkspaceProps) {
   const supabase = useMemo(() => createClientComponentClient(), []);
 
   const siteUrl = useMemo(
-    () => lead.deployedUrl ?? `https://${lead.businessName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.vercel.app`,
-    [lead.businessName, lead.deployedUrl],
+    () => lead.deployedUrl ?? "",
+    [lead.deployedUrl],
   );
 
   const commsFeed = [...notesFeed, ...smsFeed, ...emailFeed];

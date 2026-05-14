@@ -13,6 +13,22 @@ type LeadsListViewProps = {
   viewMode?: "open" | "closed";
   openTitle?: string;
   openDescription?: string;
+  canAssignLeads?: boolean;
+  currentUserId?: string | null;
+  showTodaysCallQueue?: boolean;
+};
+
+type AssignmentUser = {
+  id: string;
+  name: string;
+  email?: string | null;
+  role?: string;
+};
+
+type TodaysQueueEntry = {
+  lead: Lead;
+  reason: string;
+  priority: number;
 };
 
 const workspaceStatusOptions: LeadWorkspaceStatus[] = [
@@ -66,6 +82,14 @@ const vercelStatusPillMap: Record<LeadSiteStatus, string> = {
 };
 
 const CLAIMED_LEADS_STORAGE_KEY = "claimedLeads";
+const UNASSIGNED_ASSIGNMENT = "__unassigned__";
+const LEAD_WORKSPACE_SEED_KEY = "felix.leadWorkspaceSeed";
+
+type LeadWorkspaceSeed = {
+  leadId: string;
+  lead: Lead;
+  orderedLeadIds: string[];
+};
 
 function normalizeLead(raw: unknown): Lead | null {
   if (!raw || typeof raw !== "object") return null;
@@ -180,12 +204,65 @@ function getSuggestedNextStep(status: LeadWorkspaceStatus) {
   return "Closed won";
 }
 
+function isTouchedToday(updatedAt?: string | null) {
+  const parsed = new Date(updatedAt ?? "");
+  if (Number.isNaN(parsed.getTime())) return false;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return parsed.getTime() >= startOfToday.getTime();
+}
+
+function queuePriorityForLead(lead: Lead) {
+  if (!lead.phone?.trim()) return null;
+
+  const workspaceStatus = resolveWorkspaceStatus(lead);
+  if (workspaceStatus === "CLOSED" || workspaceStatus === "DISQUALIFIED") {
+    return null;
+  }
+
+  const touchedToday = isTouchedToday(lead.updatedAt);
+  let priority = touchedToday ? 0 : 70;
+  let reason = touchedToday ? "Already touched today" : "Needs a touch today";
+
+  if (workspaceStatus === "PAYMENT_PENDING") {
+    priority += 120;
+    reason = "Pending payment follow-up";
+  } else if (workspaceStatus === "AWAITING_APPROVAL") {
+    priority += 110;
+    reason = "Awaiting decision follow-up";
+  } else if (workspaceStatus === "CONTACTED") {
+    priority += 95;
+    reason = touchedToday ? "Warm conversation already touched today" : "Warm follow-up due today";
+  } else if (workspaceStatus === "ATTEMPTED") {
+    priority += 85;
+    reason = touchedToday ? "Attempted today" : "Second touch due";
+  } else if (workspaceStatus === "DEMO_BOOKED") {
+    priority += 25;
+    reason = "Demo confirmation / prep";
+  } else {
+    priority += 75;
+    reason = touchedToday ? "Fresh lead already worked today" : "Fresh lead needs first call";
+  }
+
+  const updatedAtMs = new Date(lead.updatedAt ?? "").getTime();
+  if (!Number.isNaN(updatedAtMs)) {
+    const ageInDays = Math.floor((Date.now() - updatedAtMs) / (1000 * 60 * 60 * 24));
+    priority += Math.min(Math.max(ageInDays, 0), 14);
+  }
+
+  return { lead, reason, priority } satisfies TodaysQueueEntry;
+}
+
 export function LeadsListView({
   leads,
   errorMessage,
   viewMode = "open",
   openTitle = "My Leads",
   openDescription = "Rep workspace for claimed leads, last-touch visibility, and fast movement from first dial to booked demo.",
+  canAssignLeads = false,
+  currentUserId = null,
+  showTodaysCallQueue = false,
 }: LeadsListViewProps) {
   const LEADS_PER_PAGE = 10;
   const router = useRouter();
@@ -195,7 +272,11 @@ export function LeadsListView({
   const [addLeadError, setAddLeadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignmentSuccess, setAssignmentSuccess] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [assigningLeadId, setAssigningLeadId] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | LeadWorkspaceStatus>("ALL");
@@ -208,6 +289,9 @@ export function LeadsListView({
   const [createdLeads, setCreatedLeads] = useState<Lead[]>([]);
   const [remoteSearchLeads, setRemoteSearchLeads] = useState<Lead[]>([]);
   const [leadOverrides, setLeadOverrides] = useState<Record<string, Partial<Lead>>>({});
+  const [assignmentUsers, setAssignmentUsers] = useState<AssignmentUser[]>([]);
+  const [newLeadAssigneeSelection, setNewLeadAssigneeSelection] = useState(currentUserId ?? UNASSIGNED_ASSIGNMENT);
+  const [selectedAssignmentSelection, setSelectedAssignmentSelection] = useState(currentUserId ?? UNASSIGNED_ASSIGNMENT);
   const [calculatorCallsPerDay, setCalculatorCallsPerDay] = useState(60);
   const [calculatorCallToDemoRate, setCalculatorCallToDemoRate] = useState(20);
   const [calculatorShowRate, setCalculatorShowRate] = useState(70);
@@ -216,6 +300,47 @@ export function LeadsListView({
   const [calculatorCommissionRate, setCalculatorCommissionRate] = useState(10);
 
   const normalizedServerLeads = useMemo(() => ((leads || []).map(normalizeLead).filter((lead): lead is Lead => Boolean(lead))), [leads]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    setNewLeadAssigneeSelection((previous) => (previous === UNASSIGNED_ASSIGNMENT ? previous : currentUserId));
+    setSelectedAssignmentSelection((previous) => (previous === UNASSIGNED_ASSIGNMENT ? previous : currentUserId));
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!canAssignLeads) {
+      setAssignmentUsers([]);
+      setAssignmentError(null);
+      return;
+    }
+
+    let mounted = true;
+
+    async function loadAssignmentUsers() {
+      try {
+        const response = await fetch("/api/users/reps", { cache: "no-store" });
+        const payload = (await response.json().catch(() => null)) as { users?: AssignmentUser[]; error?: string } | null;
+        if (!mounted) return;
+        if (!response.ok || !Array.isArray(payload?.users)) {
+          setAssignmentUsers([]);
+          setAssignmentError(payload?.error ?? "Unable to load lead assignees.");
+          return;
+        }
+
+        setAssignmentUsers(payload.users);
+        setAssignmentError(null);
+      } catch {
+        if (!mounted) return;
+        setAssignmentUsers([]);
+        setAssignmentError("Unable to load lead assignees.");
+      }
+    }
+
+    void loadAssignmentUsers();
+    return () => {
+      mounted = false;
+    };
+  }, [canAssignLeads]);
 
   useEffect(() => {
     try {
@@ -276,6 +401,42 @@ export function LeadsListView({
       .filter((lead) => (shouldIncludeClosed ? resolveWorkspaceStatus(lead) === "CLOSED" : resolveWorkspaceStatus(lead) !== "CLOSED"));
   }, [createdLeads, leadOverrides, normalizedServerLeads, remoteSearchLeads, search, storageLeads, viewMode]);
 
+  const ownerLabelById = useMemo(
+    () =>
+      new Map(
+        assignmentUsers.map((user) => [
+          user.id,
+          user.email && user.email.trim().length > 0 ? `${user.name} (${user.email})` : user.name,
+        ]),
+      ),
+    [assignmentUsers],
+  );
+
+  const assignmentSelectOptions = useMemo(() => {
+    if (!canAssignLeads) return [];
+
+    const baseOptions = assignmentUsers.map((user) => ({
+      value: user.id,
+      label: user.email && user.email.trim().length > 0 ? `${user.name} (${user.email})` : user.name,
+    }));
+
+    if (currentUserId && !baseOptions.some((option) => option.value === currentUserId)) {
+      baseOptions.unshift({ value: currentUserId, label: "Me" });
+    }
+
+    return [{ value: UNASSIGNED_ASSIGNMENT, label: "Unassigned" }, ...baseOptions];
+  }, [assignmentUsers, canAssignLeads, currentUserId]);
+
+  const todaysCallQueue = useMemo(() => {
+    if (!showTodaysCallQueue || viewMode !== "open") return [];
+
+    return displayLeads
+      .map(queuePriorityForLead)
+      .filter((entry): entry is TodaysQueueEntry => Boolean(entry))
+      .sort((left, right) => right.priority - left.priority || left.lead.businessName.localeCompare(right.lead.businessName))
+      .slice(0, 8);
+  }, [displayLeads, showTodaysCallQueue, viewMode]);
+
   async function handleAddLead() {
     setAddLeadError(null);
     if (!newLead.businessName.trim()) {
@@ -285,6 +446,11 @@ export function LeadsListView({
 
     setIsSubmitting(true);
     try {
+      const assigneeId = canAssignLeads
+        ? newLeadAssigneeSelection === UNASSIGNED_ASSIGNMENT
+          ? null
+          : newLeadAssigneeSelection
+        : undefined;
       const response = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -292,6 +458,7 @@ export function LeadsListView({
           businessName: newLead.businessName.trim(),
           phone: newLead.phone.trim() || null,
           websiteUrl: newLead.website.trim() || null,
+          ...(canAssignLeads ? { assigneeId } : {}),
         }),
       });
 
@@ -303,6 +470,7 @@ export function LeadsListView({
 
       setCreatedLeads((prev) => [payload.lead as Lead, ...prev.filter((lead) => lead.id !== payload.lead?.id)]);
       setNewLead({ businessName: "", phone: "", website: "" });
+      setNewLeadAssigneeSelection(currentUserId ?? UNASSIGNED_ASSIGNMENT);
       setIsAddLeadOpen(false);
       router.refresh();
     } catch (error) {
@@ -318,6 +486,8 @@ export function LeadsListView({
     if (!leadIds.length) return;
     setDeleteError(null);
     setDeleteSuccess(null);
+    setAssignmentError(null);
+    setAssignmentSuccess(null);
     setIsDeleting(true);
 
     try {
@@ -347,6 +517,74 @@ export function LeadsListView({
     } finally {
       setIsDeleting(false);
     }
+  }
+
+  async function handleAssignLeads(leadIds: string[], ownerId: string | null, options?: { leadId?: string | null; clearSelection?: boolean }) {
+    if (!canAssignLeads || !leadIds.length) return;
+
+    setAssignmentError(null);
+    setAssignmentSuccess(null);
+    setDeleteError(null);
+    setDeleteSuccess(null);
+    setIsAssigning(true);
+    setAssigningLeadId(options?.leadId ?? null);
+
+    try {
+      const response = await fetch("/api/leads/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds, ownerId }),
+      });
+      const payload = (await response.json().catch(() => null)) as { assigned?: number; missing?: number; error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Unable to assign leads.");
+      }
+
+      setLeadOverrides((previous) => {
+        const next = { ...previous };
+        for (const leadId of leadIds) {
+          next[leadId] = { ...(next[leadId] ?? {}), ownerId };
+        }
+        return next;
+      });
+      setCreatedLeads((previous) =>
+        previous.map((lead) => (leadIds.includes(lead.id) ? { ...lead, ownerId } : lead)),
+      );
+
+      const assigned = Number(payload?.assigned ?? 0);
+      const missing = Number(payload?.missing ?? 0);
+      const fragments = [
+        ownerId ? `Assigned ${assigned} lead${assigned === 1 ? "" : "s"}.` : `Unassigned ${assigned} lead${assigned === 1 ? "" : "s"}.`,
+      ];
+      if (missing > 0) {
+        fragments.push(`${missing} could not be found.`);
+      }
+      setAssignmentSuccess(fragments.join(" "));
+      if (options?.clearSelection) {
+        setSelectedLeadIds([]);
+      }
+    } catch (error) {
+      setAssignmentError(error instanceof Error ? error.message : "Unable to assign leads.");
+    } finally {
+      setIsAssigning(false);
+      setAssigningLeadId(null);
+    }
+  }
+
+  function openWorkspace(lead: Lead, orderedLeads?: Lead[]) {
+    try {
+      const seed: LeadWorkspaceSeed = {
+        leadId: String(lead.id ?? ""),
+        lead,
+        orderedLeadIds: (orderedLeads ?? sortedLeads).map((candidate) => String(candidate.id ?? "")).filter(Boolean),
+      };
+      window.sessionStorage.setItem(LEAD_WORKSPACE_SEED_KEY, JSON.stringify(seed));
+    } catch {
+      // Ignore session storage failures and still navigate.
+    }
+
+    router.push(`/leads/${lead.id}`);
   }
 
   const filteredLeads = useMemo(() => {
@@ -407,6 +645,24 @@ export function LeadsListView({
       demoBooked: sortedLeads.filter((lead) => resolveWorkspaceStatus(lead) === "DEMO_BOOKED").length,
     }),
     [sortedLeads],
+  );
+  const todaysQueueSummary = useMemo(
+    () => ({
+      total: todaysCallQueue.length,
+      newOrUntouched: todaysCallQueue.filter((entry) => {
+        const status = resolveWorkspaceStatus(entry.lead);
+        return status === "UNSET" || status === "NEW";
+      }).length,
+      followUps: todaysCallQueue.filter((entry) => {
+        const status = resolveWorkspaceStatus(entry.lead);
+        return status === "ATTEMPTED" || status === "CONTACTED";
+      }).length,
+      approvalAndPayment: todaysCallQueue.filter((entry) => {
+        const status = resolveWorkspaceStatus(entry.lead);
+        return status === "AWAITING_APPROVAL" || status === "PAYMENT_PENDING";
+      }).length,
+    }),
+    [todaysCallQueue],
   );
 
   const cumulativeClosedValue = useMemo(() => sortedLeads.reduce((sum, lead) => sum + (lead.closedDealValue ?? 0), 0), [sortedLeads]);
@@ -480,7 +736,9 @@ export function LeadsListView({
       </header>
 
       {deleteError ? <p className="rounded-lg border border-rose-600/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{deleteError}</p> : null}
+      {assignmentError ? <p className="rounded-lg border border-rose-600/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{assignmentError}</p> : null}
       {deleteSuccess ? <p className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{deleteSuccess}</p> : null}
+      {assignmentSuccess ? <p className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{assignmentSuccess}</p> : null}
 
       {viewMode === "open" ? (
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
@@ -508,6 +766,72 @@ export function LeadsListView({
             <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Demo Booked</p>
             <p className="mt-2 text-3xl font-semibold text-fuchsia-200">{openStatusCounts.demoBooked}</p>
             <p className="mt-1 text-xs text-zinc-400">Confirmed meetings ready for follow-through</p>
+          </div>
+        </section>
+      ) : null}
+
+      {viewMode === "open" && showTodaysCallQueue ? (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Today&apos;s Call Queue</p>
+              <h2 className="mt-1 text-xl font-semibold text-zinc-100">Shift working list</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                These are the next leads to work today based on status, last touch, and whether the lead is actually callable.
+              </p>
+            </div>
+            <div className="grid min-w-[260px] gap-2 sm:grid-cols-3">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                <p className="text-[11px] uppercase tracking-[0.15em] text-zinc-500">Queue Size</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-100">{todaysQueueSummary.total}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                <p className="text-[11px] uppercase tracking-[0.15em] text-zinc-500">Fresh / Untouched</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-100">{todaysQueueSummary.newOrUntouched}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                <p className="text-[11px] uppercase tracking-[0.15em] text-zinc-500">High-Intent</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-100">{todaysQueueSummary.followUps + todaysQueueSummary.approvalAndPayment}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {todaysCallQueue.length > 0 ? todaysCallQueue.map((entry) => {
+              const queueStatus = resolveWorkspaceStatus(entry.lead);
+              return (
+                <div key={entry.lead.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-100">{entry.lead.businessName}</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {entry.lead.businessType || "Unknown industry"} - {entry.lead.city || "Unknown city"}
+                      </p>
+                    </div>
+                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${leadStatusPillMap[queueStatus]}`}>
+                      {statusLabelMap[queueStatus]}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm text-zinc-300">{entry.reason}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{entry.lead.phone} - {formatLastTouched(entry.lead.updatedAt)}</p>
+                  <div className="mt-4 flex items-center justify-between gap-2">
+                    <span className="text-xs uppercase tracking-[0.16em] text-zinc-500">Priority {entry.priority}</span>
+                    <button
+                      type="button"
+                      onClick={() => openWorkspace(entry.lead, todaysCallQueue.map((candidate) => candidate.lead))}
+                      className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 transition hover:bg-blue-500/15"
+                    >
+                      Open Workspace
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-950/50 p-6 text-sm text-zinc-500 lg:col-span-2">
+                No call queue items are due right now. This list only includes open leads with a phone number and active follow-up priority.
+              </div>
+            )}
           </div>
         </section>
       ) : null}
@@ -658,7 +982,12 @@ export function LeadsListView({
         isSubmitting={isSubmitting}
         formData={newLead}
         errorMessage={addLeadError}
+        assignmentLabel="Lead Owner"
+        assignmentHelperText={canAssignLeads ? "Managers and super admins can assign new leads directly or leave them unassigned." : null}
+        assignmentOptions={canAssignLeads ? assignmentSelectOptions : undefined}
+        assignmentValue={newLeadAssigneeSelection}
         onChange={(field, value) => setNewLead((prev) => ({ ...prev, [field]: value }))}
+        onAssignmentChange={canAssignLeads ? setNewLeadAssigneeSelection : undefined}
         onClose={() => {
           if (isSubmitting) return;
           setIsAddLeadOpen(false);
@@ -759,6 +1088,7 @@ export function LeadsListView({
               {viewMode === "open" ? <th className="px-4 py-3">Last Touch</th> : null}
               {viewMode === "open" ? <th className="px-4 py-3">Status</th> : null}
               {viewMode === "open" ? <th className="px-4 py-3">Next Step</th> : null}
+              {viewMode === "open" && canAssignLeads ? <th className="px-4 py-3">Owner</th> : null}
               {viewMode === "closed" ? (
                 <th className="px-4 py-3">
                   <button
@@ -788,7 +1118,7 @@ export function LeadsListView({
               return (
               <tr
                 key={lead?.id}
-                onClick={() => router.push(`/leads/${lead?.id}`)}
+                onClick={() => openWorkspace(lead, sortedLeads)}
                 className="group cursor-pointer border-b border-zinc-800/80 text-sm text-zinc-200 transition hover:bg-zinc-900/50"
               >
                 {viewMode === "open" ? (
@@ -852,6 +1182,30 @@ export function LeadsListView({
                   </td>
                 ) : null}
                 {viewMode === "open" ? <td className="px-4 py-3 text-zinc-300">{nextStep}</td> : null}
+                {viewMode === "open" && canAssignLeads ? (
+                  <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
+                    <div className="space-y-2">
+                      <p className="text-xs text-zinc-500">
+                        {lead.ownerId ? `Current: ${ownerLabelById.get(lead.ownerId) ?? lead.ownerId}` : "Current: Unassigned"}
+                      </p>
+                      <select
+                        value={lead.ownerId ?? UNASSIGNED_ASSIGNMENT}
+                        onChange={(event) => {
+                          const nextOwnerId = event.target.value === UNASSIGNED_ASSIGNMENT ? null : event.target.value;
+                          void handleAssignLeads([lead.id], nextOwnerId, { leadId: lead.id });
+                        }}
+                        disabled={isAssigning}
+                        className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-xs text-zinc-100 outline-none disabled:opacity-60"
+                      >
+                        {assignmentSelectOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </td>
+                ) : null}
                 {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.city || "Unknown"}</td> : null}
                 {viewMode === "closed" ? <td className="px-4 py-3 text-zinc-400">{lead?.phone || "No phone"}</td> : null}
                 {viewMode === "closed" ? (
@@ -884,7 +1238,11 @@ export function LeadsListView({
                   <div className="inline-flex flex-col items-end gap-2">
                     {viewMode === "open" ? (
                       <span className="rounded-md border border-zinc-700/70 bg-zinc-950/70 px-2.5 py-1.5 text-[11px] font-medium text-zinc-400">
-                        {workspaceStatus === "UNSET" ? "Updates after Connect disposition" : "Synced from Connect"}
+                        {assigningLeadId === lead.id && isAssigning
+                          ? "Saving transfer..."
+                          : workspaceStatus === "UNSET"
+                            ? "Updates after Connect disposition"
+                            : "Synced from Connect"}
                       </span>
                     ) : null}
                     {viewMode === "open" ? (
@@ -899,7 +1257,7 @@ export function LeadsListView({
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => router.push(`/leads/${lead.id}`)}
+                      onClick={() => openWorkspace(lead, sortedLeads)}
                       className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 transition hover:bg-blue-500/15"
                     >
                       Open Workspace
@@ -954,14 +1312,43 @@ export function LeadsListView({
         <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,860px)] -translate-x-1/2 rounded-2xl border border-zinc-700 bg-zinc-900/95 p-3 shadow-2xl shadow-black/40 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-zinc-300">{selectedCount} lead{selectedCount > 1 ? "s" : ""} selected</p>
-            <button
-              type="button"
-              onClick={() => handleDeleteLeads(selectedLeadIds)}
-              disabled={isDeleting}
-              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:opacity-60"
-            >
-              {isDeleting ? "Deleting..." : "Delete Selected Leads"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {canAssignLeads ? (
+                <>
+                  <select
+                    value={selectedAssignmentSelection}
+                    onChange={(event) => setSelectedAssignmentSelection(event.target.value)}
+                    disabled={isAssigning}
+                    className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none disabled:opacity-60"
+                  >
+                    {assignmentSelectOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ownerId = selectedAssignmentSelection === UNASSIGNED_ASSIGNMENT ? null : selectedAssignmentSelection;
+                      void handleAssignLeads(selectedLeadIds, ownerId, { clearSelection: true });
+                    }}
+                    disabled={isAssigning}
+                    className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/20 disabled:opacity-60"
+                  >
+                    {isAssigning ? "Saving..." : "Assign Selected Leads"}
+                  </button>
+                </>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => handleDeleteLeads(selectedLeadIds)}
+                disabled={isDeleting}
+                className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:opacity-60"
+              >
+                {isDeleting ? "Deleting..." : "Delete Selected Leads"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

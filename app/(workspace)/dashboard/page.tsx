@@ -26,19 +26,147 @@ import {
 } from "@/lib/lead-note-channels";
 import { buildManagerActionPlan, type PredictorInputs } from "@/lib/manager-action-engine";
 
-type DashboardDailyAverageWindow = {
-  key: "3d" | "7d" | "30d";
+type DashboardRangeKey = "today" | "3d" | "7d" | "30d";
+
+type DashboardRangeOption = {
+  key: DashboardRangeKey;
   label: string;
   shortLabel: string;
   days: number;
-  dialsPerDay: number;
-  demosPerDay: number;
+};
+
+type DashboardWindowMetrics = {
+  key: DashboardRangeKey;
+  label: string;
+  shortLabel: string;
+  days: number;
+  isToday: boolean;
+  startDate: string;
+  endDate: string;
+  dials: number;
+  conversations: number;
+  demos: number;
+  closes: number;
+  revenue: number;
+  talkMinutes: number;
+  score: number;
+  callsPerHour: number;
   contactRate: number;
+  demoConversionRate: number;
+  dialsPerDay: number;
+  conversationsPerDay: number;
+  demosPerDay: number;
+  closesPerDay: number;
+  talkMinutesPerDay: number;
+  revenuePerDay: number;
+  expectedDials: number;
+  expectedDemos: number;
+  dialGap: number;
+  dialsStatus: "on_track" | "at_risk" | "off_track";
+  contactRateStatus: "on_track" | "at_risk" | "off_track";
+  demosStatus: "on_track" | "at_risk" | "off_track";
+  demoConversionStatus: "on_track" | "at_risk" | "off_track";
+  overallStatus: "on_track" | "at_risk" | "off_track";
+};
+
+type DashboardLeaderboardRow = {
+  userId: string;
+  userName: string;
+  claimedLeads: number;
+  dialsToday: number;
+  callsPerHourToday: number;
+  conversationsToday: number;
+  contactRateToday: number;
+  demosToday: number;
+  demoConversionRateToday: number;
+  expectedDialsByNow: number;
+  dialGapToday: number;
+  talkMinutesToday: number;
+  demosThisWeek: number;
+  closesThisMonth: number;
+  revenueThisMonth: number;
+  scoreToday: number;
+  streakDays: number;
+  overallStatus: "on_track" | "at_risk" | "off_track";
+  needsAttentionReason: string;
+  selectedWindow: DashboardWindowMetrics;
+  dailyAverages: DashboardWindowMetrics[];
+};
+
+type DashboardScorecard = {
+  userId: string;
+  userName: string;
+  pipelineLeads: number;
+  dialsToday: number;
+  callsPerHourLabel: string;
+  contactRateLabel: string;
+  demosToday: number;
+  demoConversionLabel: string;
+  talkMinutesToday: number;
+  workingRateLabel: string;
+  demoToCloseLabel: string;
+  revenueThisMonth: number;
+  streakDays: number;
+  overallStatus: "on_track" | "at_risk" | "off_track";
+  paceGapLabel: string;
+  selectedWindow: DashboardWindowMetrics;
+  dailyAverages: DashboardWindowMetrics[];
+};
+
+type DashboardRepCallDrilldown = {
+  userId: string;
+  userName: string;
+  totalCalls: number;
+  callsToday: number;
+  connectedToday: number;
+  recordedCalls: number;
+  recordedCallsToday: number;
+  bookedDemoCalls: number;
+  bookedDemoCallsToday: number;
+  talkMinutesToday: number;
+  selectedWindow: DashboardWindowMetrics;
+  dailyAverages: DashboardWindowMetrics[];
+  recentCalls: Array<{
+    contactId: string;
+    leadId: string;
+    leadName: string;
+    leadStatus: string;
+    callAt: string;
+    durationSeconds: number;
+    countsAsContact: boolean;
+    sentimentLabel: string;
+    hasRecording: boolean;
+    hasAnalysis: boolean;
+    hasBookedDemo: boolean;
+    isOwnedLead: boolean;
+  }>;
+};
+
+type DashboardCallLeaderboardRow = {
+  userId: string;
+  userName: string;
+  talkMinutesToday: number;
+  dialsToday: number;
+  conversationsToday: number;
+  callsPerHourLabel: string;
+  contactRateLabel: string;
+  avgTalkPerCallLabel: string;
+  selectedWindow: DashboardWindowMetrics;
+  dailyAverages: DashboardWindowMetrics[];
 };
 
 type DashboardMetrics = {
   generatedAt: string;
   viewerRole: string;
+  range: {
+    selectedKey: DashboardRangeKey;
+    selectedLabel: string;
+    selectedShortLabel: string;
+    selectedDays: number;
+    startDate: string;
+    endDate: string;
+    available: DashboardRangeOption[];
+  };
   rep: {
     headline: string;
     scoreToday: number;
@@ -57,6 +185,8 @@ type DashboardMetrics = {
       closesThisMonth: number;
       liveSites: number;
     };
+    selectedWindow: DashboardWindowMetrics;
+    dailyAverages: DashboardWindowMetrics[];
     targets: Array<{
       label: string;
       completed: number;
@@ -74,7 +204,6 @@ type DashboardMetrics = {
     };
     accountability: {
       expectedDialsByNow: number;
-      expectedDemosByNow: number;
       workdayLabel: string;
       dialsStatus: "on_track" | "at_risk" | "off_track";
       contactRateStatus: "on_track" | "at_risk" | "off_track";
@@ -125,6 +254,10 @@ type DashboardMetrics = {
       avgContactRateToday: number;
       repsOnTrack: number;
       repsOffTrack: number;
+      selectedWindow: DashboardWindowMetrics & {
+        dialsPerRepPerDay: number;
+        demosPerRepPerDay: number;
+      };
     };
     upcomingSchedule: Array<{
       id: string;
@@ -133,83 +266,10 @@ type DashboardMetrics = {
       label: string;
       repName: string;
     }>;
-    leaderboard: Array<{
-      userId: string;
-      userName: string;
-      claimedLeads: number;
-      dialsToday: number;
-      callsPerHourToday: number;
-      conversationsToday: number;
-      contactRateToday: number;
-      demosToday: number;
-      demoConversionRateToday: number;
-      expectedDialsByNow: number;
-      dialGapToday: number;
-      talkMinutesToday: number;
-      demosThisWeek: number;
-      closesThisMonth: number;
-      revenueThisMonth: number;
-      scoreToday: number;
-      streakDays: number;
-      overallStatus: "on_track" | "at_risk" | "off_track";
-      needsAttentionReason: string;
-    }>;
-    scorecards: Array<{
-      userId: string;
-      userName: string;
-      pipelineLeads: number;
-      dialsToday: number;
-      callsPerHourLabel: string;
-      contactRateLabel: string;
-      demosToday: number;
-      demoConversionLabel: string;
-      talkMinutesToday: number;
-      workingRateLabel: string;
-      demoToCloseLabel: string;
-      revenueThisMonth: number;
-      streakDays: number;
-      overallStatus: "on_track" | "at_risk" | "off_track";
-      dialsStatus: "on_track" | "at_risk" | "off_track";
-      contactRateStatus: "on_track" | "at_risk" | "off_track";
-      demosStatus: "on_track" | "at_risk" | "off_track";
-      paceGapLabel: string;
-      dailyAverages: DashboardDailyAverageWindow[];
-    }>;
-    repCallDrilldowns: Array<{
-      userId: string;
-      userName: string;
-      totalCalls: number;
-      callsToday: number;
-      connectedToday: number;
-      recordedCalls: number;
-      recordedCallsToday: number;
-      bookedDemoCalls: number;
-      bookedDemoCallsToday: number;
-      talkMinutesToday: number;
-      recentCalls: Array<{
-        contactId: string;
-        leadId: string;
-        leadName: string;
-        leadStatus: string;
-        callAt: string;
-        durationSeconds: number;
-        countsAsContact: boolean;
-        sentimentLabel: string;
-        hasRecording: boolean;
-        hasAnalysis: boolean;
-        hasBookedDemo: boolean;
-      }>;
-    }>;
-    callLeaderboard: Array<{
-      userId: string;
-      userName: string;
-      talkMinutesToday: number;
-      dialsToday: number;
-      conversationsToday: number;
-      callsPerHourLabel: string;
-      contactRateLabel: string;
-      avgTalkPerCallLabel: string;
-    }>;
+    leaderboard: DashboardLeaderboardRow[];
+    scorecards: DashboardScorecard[];
+    repCallDrilldowns: DashboardRepCallDrilldown[];
+    callLeaderboard: DashboardCallLeaderboardRow[];
     funnel: Array<{
       userId: string;
       userName: string;
@@ -226,25 +286,8 @@ type DashboardMetrics = {
       href: string;
       createdAt: string;
     }>;
-    topPerformer: {
-      userId: string;
-      userName: string;
-      scoreToday: number;
-      dialsToday: number;
-      contactRateToday: number;
-      demosToday: number;
-      revenueThisMonth: number;
-    } | null;
-    needsAttention: Array<{
-      userId: string;
-      userName: string;
-      claimedLeads: number;
-      dialsToday: number;
-      contactRateToday: number;
-      demosToday: number;
-      overallStatus: "on_track" | "at_risk" | "off_track";
-      needsAttentionReason: string;
-    }>;
+    topPerformer: DashboardLeaderboardRow | null;
+    needsAttention: DashboardLeaderboardRow[];
   };
 };
 
@@ -333,7 +376,7 @@ function formatDurationSeconds(value: number) {
 }
 
 function isConnectedRecentCall(
-  call: DashboardMetrics["team"]["repCallDrilldowns"][number]["recentCalls"][number],
+  call: DashboardRepCallDrilldown["recentCalls"][number],
   resolvedDuration?: number,
 ) {
   if (typeof call.countsAsContact === "boolean") {
@@ -388,82 +431,6 @@ function StatusBadge({ status }: { status: "on_track" | "at_risk" | "off_track" 
   );
 }
 
-function getMetricStatusText(status: "on_track" | "at_risk" | "off_track") {
-  if (status === "on_track") return "On Pace";
-  if (status === "at_risk") return "Watch";
-  return "Off Pace";
-}
-
-function MetricStatusBadge({
-  label,
-  status,
-}: {
-  label: string;
-  status: "on_track" | "at_risk" | "off_track";
-}) {
-  const meta = getStatusMeta(status);
-
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${meta.className}`}>
-      <span className="text-zinc-300">{label}</span>
-      <span className="text-current">{getMetricStatusText(status)}</span>
-    </span>
-  );
-}
-
-function DailyAverageStrip({ windows }: { windows: DashboardDailyAverageWindow[] }) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-3">
-      {windows.map((window) => (
-        <article key={window.key} className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2.5">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">{window.shortLabel}</p>
-          <p className="mt-1 text-sm font-semibold text-white">{formatDecimal(window.dialsPerDay)} dials/day</p>
-          <p className="mt-1 text-xs text-zinc-400">
-            {formatDecimal(window.demosPerDay)} demos/day, {formatPercent(window.contactRate)} contact
-          </p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function buildScorecardPaceSummary(scorecard: DashboardMetrics["team"]["scorecards"][number]) {
-  const groups: Array<{
-    title: string;
-    labels: string[];
-  }> = [
-    {
-      title: "On pace",
-      labels: [
-        scorecard.dialsStatus === "on_track" ? "dials" : "",
-        scorecard.contactRateStatus === "on_track" ? "contact rate" : "",
-        scorecard.demosStatus === "on_track" ? "demos" : "",
-      ].filter(Boolean),
-    },
-    {
-      title: "Watch",
-      labels: [
-        scorecard.dialsStatus === "at_risk" ? "dials" : "",
-        scorecard.contactRateStatus === "at_risk" ? "contact rate" : "",
-        scorecard.demosStatus === "at_risk" ? "demos" : "",
-      ].filter(Boolean),
-    },
-    {
-      title: "Needs attention",
-      labels: [
-        scorecard.dialsStatus === "off_track" ? "dials" : "",
-        scorecard.contactRateStatus === "off_track" ? "contact rate" : "",
-        scorecard.demosStatus === "off_track" ? "demos" : "",
-      ].filter(Boolean),
-    },
-  ];
-
-  return groups
-    .filter((group) => group.labels.length > 0)
-    .map((group) => `${group.title}: ${group.labels.join(", ")}`)
-    .join(". ");
-}
-
 function KpiCard({
   label,
   value,
@@ -487,6 +454,61 @@ function KpiCard({
   );
 }
 
+const DEFAULT_DASHBOARD_RANGE_OPTIONS: DashboardRangeOption[] = [
+  { key: "today", label: "Today", shortLabel: "Today", days: 1 },
+  { key: "3d", label: "Last 3 Days", shortLabel: "3D Avg", days: 3 },
+  { key: "7d", label: "Last 7 Days", shortLabel: "7D Avg", days: 7 },
+  { key: "30d", label: "Last 30 Days", shortLabel: "30D Avg", days: 30 },
+];
+
+function RangeSelector({
+  options,
+  selectedKey,
+  onChange,
+}: {
+  options: DashboardRangeOption[];
+  selectedKey: DashboardRangeKey;
+  onChange: (key: DashboardRangeKey) => void;
+}) {
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+      {options.map((option) => {
+        const active = option.key === selectedKey;
+        return (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => onChange(option.key)}
+            className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+              active
+                ? "bg-blue-500 text-white"
+                : "text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DailyAverageStrip({ windows }: { windows: DashboardWindowMetrics[] }) {
+  return (
+    <div className="grid gap-2 md:grid-cols-3">
+      {windows.map((window) => (
+        <article key={window.key} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5">
+          <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">{window.shortLabel}</p>
+          <p className="mt-1 text-sm font-semibold text-white">{formatDecimal(window.dialsPerDay)} dials/day</p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {formatDecimal(window.demosPerDay)} demos/day, {formatPercent(window.contactRate)} contact
+          </p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function RepCallDrawer({
   drilldown,
   onClose,
@@ -507,6 +529,8 @@ function RepCallDrawer({
   const [trainingActionStatusByContact, setTrainingActionStatusByContact] = useState<Record<string, string>>({});
   const [savingTrainingActionKey, setSavingTrainingActionKey] = useState<string | null>(null);
   const [callFilter, setCallFilter] = useState<"all" | "connected" | "booked_demos">("all");
+  const [callScope, setCallScope] = useState<"workspace" | "demo" | "all">("workspace");
+  const [currentCallIndex, setCurrentCallIndex] = useState(0);
   const canWriteReviewNotes = canWriteManagerCallReview(viewerRole);
   const scopedReviewCalls = useMemo(
     () => drilldown.recentCalls.filter((call) => call.leadId && call.contactId),
@@ -528,7 +552,9 @@ function RepCallDrawer({
   useEffect(() => {
     setResolvedDurations({});
     setCallFilter("all");
-  }, [drilldown.userId]);
+    setCallScope(drilldown.recentCalls.some((call) => call.isOwnedLead) ? "workspace" : "all");
+    setCurrentCallIndex(0);
+  }, [drilldown.recentCalls, drilldown.userId]);
 
   useEffect(() => {
     let isActive = true;
@@ -625,15 +651,39 @@ function RepCallDrawer({
     return total + (resolvedDurations[call.contactId] ?? call.durationSeconds ?? 0);
   }, 0);
   const displayedTalkMinutesToday = Math.round(talkSecondsToday / 60);
-  const displayedConnectedToday = drilldown.recentCalls.reduce((total, call) => {
+  const connectedCallsInVisibleFeed = drilldown.recentCalls.reduce((total, call) => {
     if (getNewYorkDayKey(call.callAt) !== todayKey) return total;
     return total + (isConnectedRecentCall(call, resolvedDurations[call.contactId]) ? 1 : 0);
   }, 0);
-  const filteredCalls = callFilter === "connected"
-    ? drilldown.recentCalls.filter((call) => isConnectedRecentCall(call, resolvedDurations[call.contactId]))
-    : callFilter === "booked_demos"
-      ? drilldown.recentCalls.filter((call) => call.hasBookedDemo)
+  const displayedConnectedToday = Math.max(drilldown.connectedToday, connectedCallsInVisibleFeed);
+  const workspaceCalls = useMemo(
+    () => drilldown.recentCalls.filter((call) => call.isOwnedLead),
+    [drilldown.recentCalls],
+  );
+  const demoAttributedCalls = useMemo(
+    () => drilldown.recentCalls.filter((call) => !call.isOwnedLead && call.hasBookedDemo),
+    [drilldown.recentCalls],
+  );
+  const scopedCalls = callScope === "workspace"
+    ? workspaceCalls
+    : callScope === "demo"
+      ? demoAttributedCalls
       : drilldown.recentCalls;
+  const filteredCalls = callFilter === "connected"
+    ? scopedCalls.filter((call) => isConnectedRecentCall(call, resolvedDurations[call.contactId]))
+    : callFilter === "booked_demos"
+      ? scopedCalls.filter((call) => call.hasBookedDemo)
+      : scopedCalls;
+  const visibleCalls = filteredCalls.slice(currentCallIndex, currentCallIndex + 1);
+
+  useEffect(() => {
+    setCurrentCallIndex(0);
+  }, [callFilter, callScope, drilldown.userId]);
+
+  useEffect(() => {
+    if (currentCallIndex < filteredCalls.length) return;
+    setCurrentCallIndex(filteredCalls.length > 0 ? filteredCalls.length - 1 : 0);
+  }, [currentCallIndex, filteredCalls.length]);
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm" onClick={onClose}>
@@ -700,6 +750,85 @@ function RepCallDrawer({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1">
+              <button
+                type="button"
+                onClick={() => setCallScope("workspace")}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                  callScope === "workspace"
+                    ? "bg-blue-500 text-white"
+                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                }`}
+              >
+                Workspace Leads ({workspaceCalls.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCallScope("demo")}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                  callScope === "demo"
+                    ? "bg-blue-500 text-white"
+                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                }`}
+              >
+                Demo Leads ({demoAttributedCalls.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCallScope("all")}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                  callScope === "all"
+                    ? "bg-blue-500 text-white"
+                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                }`}
+              >
+                All Calls ({drilldown.recentCalls.length})
+              </button>
+            </div>
+
+            {filteredCalls.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentCallIndex((current) => Math.max(current - 1, 0))}
+                  disabled={currentCallIndex === 0}
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span className="text-xs text-zinc-400">
+                  Call {currentCallIndex + 1} of {filteredCalls.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentCallIndex((current) => Math.min(current + 1, filteredCalls.length - 1))}
+                  disabled={currentCallIndex >= filteredCalls.length - 1}
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {filteredCalls.length > 0 ? (
+            <label className="mb-4 block rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <span className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">Jump To Call</span>
+              <select
+                value={currentCallIndex}
+                onChange={(event) => setCurrentCallIndex(Number(event.target.value) || 0)}
+                className="mt-2 w-full bg-transparent text-sm text-zinc-100 outline-none"
+              >
+                {filteredCalls.map((call, index) => (
+                  <option key={`${call.contactId}-${call.callAt}`} value={index}>
+                    {index + 1}. {call.leadName} - {formatDateTime(call.callAt)} - {call.isOwnedLead ? "Workspace Lead" : "Demo Lead"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           {reviewNotesError ? (
             <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {reviewNotesError}
@@ -707,15 +836,19 @@ function RepCallDrawer({
           ) : null}
           {filteredCalls.length === 0 ? (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-sm text-zinc-400">
-              {callFilter === "connected"
-                ? "No connected calls are attached to this rep yet."
+              {callScope === "workspace"
+                ? "No workspace lead calls match this view yet."
+                : callScope === "demo"
+                  ? "No demo-attributed calls match this view yet."
+                : callFilter === "connected"
+                  ? "No connected calls are attached to this rep yet."
                 : callFilter === "booked_demos"
                   ? "No calls tied to booked demos are attached to this rep yet."
                   : "No calls are attached to this rep yet."}
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredCalls.map((call) => {
+              {visibleCalls.map((call) => {
                 const recordingUrl =
                   call.leadId && call.contactId
                     ? `/api/call-recordings?leadId=${encodeURIComponent(call.leadId)}&contactId=${encodeURIComponent(call.contactId)}&mode=redirect`
@@ -765,6 +898,15 @@ function RepCallDrawer({
                       >
                         {call.hasAnalysis ? "Analysis Ready" : "Analysis Pending"}
                       </span>
+                      <span
+                        className={`rounded-full border px-2 py-1 ${
+                          call.isOwnedLead
+                            ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-200"
+                            : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                        }`}
+                      >
+                        {call.isOwnedLead ? "Workspace Lead" : "Demo Lead"}
+                      </span>
                       {call.hasBookedDemo ? (
                         <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-blue-200">
                           Booked Demo
@@ -777,7 +919,7 @@ function RepCallDrawer({
                         href={`/leads/${call.leadId}`}
                         className="inline-flex rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-zinc-600"
                       >
-                        Open Lead
+                        {call.isOwnedLead ? "Open Workspace" : "Open Demo Lead"}
                       </Link>
                       {canWriteReviewNotes ? (
                         <>
@@ -1051,10 +1193,16 @@ function RepCallDrawer({
   );
 }
 
-function DailyTargets({ targets }: { targets: DashboardMetrics["rep"]["targets"] }) {
+function DailyTargets({
+  targets,
+  title = "Daily Execution",
+}: {
+  targets: DashboardMetrics["rep"]["targets"];
+  title?: string;
+}) {
   return (
     <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700">
-      <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Daily Execution</h3>
+      <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">{title}</h3>
       <div className="space-y-3">
         {targets.map((kpi) => {
           const percentage = kpi.target > 0
@@ -1103,6 +1251,7 @@ function RepDashboard({
   onAcknowledgeManagerNote?: (leadId: string, noteId: string) => Promise<void>;
 }) {
   const rep = metrics?.rep;
+  const selectedWindow = rep?.selectedWindow ?? null;
   const [acknowledgingNoteId, setAcknowledgingNoteId] = useState<string | null>(null);
 
   return (
@@ -1116,57 +1265,76 @@ function RepDashboard({
                 {rep?.headline ?? "Loading live dashboard data..."}
               </h2>
               <p className="mt-1 text-sm text-zinc-300">
-                Real activity only. Calls, demos, closes, and live site movement update this board.
+                Real activity only. Calls, demos, closes, and live site movement update this board across {metrics?.range.selectedLabel.toLowerCase() ?? "today"}.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Calls / Hour</p>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">{selectedWindow?.isToday ? "Calls / Hour" : "Avg Calls / Hour"}</p>
                 <p className="mt-1 text-2xl font-semibold text-white">
-                  {rep ? rep.kpis.callsPerHourToday.toFixed(1) : "--"}
+                  {selectedWindow ? formatDecimal(selectedWindow.callsPerHour) : "--"}
                 </p>
               </div>
               <div className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3">
                 <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-500">Contact Rate</p>
                 <p className="mt-1 text-2xl font-semibold text-white">
-                  {rep ? formatPercent(rep.kpis.contactRateToday) : "--"}
+                  {selectedWindow ? formatPercent(selectedWindow.contactRate) : "--"}
                 </p>
               </div>
-              {rep ? <StatusBadge status={rep.accountability.overallStatus} /> : null}
+              {selectedWindow ? <StatusBadge status={selectedWindow.overallStatus} /> : null}
             </div>
           </div>
         </section>
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <KpiCard
-            label="Dials Today"
-            value={rep ? String(rep.kpis.dialsToday) : "--"}
-            detail={rep ? `${rep.accountability.expectedDialsByNow} expected by now` : "Loading"}
+            label={selectedWindow?.isToday ? "Dials Today" : `${metrics?.range.selectedLabel ?? "Selected Window"} Dials`}
+            value={selectedWindow ? (selectedWindow.isToday ? String(selectedWindow.dials) : String(selectedWindow.dials)) : "--"}
+            detail={selectedWindow
+              ? selectedWindow.isToday
+                ? `${Math.round(selectedWindow.expectedDials)} expected by now`
+                : `${formatDecimal(selectedWindow.dialsPerDay)} avg dials/day`
+              : "Loading"}
             icon={Phone}
           />
           <KpiCard
-            label="Calls / Hour"
-            value={rep ? rep.kpis.callsPerHourToday.toFixed(1) : "--"}
-            detail="Target is 10 every clocked hour"
+            label={selectedWindow?.isToday ? "Calls / Hour" : "Avg Calls / Hour"}
+            value={selectedWindow ? formatDecimal(selectedWindow.callsPerHour) : "--"}
+            detail={selectedWindow?.isToday ? "Target is 10 every hour" : "Average pace across selected range"}
             icon={CalendarClock}
           />
           <KpiCard
             label="Contact Rate"
-            value={rep ? formatPercent(rep.kpis.contactRateToday) : "--"}
-            detail={rep ? `${rep.kpis.conversationsToday} connected conversations` : "Loading"}
+            value={selectedWindow ? formatPercent(selectedWindow.contactRate) : "--"}
+            detail={selectedWindow ? `${selectedWindow.conversations} connected conversations` : "Loading"}
             icon={Rocket}
           />
           <KpiCard
-            label="Booked Demos Today"
-            value={rep ? String(rep.kpis.demosToday) : "--"}
-            detail={rep ? `${Math.round(rep.accountability.expectedDemosByNow * 10) / 10} expected by now` : "Loading"}
+            label={selectedWindow?.isToday ? "Booked Demos Today" : `${metrics?.range.selectedLabel ?? "Selected Window"} Demos`}
+            value={selectedWindow ? String(selectedWindow.demos) : "--"}
+            detail={selectedWindow
+              ? selectedWindow.isToday
+                ? `${formatDecimal(selectedWindow.expectedDemos)} expected by now`
+                : `${formatPercent(selectedWindow.demoConversionRate)} conversion from connects`
+              : "Loading"}
             icon={Wallet}
           />
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-4">
-            <DailyTargets targets={rep?.targets ?? []} />
+            <DailyTargets
+              targets={rep?.targets ?? []}
+              title={selectedWindow?.isToday ? "Daily Execution" : `${metrics?.range.selectedLabel ?? "Window"} Execution`}
+            />
+
+            <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Daily Averages</h3>
+                <span className="text-xs text-zinc-500">Per rep rolling view</span>
+              </div>
+              <DailyAverageStrip windows={rep?.dailyAverages ?? []} />
+            </article>
 
             <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition-all duration-200 hover:border-zinc-700">
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Upcoming Schedule</h3>
@@ -1331,12 +1499,12 @@ function RepDashboard({
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
           <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">Standards Board</p>
-          <h4 className="mt-2 text-lg font-semibold text-white">Daily Accountability</h4>
+          <h4 className="mt-2 text-lg font-semibold text-white">{selectedWindow?.isToday ? "Daily Accountability" : `${metrics?.range.selectedLabel ?? "Window"} Snapshot`}</h4>
           <div className="mt-3 space-y-2 text-sm text-zinc-300">
-            <p className="flex items-center justify-between"><span>Pacing Basis</span><span>{rep?.accountability.workdayLabel ?? "--"}</span></p>
-            <p className="flex items-center justify-between"><span>Demo Conversion</span><span>{rep ? formatPercent(rep.kpis.demoConversionRateToday) : "--"}</span></p>
-            <p className="flex items-center justify-between"><span>Talk Time</span><span>{rep ? `${rep.kpis.talkMinutesToday}m` : "--"}</span></p>
-            <p className="flex items-center justify-between"><span>Revenue This Month</span><span>{rep ? formatCurrency(rep.kpis.revenueThisMonth) : "--"}</span></p>
+            <p className="flex items-center justify-between"><span>{selectedWindow?.isToday ? "Workday Progress" : "Window"}</span><span>{selectedWindow?.isToday ? (rep?.accountability.workdayLabel ?? "--") : (metrics?.range.selectedLabel ?? "--")}</span></p>
+            <p className="flex items-center justify-between"><span>Demo Conversion</span><span>{selectedWindow ? formatPercent(selectedWindow.demoConversionRate) : "--"}</span></p>
+            <p className="flex items-center justify-between"><span>{selectedWindow?.isToday ? "Talk Time" : "Avg Talk / Day"}</span><span>{selectedWindow ? `${Math.round(selectedWindow.isToday ? selectedWindow.talkMinutes : selectedWindow.talkMinutesPerDay)}m` : "--"}</span></p>
+            <p className="flex items-center justify-between"><span>{selectedWindow?.isToday ? "Revenue This Month" : `${metrics?.range.selectedLabel ?? "Window"} Revenue`}</span><span>{selectedWindow ? formatCurrency(selectedWindow.revenue) : "--"}</span></p>
             <p className="flex items-center justify-between"><span>Streak</span><span>{rep?.streakDays ?? 0} days</span></p>
           </div>
         </div>
@@ -1394,6 +1562,7 @@ function ManagerDashboard({
   const topPerformer = metrics?.team.topPerformer ?? null;
   const repCallDrilldowns = metrics?.team.repCallDrilldowns ?? [];
   const teamUpcomingSchedule = metrics?.team.upcomingSchedule ?? [];
+  const teamSelectedWindow = metrics?.team.summary.selectedWindow ?? null;
   const selectedRepDrilldown = repCallDrilldowns.find((rep) => rep.userId === selectedRepId) ?? null;
 
   return (
@@ -1402,27 +1571,27 @@ function ManagerDashboard({
         <p className="text-xs uppercase tracking-[0.16em] text-blue-200">Manager Workspace</p>
         <h2 className="mt-2 text-2xl font-semibold text-white">Team command center with live rep pacing</h2>
         <p className="mt-1 text-sm text-zinc-300">
-          No filler metrics. This board ranks reps by real activity, booked demos, closes, and current streaks.
+          No filler metrics. This board ranks reps by real activity, booked demos, closes, and current streaks across {metrics?.range.selectedLabel.toLowerCase() ?? "today"}.
         </p>
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <KpiCard
-          label="Team Dials Today"
-          value={metrics ? String(metrics.team.summary.teamDialsToday) : "--"}
-          detail="Against the live 80-per-rep standard"
+          label={teamSelectedWindow?.isToday ? "Team Dials Today" : `${metrics?.range.selectedLabel ?? "Selected Window"} Dials`}
+          value={teamSelectedWindow ? String(teamSelectedWindow.dials) : "--"}
+          detail={teamSelectedWindow ? `${formatDecimal(metrics?.team.summary.selectedWindow.dialsPerRepPerDay ?? 0)} avg per rep/day` : "Loading"}
           icon={Wallet}
         />
         <KpiCard
           label="Avg Contact Rate"
-          value={metrics ? formatPercent(metrics.team.summary.avgContactRateToday) : "--"}
-          detail="Team-wide connect quality today"
+          value={teamSelectedWindow ? formatPercent(teamSelectedWindow.contactRate) : "--"}
+          detail={teamSelectedWindow?.isToday ? "Team-wide connect quality today" : `Across ${metrics?.range.selectedLabel.toLowerCase() ?? "selected range"}`}
           icon={Users}
         />
         <KpiCard
-          label="Demos Booked Today"
-          value={metrics ? String(metrics.team.summary.teamDemosToday) : "--"}
-          detail="Daily booking output"
+          label={teamSelectedWindow?.isToday ? "Demos Booked Today" : `${metrics?.range.selectedLabel ?? "Selected Window"} Demos`}
+          value={teamSelectedWindow ? String(teamSelectedWindow.demos) : "--"}
+          detail={teamSelectedWindow ? `${formatDecimal(metrics?.team.summary.selectedWindow.demosPerRepPerDay ?? 0)} avg per rep/day` : "Loading"}
           icon={Target}
         />
         <KpiCard
@@ -1432,9 +1601,9 @@ function ManagerDashboard({
           icon={CalendarClock}
         />
         <KpiCard
-          label="Closed Revenue"
-          value={metrics ? formatCurrency(metrics.team.summary.closedRevenueThisMonth) : "--"}
-          detail="Month to date"
+          label={teamSelectedWindow?.isToday ? "Closed Revenue Today" : `${metrics?.range.selectedLabel ?? "Selected Window"} Revenue`}
+          value={teamSelectedWindow ? formatCurrency(teamSelectedWindow.revenue) : "--"}
+          detail={teamSelectedWindow?.isToday ? "Today's closed revenue" : "Closed-won revenue in selected range"}
           icon={Rocket}
         />
       </section>
@@ -1444,7 +1613,7 @@ function ManagerDashboard({
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-zinc-300">Rep Scorecards</h3>
-              <p className="mt-1 text-sm text-zinc-400">Daily pace, clocked-time calls per hour, contact quality, demo output, and the exact reps that need coaching.</p>
+              <p className="mt-1 text-sm text-zinc-400">Rolling pace, contact quality, demo output, and the exact reps that need coaching.</p>
             </div>
             <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-zinc-400">
               {metrics?.team.scorecards.length ?? 0} tracked
@@ -1472,39 +1641,35 @@ function ManagerDashboard({
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-zinc-300">
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Dials today</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.dialsToday}</p>
+                      <p className="text-zinc-500">{rep.selectedWindow.isToday ? "Dials today" : "Window dials"}</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.selectedWindow.dials}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Calls / hour</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.callsPerHourLabel}</p>
+                      <p className="text-zinc-500">{rep.selectedWindow.isToday ? "Calls / hour" : "Avg calls / hour"}</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{formatDecimal(rep.selectedWindow.callsPerHour)}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
                       <p className="text-zinc-500">Contact rate</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.contactRateLabel}</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{formatPercent(rep.selectedWindow.contactRate)}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Booked demos</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.demosToday}</p>
+                      <p className="text-zinc-500">{rep.selectedWindow.isToday ? "Booked demos" : "Window demos"}</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{rep.selectedWindow.demos}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
                       <p className="text-zinc-500">Demo conversion</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.demoConversionLabel}</p>
+                      <p className="mt-1 text-sm font-semibold text-white">{formatPercent(rep.selectedWindow.demoConversionRate)}</p>
                     </div>
                     <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2">
-                      <p className="text-zinc-500">Pace gap</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{rep.paceGapLabel}</p>
+                      <p className="text-zinc-500">{rep.selectedWindow.isToday ? "Pace gap" : "Avg dials/day"}</p>
+                      <p className="mt-1 text-sm font-semibold text-white">
+                        {rep.selectedWindow.isToday ? rep.paceGapLabel : formatDecimal(rep.selectedWindow.dialsPerDay)}
+                      </p>
                     </div>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <MetricStatusBadge label="Dials" status={rep.dialsStatus} />
-                    <MetricStatusBadge label="Contact" status={rep.contactRateStatus} />
-                    <MetricStatusBadge label="Demos" status={rep.demosStatus} />
                   </div>
                   <div className="mt-3">
                     <DailyAverageStrip windows={rep.dailyAverages} />
                   </div>
-                  <p className="mt-3 text-xs text-zinc-400">{buildScorecardPaceSummary(rep)}</p>
                   <p className="mt-3 text-xs font-medium uppercase tracking-[0.14em] text-blue-300">
                     Open calls and recordings
                   </p>
@@ -1607,10 +1772,10 @@ function ManagerDashboard({
                           {rep.userName}
                         </div>
                       </td>
-                      <td className="px-4 py-3">{rep.dialsToday}</td>
-                      <td className="px-4 py-3">{rep.callsPerHourToday.toFixed(1)}</td>
-                      <td className="px-4 py-3">{formatPercent(rep.contactRateToday)}</td>
-                      <td className="px-4 py-3">{rep.demosToday}</td>
+                      <td className="px-4 py-3">{rep.selectedWindow.dials}</td>
+                      <td className="px-4 py-3">{formatDecimal(rep.selectedWindow.callsPerHour)}</td>
+                      <td className="px-4 py-3">{formatPercent(rep.selectedWindow.contactRate)}</td>
+                      <td className="px-4 py-3">{rep.selectedWindow.demos}</td>
                       <td className="px-4 py-3"><StatusBadge status={rep.overallStatus} /></td>
                     </tr>
                   ))
@@ -1627,10 +1792,10 @@ function ManagerDashboard({
               <>
                 <h3 className="mt-1 text-lg font-semibold text-white">{topPerformer.userName}</h3>
                 <div className="mt-3 space-y-2 text-sm text-zinc-200">
-                  <p className="flex items-center justify-between"><span>Dials Today</span><span className="text-emerald-300">{topPerformer.dialsToday}</span></p>
-                  <p className="flex items-center justify-between"><span>Contact Rate</span><span className="text-blue-300">{formatPercent(topPerformer.contactRateToday)}</span></p>
-                  <p className="flex items-center justify-between"><span>Demos Today</span><span className="text-blue-300">{topPerformer.demosToday}</span></p>
-                  <p className="flex items-center justify-between"><span>Revenue This Month</span><span className="text-blue-300">{formatCurrency(topPerformer.revenueThisMonth)}</span></p>
+                  <p className="flex items-center justify-between"><span>{topPerformer.selectedWindow.isToday ? "Dials Today" : "Window Dials"}</span><span className="text-emerald-300">{topPerformer.selectedWindow.dials}</span></p>
+                  <p className="flex items-center justify-between"><span>Contact Rate</span><span className="text-blue-300">{formatPercent(topPerformer.selectedWindow.contactRate)}</span></p>
+                  <p className="flex items-center justify-between"><span>{topPerformer.selectedWindow.isToday ? "Demos Today" : "Window Demos"}</span><span className="text-blue-300">{topPerformer.selectedWindow.demos}</span></p>
+                  <p className="flex items-center justify-between"><span>{topPerformer.selectedWindow.isToday ? "Revenue Today" : "Window Revenue"}</span><span className="text-blue-300">{formatCurrency(topPerformer.selectedWindow.revenue)}</span></p>
                 </div>
               </>
             ) : (
@@ -1686,7 +1851,7 @@ function ManagerDashboard({
               ) : (
                 metrics?.team.needsAttention.map((rep) => (
                   <p key={rep.userId} className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2">
-                    {rep.userName} - {rep.needsAttentionReason || `${rep.dialsToday} dials, ${formatPercent(rep.contactRateToday)} contact rate, ${rep.demosToday} demos`}
+                    {rep.userName} - {rep.needsAttentionReason || `${rep.selectedWindow.dials} dials, ${formatPercent(rep.selectedWindow.contactRate)} contact rate, ${rep.selectedWindow.demos} demos`}
                   </p>
                 ))
               )}
@@ -1710,12 +1875,12 @@ function ManagerDashboard({
                     <div>
                       <p className="text-sm font-semibold text-white">#{index + 1} {rep.userName}</p>
                       <p className="mt-1 text-xs text-zinc-400">
-                        {rep.dialsToday} dials, {rep.conversationsToday} connected, {rep.callsPerHourLabel}, contact {rep.contactRateLabel}
+                        {rep.selectedWindow.dials} dials, {rep.selectedWindow.conversations} connected, {formatDecimal(rep.selectedWindow.callsPerHour)} / hr, contact {formatPercent(rep.selectedWindow.contactRate)}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">Talk today</p>
-                      <p className="mt-1 text-lg font-semibold text-white">{rep.talkMinutesToday} min</p>
+                      <p className="text-xs uppercase tracking-[0.14em] text-zinc-500">{rep.selectedWindow.isToday ? "Talk today" : "Window talk"}</p>
+                      <p className="mt-1 text-lg font-semibold text-white">{rep.selectedWindow.talkMinutes} min</p>
                     </div>
                   </div>
                 </div>
@@ -1806,6 +1971,7 @@ export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedRangeKey, setSelectedRangeKey] = useState<DashboardRangeKey>("today");
 
   useEffect(() => {
     let isActive = true;
@@ -1817,7 +1983,7 @@ export default function DashboardPage() {
         } else {
           setRefreshing(true);
         }
-        const response = await fetch("/api/dashboard/metrics", { cache: "no-store" });
+        const response = await fetch(`/api/dashboard/metrics?range=${encodeURIComponent(selectedRangeKey)}`, { cache: "no-store" });
         if (!response.ok) return;
         const payload = (await response.json().catch(() => null)) as DashboardMetrics | null;
         if (!isActive || !payload) return;
@@ -1853,7 +2019,7 @@ export default function DashboardPage() {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [selectedRangeKey]);
 
   const generatedLabel = metrics?.generatedAt
     ? new Date(metrics.generatedAt).toLocaleTimeString("en-US", {
@@ -1875,9 +2041,10 @@ export default function DashboardPage() {
   const effectiveRole = metrics?.viewerRole ?? activeRole;
   const shouldShowTeamBoard = effectiveRole === "TEAM_LEAD" || effectiveRole === "MANAGER" || effectiveRole === "SUPER_ADMIN";
   const shouldShowBothBoards = effectiveRole === "SUPER_ADMIN";
+  const rangeOptions = metrics?.range.available ?? DEFAULT_DASHBOARD_RANGE_OPTIONS;
   const refreshBoard = () => {
     setRefreshing(true);
-    void fetch("/api/dashboard/metrics", { cache: "no-store" })
+    void fetch(`/api/dashboard/metrics?range=${encodeURIComponent(selectedRangeKey)}`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) return null;
         return (await response.json().catch(() => null)) as DashboardMetrics | null;
@@ -1926,17 +2093,23 @@ export default function DashboardPage() {
   if (shouldShowTeamBoard) {
     return (
       <div className="space-y-3">
-        <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
-          <span>{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
-          <button
-            type="button"
-            onClick={refreshBoard}
-            disabled={refreshing}
-            className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh Board
-          </button>
+        <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1">
+            <span className="block">{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
+            <span className="block text-zinc-500">Showing {metrics?.range.selectedLabel ?? "Today"}</span>
+          </div>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <RangeSelector options={rangeOptions} selectedKey={selectedRangeKey} onChange={setSelectedRangeKey} />
+            <button
+              type="button"
+              onClick={refreshBoard}
+              disabled={refreshing}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh Board
+            </button>
+          </div>
         </div>
         <ManagerDashboard
           metrics={metrics}
@@ -1964,17 +2137,23 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
-        <span>{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
-        <button
-          type="button"
-          onClick={refreshBoard}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-          Refresh Board
-        </button>
+      <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-1">
+          <span className="block">{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
+          <span className="block text-zinc-500">Showing {metrics?.range.selectedLabel ?? "Today"}</span>
+        </div>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <RangeSelector options={rangeOptions} selectedKey={selectedRangeKey} onChange={setSelectedRangeKey} />
+          <button
+            type="button"
+            onClick={refreshBoard}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh Board
+          </button>
+        </div>
       </div>
       <RepDashboard metrics={metrics} loading={loading} onAcknowledgeManagerNote={acknowledgeManagerNote} />
     </div>

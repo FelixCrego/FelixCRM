@@ -87,6 +87,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
     { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
+    { href: "/tickets", label: "Tickets", icon: FolderKanban },
   ],
   TEAM_LEAD: [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -101,6 +102,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/team-overview", label: "Team Overview", icon: Trophy },
+    { href: "/tickets", label: "Tickets", icon: FolderKanban },
   ],
   MANAGER: [
     { href: "/dashboard", label: "Manager Dashboard", icon: Gauge },
@@ -120,6 +122,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/team-goals", label: "Rep Goals", icon: MapIcon },
     { href: "/payouts", label: "Payouts", icon: Briefcase },
     { href: "/account-management", label: "Account Management", icon: FolderKanban },
+    { href: "/tickets", label: "Tickets", icon: FolderKanban },
   ],
   SUPER_ADMIN: [
     { href: "/dashboard", label: "Global Command Center", icon: Shield },
@@ -140,6 +143,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/payouts", label: "Payouts", icon: Briefcase },
     { href: "/billing", label: "Billing/Stripe", icon: Banknote },
     { href: "/account-management", label: "Account Management", icon: FolderKanban },
+    { href: "/tickets", label: "Tickets", icon: FolderKanban },
     { href: "/user-management", label: "User Management", icon: Users },
     { href: "/system-logs", label: "System Logs", icon: ScrollText },
   ],
