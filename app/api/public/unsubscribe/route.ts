@@ -1,0 +1,2 @@
+import { unsubscribeByToken } from '@/lib/campaign-store';
+export async function GET(request:Request){ const token=new URL(request.url).searchParams.get('token')||''; const ok=token?await unsubscribeByToken(token):false; return new Response(`<!doctype html><html><body style="font-family:Arial;padding:48px;max-width:640px;margin:auto"><h1>${ok?'You are unsubscribed':'Link not found'}</h1><p>${ok?'You will not receive additional campaign emails from Felix Crego.':'This unsubscribe link is invalid or expired.'}</p></body></html>`,{headers:{'content-type':'text/html'}}); }

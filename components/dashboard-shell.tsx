@@ -27,6 +27,7 @@ import {
   FolderKanban,
   Clock3,
   Target,
+  Mail,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRole } from "@/components/role-context";
@@ -85,6 +86,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/campaigns", label: "Email Campaigns", icon: Mail },
     { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/tickets", label: "Tickets", icon: FolderKanban },
@@ -99,6 +101,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/campaigns", label: "Email Campaigns", icon: Mail },
     { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/team-overview", label: "Team Overview", icon: Trophy },
@@ -115,6 +118,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/campaigns", label: "Email Campaigns", icon: Mail },
     { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/recruiting", label: "Recruiting", icon: Users },
@@ -135,6 +139,7 @@ const navByRole: Record<UserRole, NavItem[]> = {
     { href: "/closed-deals", label: "Closed Deals", icon: CircleDollarSign },
     { href: "/pipeline", label: "Pipeline", icon: Flame },
     { href: "/demos", label: "Upcoming Demos", icon: CalendarDays },
+    { href: "/campaigns", label: "Email Campaigns", icon: Mail },
     { href: "/training", label: "Training Center", icon: Bot },
     { href: "/commissions", label: "Commissions", icon: Wallet },
     { href: "/recruiting", label: "Recruiting", icon: Users },
