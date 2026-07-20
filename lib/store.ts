@@ -1978,17 +1978,23 @@ export async function setLeadResearchSummary(leadId: string, research: LeadEnric
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify(isSnakeLeadsTable(table)
       ? {
+          ...(research.structured.primaryEmail ? { email: research.structured.primaryEmail } : {}),
           source_payload: {
             ...payload,
             aiResearchSummary: research.summary,
             enrichment: research,
+            socialLinks: research.structured.socialLinks,
+            researchSources: research.structured.sources,
           },
         }
       : {
+          ...(research.structured.primaryEmail ? { email: research.structured.primaryEmail } : {}),
           sourcePayload: {
             ...payload,
             aiResearchSummary: research.summary,
             enrichment: research,
+            socialLinks: research.structured.socialLinks,
+            researchSources: research.structured.sources,
           },
         }),
   }, { id: `eq.${leadId}` }));
