@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { canUserViewAllLeads, createLeadNote, getLeadById } from "@/lib/store";
 
+export const runtime = "nodejs";
+
 const DEFAULT_AWS_REGION = "us-west-2";
 const DEFAULT_CONNECT_INSTANCE_ID = "e1d99aec-1a08-4575-b366-03da90f659ad";
 const DEFAULT_CONNECT_SMS_SOURCE_ARN = "arn:aws:connect:us-west-2:474550261413:phone-number/2b527f94-c3d1-4fd9-ac8b-3b60302dce21";
@@ -22,7 +24,9 @@ function normalizePhoneToE164(value: string) {
 
 function getConfigValue(name: string, fallback: string) {
   const value = process.env[name]?.trim();
-  return value || fallback;
+  if (value) return value;
+  if (process.env.NODE_ENV !== "production") return fallback;
+  throw new Error(`Missing required environment variable: ${name}`);
 }
 
 function getSmsErrorMessage(error: unknown) {
