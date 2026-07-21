@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -68,6 +69,10 @@ export default function LoginPage() {
         />
 
         {error ? <p className="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+
+        <div className="mb-4 text-right">
+          <Link href="/forgot-password" className="text-sm font-medium text-cyan-300 hover:text-cyan-200">Forgot password?</Link>
+        </div>
 
         <button
           className="w-full rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-500 px-3 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-900/40 transition hover:from-cyan-400 hover:to-indigo-400 disabled:cursor-not-allowed disabled:opacity-70"
