@@ -12,9 +12,12 @@ import {
 const PUBLIC_PATHS = [
   "/login",
   "/signup",
+  "/forgot-password",
+  "/reset-password",
   "/apply",
   "/api/auth/login",
   "/api/auth/signup",
+  "/api/auth/recover",
   "/api/public",
   "/api/campaigns/process",
   "/client-portal",
