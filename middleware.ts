@@ -1,139 +1,23 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import {
-  AUTH_ACCESS_TOKEN_COOKIE,
-  AUTH_REFRESH_TOKEN_COOKIE,
-  AUTH_USER_EMAIL_HEADER,
-  AUTH_USER_HEADER,
-  getSupabaseUserByAccessToken,
-  refreshSupabaseSession,
-} from "@/lib/auth";
+import { AUTH_USER_EMAIL_HEADER, AUTH_USER_HEADER } from "@/lib/auth";
 
-const PUBLIC_PATHS = [
-  "/login",
-  "/signup",
-  "/forgot-password",
-  "/reset-password",
-  "/apply",
-  "/api/auth/login",
-  "/api/auth/signup",
-  "/api/auth/recover",
-  "/api/public",
-  "/api/campaigns/process",
-  "/client-portal",
-  "/api/account-management/clients",
-  "/api/account-management/reports/weekly"
-];
-const AUTH_REFRESH_GRACE_SECONDS = 60;
+const OPEN_ACCESS_USER_ID = "felix-open-access-owner";
+const OPEN_ACCESS_USER_EMAIL = "felix@felixcrego.com";
+const LOGIN_PATHS = new Set(["/login", "/signup", "/forgot-password", "/reset-password", "/owner-setup"]);
 
-function isPublicPath(pathname: string) {
-  return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
-}
-
-function unauthorizedResponse(request: NextRequest) {
-  const response = request.nextUrl.pathname.startsWith("/api/")
-    ? NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    : (() => {
-        const loginUrl = new URL("/login", request.url);
-        loginUrl.searchParams.set("next", request.nextUrl.pathname);
-        return NextResponse.redirect(loginUrl);
-      })();
-
-  response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 0,
-  });
-  response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 0,
-  });
-  return response;
-}
-
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (isPublicPath(pathname)) return NextResponse.next();
 
-  const accessToken = request.cookies.get(AUTH_ACCESS_TOKEN_COOKIE)?.value ?? "";
-  const refreshToken = request.cookies.get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? "";
-
-  if (!accessToken && !refreshToken) {
-    return unauthorizedResponse(request);
+  if (LOGIN_PATHS.has(pathname)) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  const locallyVerifiedUser = accessToken
-    ? await getSupabaseUserByAccessToken(accessToken, { allowNetworkFallback: false })
-    : null;
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(AUTH_USER_HEADER, OPEN_ACCESS_USER_ID);
+  requestHeaders.set(AUTH_USER_EMAIL_HEADER, OPEN_ACCESS_USER_EMAIL);
 
-  if (locallyVerifiedUser?.id) {
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set(AUTH_USER_HEADER, locallyVerifiedUser.id);
-    requestHeaders.set(AUTH_USER_EMAIL_HEADER, locallyVerifiedUser.email ?? "");
-    return NextResponse.next({ request: { headers: requestHeaders } });
-  }
-
-  // If local JWT verification is unavailable (for example, ES256 tokens),
-  // validate against Supabase before treating the session as unauthorized.
-  const remotelyVerifiedUser = accessToken
-    ? await getSupabaseUserByAccessToken(accessToken, { allowNetworkFallback: true })
-    : null;
-
-  if (remotelyVerifiedUser?.id) {
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set(AUTH_USER_HEADER, remotelyVerifiedUser.id);
-    requestHeaders.set(AUTH_USER_EMAIL_HEADER, remotelyVerifiedUser.email ?? "");
-    return NextResponse.next({ request: { headers: requestHeaders } });
-  }
-
-  if (!refreshToken) {
-    return unauthorizedResponse(request);
-  }
-
-  try {
-    const refreshed = await refreshSupabaseSession(refreshToken);
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set(AUTH_USER_HEADER, refreshed.userId);
-    requestHeaders.set(AUTH_USER_EMAIL_HEADER, refreshed.email ?? "");
-
-    const response = NextResponse.next({ request: { headers: requestHeaders } });
-    response.cookies.set(AUTH_ACCESS_TOKEN_COOKIE, refreshed.accessToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: refreshed.expiresIn,
-    });
-    response.cookies.set(AUTH_REFRESH_TOKEN_COOKIE, refreshed.refreshToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30,
-    });
-    return response;
-  } catch {
-    const graceUser = accessToken
-      ? await getSupabaseUserByAccessToken(accessToken, {
-          allowExpiredGraceSeconds: AUTH_REFRESH_GRACE_SECONDS,
-          allowNetworkFallback: true,
-        })
-      : null;
-
-    if (graceUser?.id) {
-      const requestHeaders = new Headers(request.headers);
-      requestHeaders.set(AUTH_USER_HEADER, graceUser.id);
-      requestHeaders.set(AUTH_USER_EMAIL_HEADER, graceUser.email ?? "");
-      return NextResponse.next({ request: { headers: requestHeaders } });
-    }
-
-    return unauthorizedResponse(request);
-  }
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export const config = {
