@@ -25,6 +25,7 @@ import {
   isLeadershipRole,
 } from "@/lib/lead-note-channels";
 import { buildManagerActionPlan, type PredictorInputs } from "@/lib/manager-action-engine";
+import DailyPriorities from "./DailyPriorities";
 
 type DashboardRangeKey = "today" | "3d" | "7d" | "30d";
 
@@ -2093,6 +2094,7 @@ export default function DashboardPage() {
   if (shouldShowTeamBoard) {
     return (
       <div className="space-y-3">
+        <DailyPriorities />
         <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <span className="block">{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>
@@ -2137,6 +2139,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-3">
+      <DailyPriorities />
       <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-xs text-zinc-400 md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
           <span className="block">{generatedLabel ? `Live board last updated ${generatedLabel}` : "Loading live board..."}</span>

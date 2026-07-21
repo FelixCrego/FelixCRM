@@ -139,6 +139,40 @@ export type LeadMarketingAttribution = {
   utmContent?: string | null;
 };
 
+
+export type IntelligenceEvidence = {
+  id: string;
+  category: "website" | "marketing" | "automation" | "sales" | "research" | "contact" | "reputation" | "client";
+  label: string;
+  detail: string;
+  weight: number;
+  source: string | null;
+};
+
+export type LeadIntelligenceProfile = {
+  generatedAt: string;
+  opportunityScore: number;
+  websiteScore: number;
+  marketingScore: number;
+  automationScore: number;
+  salesProcessScore: number;
+  aiAdoptionScore: number;
+  confidence: number;
+  estimatedRevenueOpportunity: { low: number; high: number; currency: "USD" };
+  buyingSignals: string[];
+  riskFactors: string[];
+  recommendedService: string;
+  recommendedSalesAngle: string;
+  nextBestAction: {
+    type: "RESEARCH" | "CALL" | "EMAIL" | "FOLLOW_UP" | "PREPARE_DEMO" | "ESCALATE" | "BUILD_AUDIT";
+    title: string;
+    reason: string;
+    priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+    href: string;
+  };
+  evidence: IntelligenceEvidence[];
+};
+
 export type Lead = {
   id: string;
   businessName: string;
@@ -209,6 +243,7 @@ export type Lead = {
   accountManagement?: LeadAccountManagementProfile | null;
   marketingAttribution?: LeadMarketingAttribution | null;
   transferRequests?: { requesterId: string; requestedAt: string; status: "PENDING" | "APPROVED" | "REJECTED" }[];
+  intelligence?: LeadIntelligenceProfile;
   updatedAt: string;
 };
 

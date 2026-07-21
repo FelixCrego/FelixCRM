@@ -10,8 +10,9 @@ import { sanitizeContactLensNoteContent } from "@/lib/contact-lens";
 import { getImportedFieldValue, type LeadCsvImportedFields } from "@/lib/lead-csv";
 import { MANAGER_CALL_REVIEW_CHANNEL } from "@/lib/lead-note-channels";
 import { createClientComponentClient } from "@/lib/supabase-client";
-import type { UserRole } from "@/lib/types";
+import type { LeadIntelligenceProfile, UserRole } from "@/lib/types";
 import FollowUpEngine from "./FollowUpEngine";
+import IntelligencePanel from "./IntelligencePanel";
 
 type LeadRecord = {
   id: string;
@@ -36,6 +37,7 @@ type LeadRecord = {
   siteStatus?: "UNBUILT" | "BUILDING" | "LIVE" | "FAILED" | null;
   vercel_deployment_id?: string | null;
   vercelDeploymentId?: string | null;
+  intelligence?: LeadIntelligenceProfile;
   leadQuality?: string | null;
   googleRating?: string | null;
   googleReviews?: string | null;
@@ -3336,6 +3338,11 @@ export default function LeadExecutionPage() {
               {savingDisposition ? "Saving disposition..." : "Complete ACW"}
             </button>
           </div>
+        </div>
+      ) : null}
+      {lead?.intelligence ? (
+        <div className="mb-4">
+          <IntelligencePanel intelligence={lead.intelligence} />
         </div>
       ) : null}
       <div className="grid grid-cols-12 gap-4">

@@ -1,4 +1,5 @@
 import { dedupeKey } from "@/lib/utils";
+import { buildLeadIntelligence } from "@/lib/intelligence-engine";
 import type {
   Lead,
   LeadEnrichmentPayload,
@@ -1122,7 +1123,7 @@ function leadToMemory(lead: any): Lead {
         ? (accountManagementRaw.success_plan as Record<string, unknown>)
         : null;
 
-  return {
+  const memoryLead: Lead = {
     id: lead.id,
     businessName: lead.businessName ?? lead.business_name,
     city: lead.city,
@@ -1422,6 +1423,9 @@ function leadToMemory(lead: any): Lead {
         )
       : [],
   };
+
+  memoryLead.intelligence = buildLeadIntelligence(memoryLead);
+  return memoryLead;
 }
 
 function normalizeManagedServiceLine(value: unknown): NonNullable<Lead["accountManagement"]>["seo"] {
