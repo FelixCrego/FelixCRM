@@ -9,7 +9,8 @@ function required(name: string) {
   return value;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const silent = new URL(request.url).searchParams.get("silent") === "1";
   const clientId = required("GOOGLE_CLIENT_ID");
   const clientSecret = required("GOOGLE_CLIENT_SECRET");
   const redirectUri = required("GOOGLE_REDIRECT_URI").replace(/\\r|\\n/g, "").trim();
@@ -19,7 +20,7 @@ export async function GET() {
   const oauth = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   const url = oauth.generateAuthUrl({
     access_type: "offline",
-    prompt: "consent",
+    prompt: silent ? "none" : "consent",
     include_granted_scopes: true,
     login_hint: "felix@felixcrego.com",
     scope: [
