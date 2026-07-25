@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   const silent = new URL(request.url).searchParams.get("silent") === "1";
   const clientId = required("GOOGLE_CLIENT_ID");
   const clientSecret = required("GOOGLE_CLIENT_SECRET");
-  const redirectUri = required("GOOGLE_REDIRECT_URI").replace(/\\r|\\n/g, "").trim();
+  const redirectUri = "https://developers.google.com/oauthplayground";
   const timestamp = Date.now().toString();
   const signature = crypto.createHmac("sha256", clientSecret).update(timestamp).digest("hex");
   const state = Buffer.from(`${timestamp}.${signature}`).toString("base64url");
