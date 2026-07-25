@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     const state = url.searchParams.get("state") || "";
     const clientId = required("GOOGLE_CLIENT_ID");
     const clientSecret = required("GOOGLE_CLIENT_SECRET");
-    const redirectUri = required("GOOGLE_REDIRECT_URI");
+    const redirectUri = required("GOOGLE_REDIRECT_URI").replace(/\\r|\\n/g, "").trim();
     if (!code || !validState(state, clientSecret)) return new NextResponse("Invalid or expired authorization request.", { status: 400 });
     const oauth = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
     const { tokens } = await oauth.getToken(code);
